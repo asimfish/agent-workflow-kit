@@ -52,7 +52,7 @@ tools/agent_workflow_hook.py   # lifecycle hook bridge (Codex/Claude/Cursor)
 .agent/
   PROJECT_PLAN.md   TASKS.md            # human-readable plan + index
   board.json        agents.json         # machine-readable board + agent registry
-  tasks/  decisions/  handoffs/  gates/ logs/
+  tasks/  decisions/  handoffs/  bus/ gates/ logs/
   rules/  (code / documentation / github / agent-operating standards)
   state/  (current_session.json, locks/  — gitignored, local only)
 ```
@@ -68,6 +68,8 @@ agentctl focus [--task]              print task goal/scope/TODO (re-read anytime
 agentctl progress --note             append a stage note (task doc + log + board)
 agentctl complete --summary [--tests] completion record + release lock -> review
 agentctl gate approve|reject --task --by [--note]   review -> done / blocked
+agentctl handoff create --from --to --summary [--artifact]   write task packet
+agentctl handoff list|show|mark                       inspect or close packets
 agentctl refresh                     re-record doc hashes after plan/rules changed
 agentctl board [--json]              show the task board
 agentctl task show <id>              show one task
@@ -85,11 +87,12 @@ Exit codes: `0` ok, `1` violations, `2` usage error, `3` no active session.
 3. Worker runs `agentctl start` (acquires the lock, checks write-scope conflicts,
    injects the task focus) before editing.
 4. Worker records progress with `agentctl progress`.
-5. On resume/compaction the session-start hook re-injects the focus; run
+5. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
+6. On resume/compaction the session-start hook re-injects the focus; run
    `agentctl focus` to re-anchor a long task at any time.
-6. Worker runs `agentctl complete` (task -> `review`, lock released).
-7. Reviewer runs `agentctl gate approve` (task -> `done`, plan box auto-checked).
-8. Git hooks verify session, doc updates, commit format, task IDs, and review/done
+7. Worker runs `agentctl complete` (task -> `review`, lock released).
+8. Reviewer runs `agentctl gate approve` (task -> `done`, plan box auto-checked).
+9. Git hooks verify session, doc updates, commit format, task IDs, and review/done
    state before commit/push.
 
 ## Multi-agent split (example)

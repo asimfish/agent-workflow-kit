@@ -16,6 +16,7 @@ enforceable, plan-driven workflow for multiple AI agents. It has two layers:
 | Standards | `.agent/rules/`: code (stdlib-only, exit codes, confidence tags), documentation (source-of-truth, status machine), GitHub (Conventional Commits, branches, safety), agent-operating (6 team patterns + decision tree). Aligned with `super_skill_team` |
 | Plan / tasks / board | `PROJECT_PLAN.md` (human plan), `TASKS.md` (index), `board.json` (machine board), `tasks/*.md` (task contracts) |
 | Multi-agent runtime | `agents.json` (profiles/write-scope), `locks/` (per-task locks), write-scope conflict detection so agents don't clobber each other |
+| Handoffs / bus | `.agent/bus/` stores machine-readable task packets; `.agent/handoffs/` stores human-readable cross-agent handoff notes |
 | Task lifecycle | `start -> progress -> complete (review) -> gate approve (done)`; status machine `todo->ready->in_progress->review->approved->done` (branches `blocked`/`failed`) |
 | Long-task anti-drift | lifecycle hook re-injects the current task focus on resume/compaction |
 | Three-layer enforcement | lifecycle hooks (process), git hooks (commit/push gate), GitHub Action (remote backstop) |
@@ -38,6 +39,7 @@ agentctl gate approve --task T-101 --by you      # review -> done
 agentctl start --task T-101 --agent agent1       # lock + read plan + in_progress
 agentctl focus                                   # re-read the current task anytime
 agentctl progress --note "collected 1-10"
+agentctl handoff create --from T-101 --to T-199 --summary "slice ready" --artifact data/raw/001-020/manifest.json
 agentctl complete --summary "..." --tests "..."  # -> review
 ```
 
@@ -62,7 +64,7 @@ Commit/push: git hooks reject non-compliant commits automatically
 ## Command reference
 
 ```text
-init  start  focus  progress  complete  gate  refresh  board  task  agents  check  status
+init  start  focus  progress  complete  gate  handoff  refresh  board  task  agents  check  status
 ```
 
 See `workflow.md` for the core loop and `enforcement.md` for the enforcement model.

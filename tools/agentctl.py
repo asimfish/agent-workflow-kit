@@ -10,6 +10,7 @@ Commands:
   progress   append a progress note to the active task
   complete   move the active task to review (write completion record, free lock)
   gate       approve/reject a task in review (-> done / blocked)
+  handoff    create/list/show/close cross-agent task packets
   refresh    re-record doc hashes after plan/rules/task docs changed
   board      print the task board (human or --json)
   task       create / show task documents and board entries
@@ -45,6 +46,11 @@ RULES_DIR = "rules"
 LOG_DIR = "logs"
 PROGRESS_LOG = "progress.md"
 GATES_DIR = "gates"
+BUS_DIR = "bus"
+BUS_INBOX = "inbox"
+BUS_OUTBOX = "outbox"
+BUS_DONE = "done"
+BUS_FAILED = "failed"
 
 STATUSES = ["todo", "ready", "in_progress", "blocked", "review", "approved", "done", "failed"]
 ACTIVE_STATUSES = {"in_progress"}
@@ -170,6 +176,10 @@ def _save_agents(root: Path, data: dict) -> None:
     _save_json(_agents_path(root), data)
 
 
+def _bus_dir(root: Path, kind: str) -> Path:
+    return root / WORKFLOW_DIR / BUS_DIR / kind
+
+
 def _lock_path(root: Path, task: str) -> Path:
     return _state_dir(root) / LOCKS_DIR / f"{task}.lock"
 
@@ -269,6 +279,12 @@ def cmd_init(args: argparse.Namespace) -> int:
             os.chmod(self_dst, 0o755)
         except OSError:
             pass
+    hook_bridge = root / "tools" / "agent_workflow_hook.py"
+    if hook_bridge.exists():
+        try:
+            os.chmod(hook_bridge, 0o755)
+        except OSError:
+            pass
     # distribute git hooks into versioned .githooks/
     installed = []
     hooks_src = kit / "hooks"
@@ -290,6 +306,8 @@ def cmd_init(args: argparse.Namespace) -> int:
             "supervisor": {"role": "planning, task split, final review",
                            "backend": "any", "write_scope": [".agent/", "docs/"],
                            "tools": [], "model": ""}}})
+    for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
+        _bus_dir(root, kind).mkdir(parents=True, exist_ok=True)
     wired = False
     if (root / ".git").exists() and installed:
         _git(root, "config", "core.hooksPath", ".githooks")
@@ -611,6 +629,175 @@ def cmd_agents(args: argparse.Namespace) -> int:
     return 2
 
 
+def _packet_id(from_task: str, to_task: str) -> str:
+    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    return f"{ts}-{from_task}-to-{to_task}"
+
+
+def _packet_paths(root: Path, packet: dict) -> tuple[Path, Path]:
+    pid = packet["id"]
+    by = packet.get("by") or packet.get("from_task") or "unknown"
+    to_task = packet.get("to_task") or "unassigned"
+    return (
+        _bus_dir(root, BUS_OUTBOX) / by / f"{pid}.json",
+        _bus_dir(root, BUS_INBOX) / to_task / f"{pid}.json",
+    )
+
+
+def _find_packet(root: Path, packet_id: str) -> Path | None:
+    candidate = Path(packet_id)
+    if candidate.is_file():
+        return candidate
+    for base in (_bus_dir(root, BUS_INBOX), _bus_dir(root, BUS_OUTBOX), _bus_dir(root, BUS_DONE), _bus_dir(root, BUS_FAILED)):
+        matches = sorted(base.rglob(f"{packet_id}.json"))
+        if matches:
+            return matches[0]
+        matches = sorted(base.rglob(f"*{packet_id}*.json"))
+        if matches:
+            return matches[0]
+    return None
+
+
+def _matching_packet_paths(root: Path, packet_id: str) -> list[Path]:
+    paths: list[Path] = []
+    for base in (_bus_dir(root, BUS_INBOX), _bus_dir(root, BUS_OUTBOX), _bus_dir(root, BUS_DONE), _bus_dir(root, BUS_FAILED)):
+        for path in sorted(base.rglob("*.json")):
+            if path.name == f"{packet_id}.json" or packet_id in path.stem:
+                paths.append(path)
+    return paths
+
+
+def _append_handoff_doc(root: Path, packet: dict) -> None:
+    path = root / WORKFLOW_DIR / "handoffs" / f"{packet['from_task']}-to-{packet['to_task']}.md"
+    block = (
+        f"\n## {packet['created_at']} - {packet['id']}\n\n"
+        f"- From: {packet['from_task']}\n"
+        f"- To: {packet['to_task']}\n"
+        f"- By: {packet.get('by') or '-'}\n"
+        f"- Summary: {packet.get('summary') or '-'}\n"
+        f"- Artifacts: {', '.join(packet.get('artifacts') or []) or '-'}\n"
+        f"- Packet: `.agent/{BUS_DIR}/{BUS_INBOX}/{packet['to_task']}/{packet['id']}.json`\n"
+    )
+    if not path.exists():
+        _write(path, f"# Handoff {packet['from_task']} -> {packet['to_task']}\n" + block)
+    else:
+        _write(path, _read(path).rstrip() + "\n" + block)
+
+
+def _handoff_create(root: Path, args: argparse.Namespace) -> int:
+    from_task = args.from_task
+    to_task = args.to_task
+    by = args.by or _load_session(root).get("agent") or from_task
+    artifacts = [a.strip() for a in (args.artifact or "").split(",") if a.strip()]
+    packet = {
+        "version": 1,
+        "id": _packet_id(from_task, to_task),
+        "created_at": _now(),
+        "status": "ready",
+        "from_task": from_task,
+        "to_task": to_task,
+        "by": by,
+        "summary": args.summary or "",
+        "artifacts": artifacts,
+        "notes": args.note or "",
+    }
+    outbox, inbox = _packet_paths(root, packet)
+    _save_json(outbox, packet)
+    _save_json(inbox, packet)
+    _append_handoff_doc(root, packet)
+    print(f"agentctl: handoff packet created: {packet['id']}")
+    print(f"  inbox: {inbox.relative_to(root)}")
+    print(f"  outbox: {outbox.relative_to(root)}")
+    return 0
+
+
+def _handoff_list(root: Path, args: argparse.Namespace) -> int:
+    packets = []
+    for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
+        for path in sorted(_bus_dir(root, kind).rglob("*.json")):
+            pkt = _load_json(path, {})
+            if not pkt:
+                continue
+            if args.task and args.task not in {pkt.get("from_task"), pkt.get("to_task")}:
+                continue
+            if args.status and pkt.get("status") != args.status:
+                continue
+            pkt["_path"] = str(path.relative_to(root))
+            pkt["_box"] = kind
+            packets.append(pkt)
+    if args.json:
+        print(json.dumps({"packets": packets}, indent=2, ensure_ascii=False))
+        return 0
+    if not packets:
+        print("agentctl: no handoff packets")
+        return 0
+    for pkt in packets:
+        print(
+            f"  {pkt['id']:<34} {pkt.get('status', '-'):<8} "
+            f"{pkt.get('from_task', '-')} -> {pkt.get('to_task', '-')} "
+            f"box={pkt.get('_box')} artifacts={len(pkt.get('artifacts') or [])}"
+        )
+    return 0
+
+
+def _handoff_show(root: Path, args: argparse.Namespace) -> int:
+    path = _find_packet(root, args.packet)
+    if not path:
+        print(f"agentctl: packet not found: {args.packet}", file=sys.stderr)
+        return 2
+    pkt = _load_json(path, {})
+    if args.json:
+        print(json.dumps(pkt, indent=2, ensure_ascii=False))
+    else:
+        print(f"Packet: {pkt.get('id')}")
+        print(f"Status: {pkt.get('status')}")
+        print(f"Route: {pkt.get('from_task')} -> {pkt.get('to_task')}")
+        print(f"By: {pkt.get('by')}")
+        print(f"Created: {pkt.get('created_at')}")
+        print(f"Summary: {pkt.get('summary')}")
+        print(f"Artifacts: {', '.join(pkt.get('artifacts') or []) or '-'}")
+        print(f"Path: {path.relative_to(root)}")
+    return 0
+
+
+def _handoff_mark(root: Path, args: argparse.Namespace) -> int:
+    path = _find_packet(root, args.packet)
+    if not path:
+        print(f"agentctl: packet not found: {args.packet}", file=sys.stderr)
+        return 2
+    pkt = _load_json(path, {})
+    status = args.status
+    pkt["status"] = status
+    pkt["updated_at"] = _now()
+    if args.note:
+        pkt["notes"] = (pkt.get("notes") or "") + f"\n{pkt['updated_at']}: {args.note}"
+    dest_base = _bus_dir(root, BUS_DONE if status == "done" else BUS_FAILED)
+    dest = dest_base / f"{pkt.get('id')}.json"
+    _save_json(dest, pkt)
+    for stale in _matching_packet_paths(root, pkt.get("id") or args.packet):
+        if stale != dest and (BUS_INBOX in stale.parts or BUS_OUTBOX in stale.parts):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    print(f"agentctl: packet {pkt.get('id')} -> {status} ({dest.relative_to(root)})")
+    return 0
+
+
+def cmd_handoff(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    if args.handoff_action == "create":
+        return _handoff_create(root, args)
+    if args.handoff_action == "list":
+        return _handoff_list(root, args)
+    if args.handoff_action == "show":
+        return _handoff_show(root, args)
+    if args.handoff_action == "mark":
+        return _handoff_mark(root, args)
+    print("agentctl: unknown handoff action", file=sys.stderr)
+    return 2
+
+
 def _check_base(root: Path) -> list:
     p = []
     if not (root / "AGENTS.md").is_file():
@@ -831,6 +1018,28 @@ def build_parser() -> argparse.ArgumentParser:
     al = asub.add_parser("list")
     al.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_agents)
+
+    sp = sub.add_parser("handoff")
+    hsub = sp.add_subparsers(dest="handoff_action", required=True)
+    hc = hsub.add_parser("create")
+    hc.add_argument("--from", dest="from_task", required=True)
+    hc.add_argument("--to", dest="to_task", required=True)
+    hc.add_argument("--by")
+    hc.add_argument("--summary", required=True)
+    hc.add_argument("--artifact", help="Comma-separated artifact paths")
+    hc.add_argument("--note")
+    hl = hsub.add_parser("list")
+    hl.add_argument("--task")
+    hl.add_argument("--status")
+    hl.add_argument("--json", action="store_true")
+    hs = hsub.add_parser("show")
+    hs.add_argument("packet")
+    hs.add_argument("--json", action="store_true")
+    hm = hsub.add_parser("mark")
+    hm.add_argument("packet")
+    hm.add_argument("--status", choices=["done", "failed"], required=True)
+    hm.add_argument("--note")
+    sp.set_defaults(func=cmd_handoff)
 
     sp = sub.add_parser("check")
     sp.add_argument("--mode", default="manual")

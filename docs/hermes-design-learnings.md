@@ -178,9 +178,9 @@ Do not build this before board/packet/profile state exists.
 
 1. Add `.agent/board.json` and make `agentctl` update it alongside Markdown.
 2. Add `.agent/agents.json` profile registry.
-3. Add `.agent/bus/` task packet inbox/outbox.
-4. Add lock files and write-scope overlap checks.
-5. Add human gate commands: `gate request`, `gate approve`, `gate reject`.
+3. Add `.agent/bus/` task packet inbox/outbox. (Implemented: `agentctl handoff create/list/show/mark`.)
+4. Add lock files and write-scope overlap checks. (Implemented in `agentctl start`.)
+5. Add human gate commands: `gate request`, `gate approve`, `gate reject`. (`approve`/`reject` implemented.)
 6. Add shared memory pools with explicit visibility.
 7. Add dispatch adapters for Codex, Claude Code, and Cursor after the state model is stable.
 
@@ -191,4 +191,3 @@ Do not build this before board/packet/profile state exists.
 - Do not route every handoff through a supervisor summary.
 - Do not auto-approve risky fulfillment stages.
 - Do not put domain logic into `agentctl.py`; keep it in config.
-
