@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/tools/agent_workflow_hook.py\" session-start",
+            "statusMessage": "Loading Agent Workflow Kit protocol"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|apply_patch|Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/tools/agent_workflow_hook.py\" pre-tool-use",
+            "timeout": 30,
+            "statusMessage": "Checking Agent Workflow Kit state"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/tools/agent_workflow_hook.py\" stop",
+            "timeout": 30,
+            "statusMessage": "Checking Agent Workflow Kit completion state"
+          }
+        ]
+      }
+    ]
+  }
+}
+

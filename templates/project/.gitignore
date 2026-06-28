@@ -1,0 +1,4 @@
+# Agent Workflow Kit local state
+.agent/state/
+.agent/tmp/
+

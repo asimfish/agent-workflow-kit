@@ -1,0 +1,44 @@
+---
+description: Agent Workflow Kit operating protocol for this repository
+alwaysApply: true
+---
+
+# Agent Workflow Kit Protocol
+
+Before editing this repository:
+
+1. Read `AGENTS.md`.
+2. Read `.agent/PROJECT_PLAN.md`.
+3. Read `.agent/TASKS.md`.
+4. Read the assigned `.agent/tasks/<task-id>.md`.
+5. Read `.agent/rules/agent-operating-rules.md`.
+6. Run:
+
+```bash
+python3 tools/agentctl.py start --task <task-id> --agent cursor
+```
+
+During work:
+
+- Stay inside the task write scope.
+- Update progress after each meaningful phase:
+
+```bash
+python3 tools/agentctl.py progress --task <task-id> --status in-progress --note "<short factual update>"
+```
+
+- If plan or rules changed, re-read them and run:
+
+```bash
+python3 tools/agentctl.py refresh
+```
+
+Before completion:
+
+```bash
+python3 tools/agentctl.py complete --task <task-id> --summary "<what changed>" --tests "<commands run>"
+```
+
+Commits must use Conventional Commits and include the active task ID, for example `Refs: T-001`.
+
+Before pushing to GitHub, the active task must be `review` or `done`. A `done` task must have a filled Completion Record and must be checked off in `.agent/PROJECT_PLAN.md`.

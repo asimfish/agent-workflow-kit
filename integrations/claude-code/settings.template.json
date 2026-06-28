@@ -1,0 +1,25 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -f AGENTS.md && printf 'Read AGENTS.md, .agent/PROJECT_PLAN.md, .agent/TASKS.md, and run python3 tools/agentctl.py start before editing.\\n' || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "test -f tools/agentctl.py && python3 tools/agentctl.py check || true"
+          }
+        ]
+      }
+    ]
+  }
+}
+
