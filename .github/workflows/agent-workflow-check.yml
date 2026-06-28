@@ -1,0 +1,29 @@
+name: Agent Workflow Check
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  agent-workflow-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate agent workflow documents and commits
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+
+          if [ -n "${base:-}" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            python3 tools/agentctl.py check --mode ci --commit-range "$base..HEAD"
+          else
+            python3 tools/agentctl.py check --mode ci
+          fi

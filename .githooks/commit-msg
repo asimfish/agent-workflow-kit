@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+if [ ! -f tools/agentctl.py ]; then
+  echo "agentctl hook failed: tools/agentctl.py not found" >&2
+  exit 1
+fi
+
+python3 tools/agentctl.py check --mode commit-msg --message-file "$1"
+

@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .DS_Store
 
+# Agent Workflow Kit local state
+.agent/state/
+.agent/tmp/

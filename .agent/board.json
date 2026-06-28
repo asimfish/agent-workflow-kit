@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-29 03:06:00",
+  "tasks": {
+    "AGENT-002": {
+      "title": "dogfood workflow kit in super_project",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".gitignore"
+      ],
+      "deps": [],
+      "created_at": "2026-06-29 03:00:32",
+      "updated_at": "2026-06-29 03:06:00"
+    },
+    "AGENT-003": {
+      "title": "review dogfood workflow results",
+      "status": "todo",
+      "owner": "reviewer",
+      "scope": [
+        ".agent/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-06-29 03:01:11",
+      "updated_at": "2026-06-29 03:01:11"
+    }
+  }
+}

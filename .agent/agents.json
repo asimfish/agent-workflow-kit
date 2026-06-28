@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "agents": {
+    "supervisor": {
+      "role": "planning, task split, final review",
+      "backend": "any",
+      "write_scope": [
+        ".agent/",
+        "docs/"
+      ],
+      "tools": [],
+      "model": ""
+    }
+  }
+}

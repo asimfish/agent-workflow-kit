@@ -121,6 +121,15 @@ def _git(root: Path, *args: str) -> str:
         return ""
 
 
+def _ensure_gitignore(root: Path) -> None:
+    path = root / ".gitignore"
+    block = "\n# Agent Workflow Kit local state\n.agent/state/\n.agent/tmp/\n"
+    text = _read(path)
+    if ".agent/state/" in text:
+        return
+    _write(path, text.rstrip() + block if text else block.lstrip())
+
+
 def _state_dir(root: Path) -> Path:
     return root / WORKFLOW_DIR / STATE_DIR
 
@@ -252,6 +261,50 @@ def _check_plan_box(root: Path, task: str) -> None:
         _write(plan, new)
 
 
+def _set_task_doc_status(root: Path, task: str, status: str) -> None:
+    path = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    text = _read(path)
+    if not text:
+        return
+    new = re.sub(r"^Status: .*$", f"Status: {status}", text, count=1, flags=re.M)
+    if new != text:
+        _write(path, new)
+
+
+def _format_scope(scope) -> str:
+    if isinstance(scope, str):
+        return scope or "-"
+    return ", ".join(scope or []) or "-"
+
+
+def _update_tasks_index(root: Path, task: str, *, status: str | None = None,
+                        owner: str | None = None, scope=None, title: str | None = None) -> None:
+    path = root / WORKFLOW_DIR / TASKS_FILE
+    text = _read(path)
+    if not text:
+        return
+    lines = text.splitlines()
+    updated = False
+    out = []
+    for line in lines:
+        if line.startswith(f"| {task} |"):
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if len(cells) >= 6:
+                if status is not None:
+                    cells[1] = status
+                if owner is not None:
+                    cells[2] = owner or "-"
+                if scope is not None:
+                    cells[3] = f"`{_format_scope(scope)}`"
+                if title is not None:
+                    cells[5] = title
+                line = "| " + " | ".join(cells) + " |"
+                updated = True
+        out.append(line)
+    if updated:
+        _write(path, "\n".join(out) + "\n")
+
+
 # ---------- commands ----------
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -306,6 +359,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "supervisor": {"role": "planning, task split, final review",
                            "backend": "any", "write_scope": [".agent/", "docs/"],
                            "tools": [], "model": ""}}})
+    _ensure_gitignore(root)
     for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
         _bus_dir(root, kind).mkdir(parents=True, exist_ok=True)
     wired = False
@@ -385,6 +439,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         e["scope"] = scope
     e["updated_at"] = now
     _save_board(root, board)
+    _update_tasks_index(root, task, status="in_progress", owner=agent, scope=e.get("scope"), title=e.get("title"))
     print(f"agentctl: started {task} (agent={agent}) -> in_progress")
     _print_focus(root, task)
     return 0
@@ -460,10 +515,14 @@ def cmd_complete(args: argparse.Namespace) -> int:
         t["status"] = "review"
         t["updated_at"] = ts
         _save_board(root, board)
+        _update_tasks_index(root, task, status="review", owner=t.get("owner"), scope=t.get("scope"), title=t.get("title"))
     lp = _lock_path(root, task)
     if lp.is_file():
         lp.unlink()
-    _clear_session(root)
+    st["status"] = "review"
+    st["completed_at"] = ts
+    st["doc_hashes"] = _hash_docs(root, task)
+    _save_session(root, st)
     print(f"agentctl: {task} -> review. run 'agentctl gate approve --task {task} --by <reviewer>' to finish.")
     return 0
 
@@ -490,13 +549,29 @@ def cmd_gate(args: argparse.Namespace) -> int:
         t["updated_at"] = ts
         _save_board(root, board)
         _check_plan_box(root, task)
+        _set_task_doc_status(root, task, "done")
+        _update_tasks_index(root, task, status="done", owner=t.get("owner"), scope=t.get("scope"), title=t.get("title"))
         _write(gate_doc, f"# Gate {task}\n\n- Decision: approved\n- By: {args.by}\n- At: {ts}\n- Note: {args.note or ''}\n")
+        st = _load_session(root)
+        if st.get("task") == task:
+            st["status"] = "done"
+            st["gated_at"] = ts
+            st["doc_hashes"] = _hash_docs(root, task)
+            _save_session(root, st)
         print(f"agentctl: {task} approved -> done")
         return 0
     t["status"] = "blocked"
     t["updated_at"] = ts
     _save_board(root, board)
+    _set_task_doc_status(root, task, "blocked")
+    _update_tasks_index(root, task, status="blocked", owner=t.get("owner"), scope=t.get("scope"), title=t.get("title"))
     _write(gate_doc, f"# Gate {task}\n\n- Decision: rejected\n- By: {args.by}\n- At: {ts}\n- Note: {args.note or ''}\n")
+    st = _load_session(root)
+    if st.get("task") == task:
+        st["status"] = "blocked"
+        st["gated_at"] = ts
+        st["doc_hashes"] = _hash_docs(root, task)
+        _save_session(root, st)
     print(f"agentctl: {task} rejected -> blocked")
     return 0
 
@@ -564,6 +639,8 @@ def _task_create(root: Path, args: argparse.Namespace) -> int:
     row = f"| {task} | todo | {owner or '-'} | `{', '.join(scope) or '-'}` | [.agent/tasks/{task}.md](tasks/{task}.md) | {title} |"
     if "| ID |" in ttext and task not in ttext:
         _write(tasks_md, ttext.rstrip("\n") + "\n" + row + "\n")
+    elif task in ttext:
+        _update_tasks_index(root, task, status="todo", owner=owner or "-", scope=scope, title=title)
     plan = root / WORKFLOW_DIR / PLAN_FILE
     ptext = _read(plan)
     bullet = f"- [ ] {task} - {title}" + (f" (owner: {owner})" if owner else "")

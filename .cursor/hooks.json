@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionStart": [
+      {
+        "command": "python3 tools/agent_workflow_hook.py session-start",
+        "timeout": 10
+      }
+    ],
+    "preToolUse": [
+      {
+        "command": "python3 tools/agent_workflow_hook.py pre-tool-use",
+        "matcher": "Shell|Bash|Write|Edit|MultiEdit",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "beforeShellExecution": [
+      {
+        "command": "python3 tools/agent_workflow_hook.py pre-tool-use",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "stop": [
+      {
+        "command": "python3 tools/agent_workflow_hook.py stop",
+        "timeout": 30
+      }
+    ]
+  }
+}
