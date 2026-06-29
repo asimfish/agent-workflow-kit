@@ -25,12 +25,28 @@ Four problems this solves when several agents share one repo:
 
 ```bash
 # 1. get the kit
-git clone <this-repo> && cd super_project
+git clone https://github.com/asimfish/super_project.git && cd super_project
 
 # 2. install into your project
 ./install.sh /path/to/your/project
 #   (equivalent to: python3 tools/agentctl.py init /path/to/your/project)
 ```
+
+### Agent Bootstrap
+
+If you give this repository link to an agent, the agent should do the install
+itself. A minimal request is:
+
+```text
+Install https://github.com/asimfish/super_project.git into this project and then
+follow the installed Agent Workflow Kit. After installation, work autonomously:
+read AGENTS.md and .agent/PROJECT_PLAN.md, run work/work --auto-create as needed,
+record progress with note, finish with finish, and commit/push using the required
+task ID and GitHub rules.
+```
+
+After `install.sh` runs, the target project owns its local `.agent/` directory.
+That directory lives in the target project root, not globally.
 
 `init` will:
 

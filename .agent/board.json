@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-30 01:56:54",
+  "updated_at": "2026-06-30 04:03:10",
   "tasks": {
     "AGENT-002": {
       "title": "dogfood workflow kit in super_project",
@@ -96,6 +96,20 @@
       "deps": [],
       "created_at": "2026-06-29 15:31:15",
       "updated_at": "2026-06-30 01:56:54"
+    },
+    "AGENT-008": {
+      "title": "make agent bootstrap and github references explicit",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "README.md",
+        ".agent/",
+        "templates/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-06-30 03:58:16",
+      "updated_at": "2026-06-30 04:03:10"
     }
   }
 }

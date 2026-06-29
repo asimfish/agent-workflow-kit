@@ -3,6 +3,15 @@
 > Aligned with the `auto_git` standard from `super_skill_team`, plus this kit's
 > task-driven gate. The git hooks enforce a machine-checkable subset of these rules.
 
+## External References
+
+- GitHub Docs: commits must include a commit message that briefly describes the
+  change.
+- Conventional Commits 1.0.0: use `<type>[optional scope]: <description>` with
+  optional body/footer so commit history is machine-readable.
+- GitHub Docs: pull request templates standardize the information shown in the PR
+  body when contributors open a pull request.
+
 ## Iron Law
 
 - Never `git push --force` / `--force-with-lease` to `main`, `master`, `develop`,
