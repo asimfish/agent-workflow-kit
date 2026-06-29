@@ -17,7 +17,7 @@ enforceable, plan-driven workflow for multiple AI agents. It has two layers:
 | Plan / tasks / board | `PROJECT_PLAN.md` (human plan), `TASKS.md` (index), `board.json` (machine board), `tasks/*.md` (task contracts) |
 | Multi-agent runtime | `agents.json` (profiles/write-scope), `locks/` (per-task locks), write-scope conflict detection so agents don't clobber each other |
 | Handoffs / bus | `.agent/bus/` stores machine-readable task packets; `.agent/handoffs/` stores human-readable cross-agent handoff notes |
-| Task lifecycle | `start -> progress -> complete (review) -> gate approve (done)`; status machine `todo->ready->in_progress->review->approved->done` (branches `blocked`/`failed`) |
+| Task lifecycle | `work -> note -> finish (review) -> optional gate approve (done)`; status machine `todo->ready->in_progress->review->approved->done` (branches `blocked`/`failed`) |
 | Long-task anti-drift | lifecycle hook re-injects the current task focus on resume/compaction |
 | Three-layer enforcement | lifecycle hooks (process), git hooks (commit/push gate), GitHub Action (remote backstop) |
 
@@ -25,18 +25,17 @@ enforceable, plan-driven workflow for multiple AI agents. It has two layers:
 
 The primary interface is the `agentctl` CLI plus automatic hooks, across two roles.
 
-### Human (Supervisor / Reviewer) — board + approval + dispatch
+### Human (Supervisor / Reviewer) — optional steering
 
-```bash
-agentctl task create --id T-101 --title "collect 1-20" --owner agent1 --scope data/raw/001-020
-agentctl board                                   # see all task states
-agentctl gate approve --task T-101 --by you      # review -> done
-```
+Humans normally inspect and edit `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, and
+`.agent/tasks/*.md` when direction changes. They do not need to run commands for
+ordinary agent work.
 
 ### Agent (Worker) — claim + update + deliver
 
 ```bash
 agentctl work --agent agent1                     # resume or auto-claim assigned work
+agentctl work --agent agent1 --auto-create --title "current request" --scope data/raw/001-020
 agentctl focus                                   # optional: re-read the current task anytime
 agentctl note "collected 1-10"
 agentctl handoff create --from T-101 --to T-199 --summary "slice ready" --artifact data/raw/001-020/manifest.json
@@ -54,10 +53,10 @@ agentctl finish --summary "..." --tests "..."    # -> review
 ## End-to-end (multi-agent collection)
 
 ```text
-Supervisor: write PLAN -> task create T-101/T-102/T-103 (disjoint write scopes)
-agent1/2/3: each `start` (auto lock; conflicting scope is refused) -> focus
-            -> work -> progress -> complete (-> review)
-Reviewer:   gate approve each task -> done (plan auto-checked)
+Supervisor: write PLAN or ask supervisor agent to split T-101/T-102/T-103
+agent1/2/3: each `work` (auto lock; conflicting scope is refused) -> focus
+            -> work -> note -> finish (-> review)
+Reviewer:   optional gate approve each task -> done (plan auto-checked)
 Commit/push: git hooks reject non-compliant commits automatically
 ```
 

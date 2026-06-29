@@ -118,7 +118,7 @@ def check_manual(root: Path) -> tuple[bool, str]:
 
 
 def command_is_agentctl_start(command: str) -> bool:
-    return "agentctl.py" in command and re.search(r"\bstart\b", command) is not None
+    return "agentctl.py" in command and re.search(r"\b(?:start|work)\b", command) is not None
 
 
 def payload_command(payload: dict) -> str:
@@ -172,7 +172,9 @@ def session_start() -> int:
     message = (
         "This repo uses Agent Workflow Kit. Before editing, enter the autonomous work loop:\n"
         "  python3 tools/agentctl.py work --agent <agent-name>\n"
-        "It will resume the current task or auto-claim the next assigned task, then print the required focus."
+        "It will resume the current task or auto-claim the next assigned task, then print the required focus.\n"
+        "If no task is assigned for the current user request, create and start one yourself:\n"
+        "  python3 tools/agentctl.py work --agent <agent-name> --auto-create --title \"<current request>\" --scope \"<paths>\""
     )
     focus = current_focus(root)
     if focus:
@@ -196,7 +198,9 @@ def pre_tool_use() -> int:
         return block(
             "PreToolUse",
             "Agent Workflow Kit blocked this write/mutating action because no active task session exists. "
-            "Run: python3 tools/agentctl.py work --agent <agent-name>.",
+            "Run: python3 tools/agentctl.py work --agent <agent-name>. "
+            "If no task exists for the current request, run: python3 tools/agentctl.py work --agent <agent-name> "
+            "--auto-create --title \"<current request>\" --scope \"<paths>\".",
         )
     ok, message = check_manual(root)
     if not ok:
@@ -223,8 +227,8 @@ def stop() -> int:
     ok, message = check_manual(root)
     reminder = (
         "Agent Workflow Kit: a task session is still active. Before you stop, either "
-        "record progress (python3 tools/agentctl.py progress --note ...) or finish the "
-        "task (python3 tools/agentctl.py complete --summary ... --tests ...), which "
+        "record progress (python3 tools/agentctl.py note ...) or finish the "
+        "task (python3 tools/agentctl.py finish --summary ... --tests ...), which "
         "updates the plan, task doc, and board so the next agent can pick up cleanly."
     )
     if not ok:

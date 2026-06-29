@@ -12,11 +12,16 @@ The plan layer stays short. The task layer records durable task facts. The evide
 
 ## Update Timing
 
-- Start of task: `agentctl start`.
-- After a phase: `agentctl progress`.
+- Start of task: `agentctl work`.
+- If no task exists: `agentctl work --auto-create --title ... --scope ...`.
+- After a phase: `agentctl note`.
 - When scope changes: edit the task contract first.
 - When sequencing changes: edit `.agent/PROJECT_PLAN.md`.
-- End of task: `agentctl complete`.
+- End of task: `agentctl finish`.
+
+Humans may edit plan or task docs at any time to steer the project. Agents must
+notice those edits, re-read the changed documents, run `agentctl refresh`, and
+continue. Human document review is useful, but not a required workflow step.
 
 ## Cleanup
 
@@ -33,4 +38,3 @@ During review, check:
 - Are write scopes still disjoint?
 - Are blockers visible?
 - Are completed tasks supported by verification evidence?
-

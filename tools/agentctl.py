@@ -5,7 +5,7 @@ Dependency-free (stdlib only), Python 3.8+.
 
 Commands:
   init       scaffold workflow files; distribute agentctl.py + git hooks
-  work       resume current work or auto-claim the next assigned task
+  work       resume current work, claim the next assigned task, or auto-create one
   start      begin a task session: read receipt + lock + board -> in_progress
   focus      print the active task focus (goal/scope/todo) -- re-read anytime
   note       shorthand progress note for the active task
@@ -158,7 +158,7 @@ def _clear_session(root: Path) -> None:
 def _require_session(root: Path) -> dict:
     st = _load_session(root)
     if not st.get("task"):
-        print("agentctl: no active task. run 'agentctl start --task <id>' first.", file=sys.stderr)
+        print("agentctl: no active task. run 'agentctl work --agent <name>' first.", file=sys.stderr)
         sys.exit(3)
     return st
 
@@ -349,6 +349,17 @@ def _select_next_task(root: Path, agent: str) -> str | None:
     return candidates[0][2]
 
 
+def _next_task_id(root: Path, prefix: str = "T") -> str:
+    board = _load_board(root)
+    max_num = 0
+    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    for tid in board.get("tasks", {}):
+        m = pattern.match(tid)
+        if m:
+            max_num = max(max_num, int(m.group(1)))
+    return f"{prefix}-{max_num + 1:03d}"
+
+
 # ---------- commands ----------
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -450,9 +461,31 @@ def cmd_work(args: argparse.Namespace) -> int:
         return 0
     task = _select_next_task(root, agent)
     if not task:
+        if args.auto_create:
+            if not args.title:
+                print("agentctl: --title is required with --auto-create", file=sys.stderr)
+                return 2
+            if not args.scope:
+                print("agentctl: --scope is required with --auto-create so the task has a safe write boundary", file=sys.stderr)
+                return 2
+            task = args.new_id or _next_task_id(root, args.prefix or "T")
+            create_args = argparse.Namespace(
+                id=task,
+                title=args.title,
+                owner=agent,
+                scope=args.scope,
+                deps=args.deps or "",
+                force=args.force,
+            )
+            rc = _task_create(root, create_args)
+            if rc:
+                return rc
+            print(f"agentctl: auto-created {task} for {agent}")
+            start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force)
+            return cmd_start(start_args)
         print(f"agentctl: no ready/todo task assigned to {agent}.")
-        print("agentctl: ask the supervisor to update .agent/PROJECT_PLAN.md or create a task:")
-        print("  python3 tools/agentctl.py task create --id T-001 --title \"...\" --owner " + agent + " --scope path/")
+        print("agentctl: if this is a new user request, create and start a task in one command:")
+        print("  python3 tools/agentctl.py work --agent " + agent + " --auto-create --title \"...\" --scope path/")
         return 1
     print(f"agentctl: auto-selected {task} for {agent}")
     start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force)
@@ -516,7 +549,7 @@ def cmd_focus(args: argparse.Namespace) -> int:
     root = _repo_root()
     task = args.task or _load_session(root).get("task")
     if not task:
-        print("agentctl: no active task. pass --task or run 'agentctl start'.", file=sys.stderr)
+        print("agentctl: no active task. pass --task or run 'agentctl work --agent <name>'.", file=sys.stderr)
         return 2
     _print_focus(root, task)
     return 0
@@ -597,7 +630,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
     st["completed_at"] = ts
     st["doc_hashes"] = _hash_docs(root, task)
     _save_session(root, st)
-    print(f"agentctl: {task} -> review. run 'agentctl gate approve --task {task} --by <reviewer>' to finish.")
+    print(f"agentctl: {task} -> review. optional review gate: agentctl gate approve --task {task} --by <reviewer>")
     return 0
 
 
@@ -629,7 +662,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
             return 1
         doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
         if "Completed-at:" not in _extract_section(_read(doc), "## Completion Record"):
-            print(f"agentctl: {task} has no completion record; run 'agentctl complete' first.", file=sys.stderr)
+            print(f"agentctl: {task} has no completion record; run 'agentctl finish' first.", file=sys.stderr)
             return 1
         t["status"] = "done"
         t["updated_at"] = ts
@@ -1001,12 +1034,12 @@ def _check_precommit(root: Path) -> list:
     st = _load_session(root)
     staged = [f for f in _git(root, "diff", "--cached", "--name-only").splitlines() if f.strip()]
     if staged and not st.get("task"):
-        p.append("staged changes but no active task (run agentctl start)")
+        p.append("staged changes but no active task (run agentctl work --agent <name>)")
     if staged:
         agent_docs = [f for f in staged if f.startswith(".agent/") or f == "AGENTS.md"]
         nondoc = [f for f in staged if not (f.startswith(".agent/") or f == "AGENTS.md")]
         if nondoc and not agent_docs:
-            p.append("code/data staged but no .agent task/plan/log update staged; run agentctl progress.")
+            p.append("code/data staged but no .agent task/plan/log update staged; run agentctl note.")
     p += _scan_secrets_staged(root, staged)
     return p
 
@@ -1126,6 +1159,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--agent")
     sp.add_argument("--task")
     sp.add_argument("--scope")
+    sp.add_argument("--auto-create", action="store_true")
+    sp.add_argument("--title")
+    sp.add_argument("--new-id")
+    sp.add_argument("--prefix", default="T")
+    sp.add_argument("--deps", default="")
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_work)
 

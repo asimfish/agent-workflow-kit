@@ -64,6 +64,7 @@ agentctl init [path]                 scaffold + distribute agentctl + git hooks
 agentctl task create --id --title [--owner --scope --deps]
 agentctl agents add --id --role [--backend --scope --tools --model]
 agentctl work --agent [--task]       resume current work or claim next assigned task
+agentctl work --agent --auto-create --title --scope   create/claim/start a task
 agentctl start --task --agent [--scope --force]   low-level explicit task start
 agentctl focus [--task]              print task goal/scope/TODO (re-read anytime)
 agentctl note "..."                  shorthand progress note for the active task
@@ -85,16 +86,18 @@ Exit codes: `0` ok, `1` violations, `2` usage error, `3` no active session.
 
 ## Core loop
 
-1. Supervisor updates `PROJECT_PLAN.md` and the board (`agentctl task create`).
-2. Supervisor writes a task doc per bounded unit of work.
-3. Worker runs `agentctl work --agent <name>` before editing. This resumes an
+1. Human or supervisor agent keeps `PROJECT_PLAN.md` and task docs directionally correct.
+2. Worker runs `agentctl work --agent <name>` before editing. This resumes an
    active task or auto-claims the next assigned `ready`/`todo` task.
+3. If no task exists, the worker creates and starts one from the current request
+   with `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
 4. Worker records progress with `agentctl note`.
 5. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
 6. On resume/compaction the session-start hook re-injects the focus; run
    `agentctl focus` to re-anchor a long task at any time.
 7. Worker runs `agentctl finish` (task -> `review`, lock released).
-8. Reviewer runs `agentctl gate approve` (task -> `done`, plan box auto-checked).
+8. Reviewer approval is optional for human oversight; when used, `agentctl gate approve`
+   moves the task to `done` and checks the plan box.
 9. Git hooks verify session, doc updates, commit format, task IDs, and review/done
    state before commit/push.
 
@@ -110,28 +113,32 @@ agentctl task create --id T-103 --title "collect 41-60" --owner agent3 --scope d
 agentctl task create --id T-199 --title "merge + validate" --owner supervisor --scope data/manifest
 ```
 
-`agentctl start` refuses to start a task whose write scope overlaps another
+`agentctl work` refuses to start a task whose write scope overlaps another
 in-progress task owned by a different agent, so agents do not clobber each other.
 
 ## Intended interaction model
 
-After installation, humans should not need to drive every task step. A normal
+After installation, humans should not need to drive workflow commands. A normal
 agent prompt can be as small as:
 
 ```text
-Use the installed Agent Workflow Kit. Run `python3 tools/agentctl.py work --agent codex`,
-follow the printed focus, update progress with `agentctl note`, finish with
+Use the installed Agent Workflow Kit autonomously. If a task exists, run
+`python3 tools/agentctl.py work --agent codex`; if no task exists for my request,
+run `python3 tools/agentctl.py work --agent codex --auto-create --title "<request>" --scope "<paths>"`.
+Follow the printed focus, update progress with `agentctl note`, finish with
 `agentctl finish`, then commit and push using the required task ID.
 ```
 
-Humans mostly do periodic steering:
+Humans mostly inspect and edit durable documents:
 
 ```bash
-agentctl board
-agentctl task show T-101
-# edit PROJECT_PLAN.md / task docs if direction changed
-agentctl gate approve --task T-101 --by human
+# open .agent/PROJECT_PLAN.md and .agent/tasks/*.md
+# edit them if direction, priorities, scope, or acceptance criteria changed
 ```
+
+Running `agentctl board`, `agentctl task show`, or `agentctl gate approve` remains
+available, but it is not a required human step in the normal loop. Agents should
+notice human document edits, re-read them, refresh their receipt, and keep going.
 
 ## Status machine
 

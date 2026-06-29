@@ -12,9 +12,19 @@ python3 tools/agentctl.py work --agent <agent-name>
 
 This resumes the current task or claims the next assigned `ready`/`todo` task,
 records the read receipt, acquires the task lock, and prints the required focus.
+If no task exists for the current user request, create and start one yourself:
+
+```bash
+python3 tools/agentctl.py work --agent <agent-name> --auto-create --title "<current request>" --scope "<paths>"
+```
+
 Do not edit project files before this command succeeds.
 
 Codex and Claude Code project hooks also block mutating tools when no active task session exists. Git hooks and CI remain the final enforcement layer.
+
+Humans are not expected to run workflow commands during normal development. Treat
+their edits to `.agent/PROJECT_PLAN.md` or task docs as steering input: re-read
+those files, refresh the receipt, and continue.
 
 ## During Work
 

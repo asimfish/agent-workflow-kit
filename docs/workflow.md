@@ -2,9 +2,9 @@
 
 ## Core Loop
 
-1. Supervisor writes or updates `.agent/PROJECT_PLAN.md`.
-2. Supervisor creates a task document for each bounded unit of work.
-3. Worker runs `agentctl work --agent <name>` before editing.
+1. Human or supervisor agent keeps `.agent/PROJECT_PLAN.md` and task docs directionally correct.
+2. Worker runs `agentctl work --agent <name>` before editing.
+3. If no task exists for the current request, the worker runs `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
 4. Worker records phase progress with `agentctl note`.
 5. Worker creates handoff packets for downstream tasks with `agentctl handoff create`.
 6. Worker completes with `agentctl finish`.
@@ -36,6 +36,8 @@ For normal workers, prefer the short loop:
 
 ```bash
 agentctl work --agent codex
+# If no assigned task exists:
+agentctl work --agent codex --auto-create --title "current request" --scope "paths/"
 agentctl note "short factual progress update"
 agentctl finish --summary "what changed" --tests "commands run"
 git commit -m "feat(scope): summary" -m "Refs: T-101"
@@ -44,6 +46,14 @@ git push
 
 `start`, `progress`, and `complete` remain available as explicit low-level commands,
 but everyday agents should not need them.
+
+## Human Steering
+
+Humans are not required to run workflow commands during normal development. They
+can periodically open `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, and task docs,
+then edit direction, scope, priorities, or acceptance criteria. Agents must treat
+those edits as updated instructions: re-read the changed files, run `agentctl refresh`,
+and continue under the new plan.
 
 ## Handoffs
 

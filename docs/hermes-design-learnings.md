@@ -134,9 +134,9 @@ Rules:
 - Secrets are never stored.
 - Handoffs reference artifact paths instead of copying large content.
 
-### 6. Add Human Gates Explicitly
+### 6. Add Optional Review Gates Explicitly
 
-For risky stages, a task should not advance from `review` to `approved` without a gate artifact:
+For risky stages, a task can advance from `review` to `approved` through a gate artifact:
 
 ```text
 .agent/gates/<task-id>.md
@@ -179,8 +179,8 @@ Do not build this before board/packet/profile state exists.
 1. Add `.agent/board.json` and make `agentctl` update it alongside Markdown.
 2. Add `.agent/agents.json` profile registry.
 3. Add `.agent/bus/` task packet inbox/outbox. (Implemented: `agentctl handoff create/list/show/mark`.)
-4. Add lock files and write-scope overlap checks. (Implemented in `agentctl start`.)
-5. Add human gate commands: `gate request`, `gate approve`, `gate reject`. (`approve`/`reject` implemented.)
+4. Add lock files and write-scope overlap checks. (Implemented through `agentctl work` / `agentctl start`.)
+5. Add optional review gate commands: `gate request`, `gate approve`, `gate reject`. (`approve`/`reject` implemented.)
 6. Add shared memory pools with explicit visibility.
 7. Add dispatch adapters for Codex, Claude Code, and Cursor after the state model is stable.
 

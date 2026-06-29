@@ -20,6 +20,7 @@ Define the durable project outcome in one or two paragraphs.
 | M1 | Define project workflow | in-progress | Plan, rules, hooks, and task docs exist |
 
 ## Task Board
+- [x] AGENT-005 - make human steering optional (owner: codex)
 - [x] AGENT-004 - simplify autonomous agent interaction (owner: codex)
 - [ ] AGENT-003 - review dogfood workflow results (owner: reviewer)
 - [x] AGENT-002 - dogfood workflow kit in super_project (owner: codex)

@@ -10,3 +10,6 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-06-29 03:05:59 [AGENT-002] Fixed gate approval to synchronize task document Status with board and index.
 - 2026-06-29 13:16:52 [AGENT-004] Added low-friction work/note/finish commands and updated agent-facing docs/hooks.
 - 2026-06-29 13:17:55 [AGENT-004] Dogfooded simplified work/note/finish loop in a fresh temp project and refreshed read receipt after task-doc edits.
+- 2026-06-29 13:37:29 [AGENT-005] Defined AGENT-005 around auto task creation and optional human steering.
+- 2026-06-29 13:43:11 [AGENT-005] Implemented work --auto-create and updated docs/hooks so humans only steer through plan/task files.
+- 2026-06-29 13:43:56 [AGENT-005] Dogfooded fresh-project auto-create flow without any pre-created worker task.

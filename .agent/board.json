@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-29 13:18:03",
+  "updated_at": "2026-06-29 13:44:08",
   "tasks": {
     "AGENT-002": {
       "title": "dogfood workflow kit in super_project",
@@ -46,6 +46,22 @@
       "deps": [],
       "created_at": "2026-06-29 13:13:56",
       "updated_at": "2026-06-29 13:18:03"
+    },
+    "AGENT-005": {
+      "title": "make human steering optional",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/",
+        "docs/",
+        "README.md",
+        "AGENTS.md",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-06-29 13:37:03",
+      "updated_at": "2026-06-29 13:44:08"
     }
   }
 }

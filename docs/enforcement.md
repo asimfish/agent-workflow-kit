@@ -15,6 +15,13 @@ task, then creates a read receipt with hashes for the plan, task index, rules,
 and task document. Later checks can detect when those files changed and require
 `agentctl refresh`.
 
+If there is no assigned task for the current request, the agent creates and starts
+one itself:
+
+```bash
+python3 tools/agentctl.py work --agent codex --auto-create --title "<current request>" --scope "<paths>"
+```
+
 Codex, Claude Code, and Cursor project hooks call `tools/agent_workflow_hook.py`. The session-start hook injects the protocol into context, the pre-tool hook blocks mutating tools when no active task session exists, and the stop hook reminds the agent to record progress or complete the task (which updates the plan and task doc).
 
 ### Long-task anti-drift (focus re-injection)
@@ -30,12 +37,16 @@ Run `agentctl focus` manually any time to re-anchor.
 `agentctl` is the single controller:
 
 - `start` — read receipt + acquire task lock + write-scope conflict check + board `in_progress`.
+- `work` — normal entry point; resume, claim, or auto-create a task and then start it.
 - `focus` — print the current task focus (re-read before continuing).
-- `progress` — append a stage note to the task doc, log, and board.
-- `complete` — write the completion record, free the lock, move the task to `review`.
-- `gate approve|reject` — `review -> done` (auto-checks the plan box) or `-> blocked`.
+- `note` — append a stage note to the task doc, log, and board.
+- `finish` — write the completion record, free the lock, move the task to `review`.
+- `gate approve|reject` — optional review gate: `review -> done` (auto-checks the plan box) or `-> blocked`.
 - `board` / `task` / `agents` — machine-readable task board, task scaffolding, agent registry.
 - `refresh` — re-record doc hashes after the plan/rules/task docs changed.
+
+`start`, `progress`, and `complete` remain available as low-level equivalents for
+debugging and scripted migrations.
 
 ## Layer 2: Local Git Hooks
 

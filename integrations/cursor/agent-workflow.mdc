@@ -10,6 +10,9 @@ Use this rule in projects that install Agent Workflow Kit.
 Before editing:
 
 - Run `python3 tools/agentctl.py work --agent cursor`.
+- If no task exists for the current user request, create and start one yourself:
+  `python3 tools/agentctl.py work --agent cursor --auto-create --title "<current request>" --scope "<paths>"`.
+- Humans normally steer by editing `.agent/PROJECT_PLAN.md` and task docs. Re-read those files and run `python3 tools/agentctl.py refresh` when they change.
 
 During work:
 
