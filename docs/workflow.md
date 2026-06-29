@@ -4,10 +4,10 @@
 
 1. Supervisor writes or updates `.agent/PROJECT_PLAN.md`.
 2. Supervisor creates a task document for each bounded unit of work.
-3. Worker runs `agentctl start` before editing.
-4. Worker records phase progress with `agentctl progress`.
+3. Worker runs `agentctl work --agent <name>` before editing.
+4. Worker records phase progress with `agentctl note`.
 5. Worker creates handoff packets for downstream tasks with `agentctl handoff create`.
-6. Worker completes with `agentctl complete`.
+6. Worker completes with `agentctl finish`.
 7. Git hooks verify active task context, doc updates, and commit format.
 
 ## Multi-Agent Split
@@ -29,6 +29,21 @@ T-199 supervisor scope=data/manifest + validation report
 ```
 
 Each worker writes only its scope. The supervisor owns manifest merge and final validation.
+
+## Low-Friction Agent Loop
+
+For normal workers, prefer the short loop:
+
+```bash
+agentctl work --agent codex
+agentctl note "short factual progress update"
+agentctl finish --summary "what changed" --tests "commands run"
+git commit -m "feat(scope): summary" -m "Refs: T-101"
+git push
+```
+
+`start`, `progress`, and `complete` remain available as explicit low-level commands,
+but everyday agents should not need them.
 
 ## Handoffs
 

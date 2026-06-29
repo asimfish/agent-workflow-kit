@@ -7,10 +7,13 @@ This kit uses three enforcement layers.
 `AGENTS.md`, `.cursor/rules/agent-workflow.mdc`, `.cursor/hooks.json`, `.codex/hooks.json`, and `.claude/settings.json` tell the agent what must happen before work starts:
 
 ```bash
-python3 tools/agentctl.py start --task T-001 --agent codex
+python3 tools/agentctl.py work --agent codex
 ```
 
-`start` creates a read receipt with hashes for the plan, task index, rules, and task document. Later checks can detect when those files changed and require `agentctl refresh`.
+`work` resumes the current task or auto-claims the next assigned `ready`/`todo`
+task, then creates a read receipt with hashes for the plan, task index, rules,
+and task document. Later checks can detect when those files changed and require
+`agentctl refresh`.
 
 Codex, Claude Code, and Cursor project hooks call `tools/agent_workflow_hook.py`. The session-start hook injects the protocol into context, the pre-tool hook blocks mutating tools when no active task session exists, and the stop hook reminds the agent to record progress or complete the task (which updates the plan and task doc).
 

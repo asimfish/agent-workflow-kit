@@ -170,9 +170,9 @@ def session_start() -> int:
     if not (root / ".agent").exists():
         return 0
     message = (
-        "This repo uses Agent Workflow Kit. Before editing, read AGENTS.md, "
-        ".agent/PROJECT_PLAN.md, .agent/TASKS.md, and the assigned task doc. "
-        "Then run: python3 tools/agentctl.py start --task <task-id> --agent <agent-name>."
+        "This repo uses Agent Workflow Kit. Before editing, enter the autonomous work loop:\n"
+        "  python3 tools/agentctl.py work --agent <agent-name>\n"
+        "It will resume the current task or auto-claim the next assigned task, then print the required focus."
     )
     focus = current_focus(root)
     if focus:
@@ -196,8 +196,7 @@ def pre_tool_use() -> int:
         return block(
             "PreToolUse",
             "Agent Workflow Kit blocked this write/mutating action because no active task session exists. "
-            "Read AGENTS.md, .agent/PROJECT_PLAN.md, .agent/TASKS.md, and the task doc, then run: "
-            "python3 tools/agentctl.py start --task <task-id> --agent <agent-name>.",
+            "Run: python3 tools/agentctl.py work --agent <agent-name>.",
         )
     ok, message = check_manual(root)
     if not ok:

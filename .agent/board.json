@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-29 03:06:00",
+  "updated_at": "2026-06-29 13:18:03",
   "tasks": {
     "AGENT-002": {
       "title": "dogfood workflow kit in super_project",
@@ -30,6 +30,22 @@
       "deps": [],
       "created_at": "2026-06-29 03:01:11",
       "updated_at": "2026-06-29 03:01:11"
+    },
+    "AGENT-004": {
+      "title": "simplify autonomous agent interaction",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/",
+        "docs/",
+        "README.md",
+        "AGENTS.md",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-06-29 13:13:56",
+      "updated_at": "2026-06-29 13:18:03"
     }
   }
 }

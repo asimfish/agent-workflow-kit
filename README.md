@@ -63,10 +63,13 @@ tools/agent_workflow_hook.py   # lifecycle hook bridge (Codex/Claude/Cursor)
 agentctl init [path]                 scaffold + distribute agentctl + git hooks
 agentctl task create --id --title [--owner --scope --deps]
 agentctl agents add --id --role [--backend --scope --tools --model]
-agentctl start --task --agent [--scope --force]   read receipt + lock + in_progress
+agentctl work --agent [--task]       resume current work or claim next assigned task
+agentctl start --task --agent [--scope --force]   low-level explicit task start
 agentctl focus [--task]              print task goal/scope/TODO (re-read anytime)
-agentctl progress --note             append a stage note (task doc + log + board)
-agentctl complete --summary [--tests] completion record + release lock -> review
+agentctl note "..."                  shorthand progress note for the active task
+agentctl progress --note             low-level progress command
+agentctl finish --summary [--tests]  shorthand completion command -> review
+agentctl complete --summary [--tests] low-level completion command -> review
 agentctl gate approve|reject --task --by [--note]   review -> done / blocked
 agentctl handoff create --from --to --summary [--artifact]   write task packet
 agentctl handoff list|show|mark                       inspect or close packets
@@ -84,13 +87,13 @@ Exit codes: `0` ok, `1` violations, `2` usage error, `3` no active session.
 
 1. Supervisor updates `PROJECT_PLAN.md` and the board (`agentctl task create`).
 2. Supervisor writes a task doc per bounded unit of work.
-3. Worker runs `agentctl start` (acquires the lock, checks write-scope conflicts,
-   injects the task focus) before editing.
-4. Worker records progress with `agentctl progress`.
+3. Worker runs `agentctl work --agent <name>` before editing. This resumes an
+   active task or auto-claims the next assigned `ready`/`todo` task.
+4. Worker records progress with `agentctl note`.
 5. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
 6. On resume/compaction the session-start hook re-injects the focus; run
    `agentctl focus` to re-anchor a long task at any time.
-7. Worker runs `agentctl complete` (task -> `review`, lock released).
+7. Worker runs `agentctl finish` (task -> `review`, lock released).
 8. Reviewer runs `agentctl gate approve` (task -> `done`, plan box auto-checked).
 9. Git hooks verify session, doc updates, commit format, task IDs, and review/done
    state before commit/push.
@@ -109,6 +112,26 @@ agentctl task create --id T-199 --title "merge + validate" --owner supervisor --
 
 `agentctl start` refuses to start a task whose write scope overlaps another
 in-progress task owned by a different agent, so agents do not clobber each other.
+
+## Intended interaction model
+
+After installation, humans should not need to drive every task step. A normal
+agent prompt can be as small as:
+
+```text
+Use the installed Agent Workflow Kit. Run `python3 tools/agentctl.py work --agent codex`,
+follow the printed focus, update progress with `agentctl note`, finish with
+`agentctl finish`, then commit and push using the required task ID.
+```
+
+Humans mostly do periodic steering:
+
+```bash
+agentctl board
+agentctl task show T-101
+# edit PROJECT_PLAN.md / task docs if direction changed
+agentctl gate approve --task T-101 --by human
+```
 
 ## Status machine
 

@@ -5,9 +5,12 @@ Dependency-free (stdlib only), Python 3.8+.
 
 Commands:
   init       scaffold workflow files; distribute agentctl.py + git hooks
+  work       resume current work or auto-claim the next assigned task
   start      begin a task session: read receipt + lock + board -> in_progress
   focus      print the active task focus (goal/scope/todo) -- re-read anytime
+  note       shorthand progress note for the active task
   progress   append a progress note to the active task
+  finish     shorthand complete command for the active task
   complete   move the active task to review (write completion record, free lock)
   gate       approve/reject a task in review (-> done / blocked)
   handoff    create/list/show/close cross-agent task packets
@@ -305,6 +308,47 @@ def _update_tasks_index(root: Path, task: str, *, status: str | None = None,
         _write(path, "\n".join(out) + "\n")
 
 
+def _task_status(root: Path, task: str) -> str:
+    board = _load_board(root)
+    return (board.get("tasks", {}).get(task) or {}).get("status") or ""
+
+
+def _deps_satisfied(board: dict, task: dict) -> bool:
+    tasks = board.get("tasks", {})
+    for dep in task.get("deps") or []:
+        if (tasks.get(dep) or {}).get("status") not in {"approved", "done"}:
+            return False
+    return True
+
+
+def _agent_can_take(agent: str, task: dict) -> bool:
+    owner = task.get("owner")
+    if not owner or owner in {"-", "unassigned", "any"}:
+        return True
+    if owner == agent:
+        return True
+    return agent in {"supervisor", "human"}
+
+
+def _select_next_task(root: Path, agent: str) -> str | None:
+    board = _load_board(root)
+    candidates = []
+    priority = {"ready": 0, "todo": 1}
+    for tid, task in board.get("tasks", {}).items():
+        status = task.get("status")
+        if status not in priority:
+            continue
+        if not _agent_can_take(agent, task):
+            continue
+        if not _deps_satisfied(board, task):
+            continue
+        candidates.append((priority[status], task.get("created_at") or "", tid))
+    if not candidates:
+        return None
+    candidates.sort()
+    return candidates[0][2]
+
+
 # ---------- commands ----------
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -390,6 +434,29 @@ def _print_focus(root: Path, task: str) -> None:
         print(f"(no task doc at {WORKFLOW_DIR}/{TASKS_DIR}/{task}.md)")
     print("Required reading: AGENTS.md, .agent/PROJECT_PLAN.md, and the task doc above.")
     print("=== end focus ===")
+
+
+def cmd_work(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
+    if args.task:
+        start_args = argparse.Namespace(task=args.task, agent=agent, scope=args.scope, force=args.force)
+        return cmd_start(start_args)
+    st = _load_session(root)
+    active = st.get("task")
+    if active and _task_status(root, active) == "in_progress" and not args.force:
+        print(f"agentctl: resuming active task {active} (agent={st.get('agent') or agent})")
+        _print_focus(root, active)
+        return 0
+    task = _select_next_task(root, agent)
+    if not task:
+        print(f"agentctl: no ready/todo task assigned to {agent}.")
+        print("agentctl: ask the supervisor to update .agent/PROJECT_PLAN.md or create a task:")
+        print("  python3 tools/agentctl.py task create --id T-001 --title \"...\" --owner " + agent + " --scope path/")
+        return 1
+    print(f"agentctl: auto-selected {task} for {agent}")
+    start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force)
+    return cmd_start(start_args)
 
 
 def cmd_start(args: argparse.Namespace) -> int:
@@ -485,6 +552,13 @@ def cmd_progress(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_note(args: argparse.Namespace) -> int:
+    note = args.note
+    if isinstance(note, list):
+        note = " ".join(note)
+    return cmd_progress(argparse.Namespace(note=note))
+
+
 def cmd_complete(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
@@ -525,6 +599,18 @@ def cmd_complete(args: argparse.Namespace) -> int:
     _save_session(root, st)
     print(f"agentctl: {task} -> review. run 'agentctl gate approve --task {task} --by <reviewer>' to finish.")
     return 0
+
+
+def cmd_finish(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    st = _require_session(root)
+    task = st["task"]
+    summary = args.summary
+    if not summary:
+        title = (_load_board(root).get("tasks", {}).get(task) or {}).get("title") or task
+        summary = f"Completed {task}: {title}"
+    tests = args.tests or "not recorded"
+    return cmd_complete(argparse.Namespace(summary=summary, tests=tests))
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
@@ -1036,6 +1122,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("path", nargs="?", default=".")
     sp.set_defaults(func=cmd_init)
 
+    sp = sub.add_parser("work")
+    sp.add_argument("--agent")
+    sp.add_argument("--task")
+    sp.add_argument("--scope")
+    sp.add_argument("--force", action="store_true")
+    sp.set_defaults(func=cmd_work)
+
     sp = sub.add_parser("start")
     sp.add_argument("--task", required=True)
     sp.add_argument("--agent")
@@ -1051,10 +1144,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--note")
     sp.set_defaults(func=cmd_progress)
 
+    sp = sub.add_parser("note")
+    sp.add_argument("note", nargs="+")
+    sp.set_defaults(func=cmd_note)
+
     sp = sub.add_parser("complete")
     sp.add_argument("--summary")
     sp.add_argument("--tests")
     sp.set_defaults(func=cmd_complete)
+
+    sp = sub.add_parser("finish")
+    sp.add_argument("--summary")
+    sp.add_argument("--tests")
+    sp.set_defaults(func=cmd_finish)
 
     sp = sub.add_parser("gate")
     sp.add_argument("action", choices=["approve", "reject"])

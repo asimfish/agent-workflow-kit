@@ -9,20 +9,15 @@ Use this rule in projects that install Agent Workflow Kit.
 
 Before editing:
 
-- Read `AGENTS.md`.
-- Read `.agent/PROJECT_PLAN.md`.
-- Read `.agent/TASKS.md`.
-- Read the assigned `.agent/tasks/<task-id>.md`.
-- Run `python3 tools/agentctl.py start --task <task-id> --agent cursor`.
+- Run `python3 tools/agentctl.py work --agent cursor`.
 
 During work:
 
 - Keep edits inside the task write scope.
-- Run `python3 tools/agentctl.py progress` after each meaningful phase.
+- Run `python3 tools/agentctl.py note "<short factual update>"` after each meaningful phase.
 - Run `python3 tools/agentctl.py refresh` after re-reading changed plan or rule files.
 
 Before completion:
 
 - Run task verification commands.
-- Run `python3 tools/agentctl.py complete`.
-
+- Run `python3 tools/agentctl.py finish`.

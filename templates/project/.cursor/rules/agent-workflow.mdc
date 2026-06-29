@@ -7,15 +7,10 @@ alwaysApply: true
 
 Before editing this repository:
 
-1. Read `AGENTS.md`.
-2. Read `.agent/PROJECT_PLAN.md`.
-3. Read `.agent/TASKS.md`.
-4. Read the assigned `.agent/tasks/<task-id>.md`.
-5. Read `.agent/rules/agent-operating-rules.md`.
-6. Run:
+Run the autonomous work entry:
 
 ```bash
-python3 tools/agentctl.py start --task <task-id> --agent cursor
+python3 tools/agentctl.py work --agent cursor
 ```
 
 During work:
@@ -24,7 +19,7 @@ During work:
 - Update progress after each meaningful phase:
 
 ```bash
-python3 tools/agentctl.py progress --task <task-id> --status in-progress --note "<short factual update>"
+python3 tools/agentctl.py note "<short factual update>"
 ```
 
 - If plan or rules changed, re-read them and run:
@@ -36,7 +31,7 @@ python3 tools/agentctl.py refresh
 Before completion:
 
 ```bash
-python3 tools/agentctl.py complete --task <task-id> --summary "<what changed>" --tests "<commands run>"
+python3 tools/agentctl.py finish --summary "<what changed>" --tests "<commands run>"
 ```
 
 Commits must use Conventional Commits and include the active task ID, for example `Refs: T-001`.

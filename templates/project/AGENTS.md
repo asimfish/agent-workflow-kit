@@ -4,18 +4,15 @@ All agents working in this repository must follow this entry protocol.
 
 ## Before Any Edit
 
-1. Read this file completely.
-2. Read `.agent/PROJECT_PLAN.md`.
-3. Read `.agent/TASKS.md`.
-4. Read the assigned `.agent/tasks/<task-id>.md`.
-5. Read `.agent/rules/agent-operating-rules.md` and the domain rule files relevant to the task.
-6. Run:
+Run the autonomous work entry:
 
 ```bash
-python3 tools/agentctl.py start --task <task-id> --agent <agent-name>
+python3 tools/agentctl.py work --agent <agent-name>
 ```
 
-Do not edit project files before the start command succeeds.
+This resumes the current task or claims the next assigned `ready`/`todo` task,
+records the read receipt, acquires the task lock, and prints the required focus.
+Do not edit project files before this command succeeds.
 
 Codex and Claude Code project hooks also block mutating tools when no active task session exists. Git hooks and CI remain the final enforcement layer.
 
@@ -26,7 +23,7 @@ Codex and Claude Code project hooks also block mutating tools when no active tas
 - After each meaningful phase, run:
 
 ```bash
-python3 tools/agentctl.py progress --task <task-id> --status in-progress --note "<short factual update>"
+python3 tools/agentctl.py note "<short factual update>"
 ```
 
 - If `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, or `.agent/rules/*.md` changes during the session, re-read the changed files and run:
@@ -44,7 +41,7 @@ Before claiming completion:
 3. Run:
 
 ```bash
-python3 tools/agentctl.py complete --task <task-id> --summary "<what changed>" --tests "<commands run>"
+python3 tools/agentctl.py finish --summary "<what changed>" --tests "<commands run>"
 ```
 
 Before pushing to GitHub, the task must be `review` or `done`. If the task is done, `.agent/PROJECT_PLAN.md` must show it as checked off and the task document must have a filled Completion Record.

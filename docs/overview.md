@@ -36,11 +36,11 @@ agentctl gate approve --task T-101 --by you      # review -> done
 ### Agent (Worker) — claim + update + deliver
 
 ```bash
-agentctl start --task T-101 --agent agent1       # lock + read plan + in_progress
-agentctl focus                                   # re-read the current task anytime
-agentctl progress --note "collected 1-10"
+agentctl work --agent agent1                     # resume or auto-claim assigned work
+agentctl focus                                   # optional: re-read the current task anytime
+agentctl note "collected 1-10"
 agentctl handoff create --from T-101 --to T-199 --summary "slice ready" --artifact data/raw/001-020/manifest.json
-agentctl complete --summary "..." --tests "..."  # -> review
+agentctl finish --summary "..." --tests "..."    # -> review
 ```
 
 ### Automatic (hooks, no manual step)
@@ -64,7 +64,7 @@ Commit/push: git hooks reject non-compliant commits automatically
 ## Command reference
 
 ```text
-init  start  focus  progress  complete  gate  handoff  refresh  board  task  agents  check  status
+init  work  note  finish  start  focus  progress  complete  gate  handoff  refresh  board  task  agents  check  status
 ```
 
 See `workflow.md` for the core loop and `enforcement.md` for the enforcement model.
