@@ -51,6 +51,15 @@ Atomic commit checklist:
 - [ ] Keep each commit scoped to one task.
 - [ ] Stage the relevant task doc or progress log when staging code/data changes.
 
+Agent commit sequence:
+
+1. Run project verification commands or record why a check is unavailable.
+2. Update the task doc verification/artifacts/follow-ups.
+3. Run `python3 tools/agentctl.py finish` when the task is ready for review.
+4. Stage code/data changes together with the matching `.agent/` updates.
+5. Commit with Conventional Commits and `Refs: <task-id>`.
+6. Push only after the task is `review`, `approved`, or `done`.
+
 ## Safety Rules (non-negotiable)
 
 - Before `reset --hard`, `clean -fd`, `branch -D`, `push --delete`, or any
@@ -86,6 +95,9 @@ Refs: T-001
 
 Do not create or merge PRs with failing verification. Require review (human or
 reviewer agent) before merging to a protected branch.
+
+Do not leave template placeholders blank. Use `none` or `not run: <reason>` when
+there is no value.
 
 ## Push Gate
 

@@ -526,9 +526,6 @@ def cmd_start(args: argparse.Namespace) -> int:
             return 1
     _save_json(lp, {"task": task, "agent": agent, "pid": os.getpid(),
                     "scope": scope, "acquired_at": _now()})
-    # read receipt
-    _save_session(root, {"task": task, "agent": agent, "started_at": _now(),
-                         "scope": scope, "notes": [], "doc_hashes": _hash_docs(root, task)})
     # board -> in_progress
     now = _now()
     e = tasks.setdefault(task, {"title": task, "status": "todo", "owner": agent,
@@ -540,6 +537,10 @@ def cmd_start(args: argparse.Namespace) -> int:
     e["updated_at"] = now
     _save_board(root, board)
     _update_tasks_index(root, task, status="in_progress", owner=agent, scope=e.get("scope"), title=e.get("title"))
+    _set_task_doc_status(root, task, "in_progress")
+    # Save the read receipt after all start-side document/status writes.
+    _save_session(root, {"task": task, "agent": agent, "started_at": now,
+                         "scope": scope, "notes": [], "doc_hashes": _hash_docs(root, task)})
     print(f"agentctl: started {task} (agent={agent}) -> in_progress")
     _print_focus(root, task)
     return 0

@@ -23,6 +23,29 @@ Humans may edit plan or task docs at any time to steer the project. Agents must
 notice those edits, re-read the changed documents, run `agentctl refresh`, and
 continue. Human document review is useful, but not a required workflow step.
 
+## Required Formats
+
+Plan task board rows:
+
+```markdown
+- [ ] T-001 - short title (owner: agent-id)
+```
+
+Task stage log rows:
+
+```markdown
+- YYYY-MM-DD HH:MM:SS short factual update
+```
+
+Plan change log rows:
+
+```markdown
+- YYYY-MM-DD HH:MM:SS - agent-or-human - change and reason.
+```
+
+Completion records are written by `agentctl finish`; agents should fill missing
+artifacts, risks, and follow-ups before finishing.
+
 ## Cleanup
 
 - Completed task docs remain in `.agent/tasks/`.

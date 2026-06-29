@@ -2,6 +2,14 @@
 
 This file is the long-term source of truth for coordinated agent work.
 
+## Format Rules
+
+- Keep this file skimmable. Durable direction belongs here; detailed evidence belongs in task docs or logs.
+- Preserve these top-level headings unless a project owner explicitly changes the schema.
+- Use the shared status vocabulary: `todo`, `ready`, `in_progress`, `review`, `approved`, `done`, `blocked`, `failed`.
+- Keep task IDs stable. Do not rename a task ID after work starts; create a replacement task and record the reason in Change Log.
+- When a human edits this file, agents must re-read it and run `python3 tools/agentctl.py refresh` before continuing.
+
 ## Long-Term Goal
 
 Define the durable project outcome in one or two paragraphs.
@@ -21,6 +29,9 @@ Define the durable project outcome in one or two paragraphs.
 
 ## Task Board
 
+Format: `- [ ] T-001 - short task title (owner: agent-id)`.
+Use `[x]` only when the task is `done`.
+
 - [ ] T-000 - Replace this starter task with real work (owner: supervisor)
 
 ## Agent Allocation
@@ -30,6 +41,8 @@ Define the durable project outcome in one or two paragraphs.
 | supervisor | planning, task split, final review | T-000 | `.agent/`, docs |
 
 ## Dependencies
+
+Format: `- T-002 depends on T-001 because <reason>.`
 
 - T-000 has no dependencies.
 
@@ -46,5 +59,6 @@ Define the durable project outcome in one or two paragraphs.
 
 ## Change Log
 
-- Initial plan created by Agent Workflow Kit.
+Format: `- YYYY-MM-DD HH:MM:SS - <agent-or-human> - <change and reason>.`
 
+- Initial plan created by Agent Workflow Kit.

@@ -17,6 +17,32 @@
 - When a dependency changes, update both `.agent/PROJECT_PLAN.md` and `.agent/TASKS.md`.
 - Archive obsolete detail instead of deleting useful history.
 
+## Plan Edit Rules
+
+- Preserve the `PROJECT_PLAN.md` top-level heading schema.
+- Edit strategy, milestones, dependencies, risks, verification, and change log in place.
+- Add task board rows only in this format: `- [ ] T-001 - short title (owner: agent-id)`.
+- Check a task row only when the machine board status is `done`.
+- Record non-trivial plan changes in `## Change Log` with timestamp, editor, change, and reason.
+
+## Task Doc Edit Rules
+
+- Preserve the task document top-level heading schema.
+- Keep `Task Contract` stable once work begins; if it changes, record why in `Stage Log`.
+- Use `Stage Plan` as the current TODO checklist. Do not delete completed stages.
+- Use `Stage Log` for short factual progress entries only.
+- Use `Verification` for commands, results, skipped checks, and reasons.
+- Use `Completion Record` only when the task is ready for review.
+
+## Agent Update Order
+
+For normal work, agents update documents in this order:
+
+1. Before scope or acceptance criteria changes: update the task contract and, if needed, the plan.
+2. During work: append a short `agentctl note` progress entry.
+3. Before finishing: update verification, artifacts, risks, and follow-ups.
+4. Finish through `agentctl finish` so status and completion data stay synchronized.
+
 ## Task Doc Quality Bar
 
 A task doc is complete only if a fresh agent can answer:
@@ -46,4 +72,3 @@ todo -> ready -> in_progress -> review -> approved -> done
 - Every write to a plan/task/board file updates its `last_updated` (or appends a
   dated log line). A fresh agent should be able to trust the newest timestamp.
 - Keep `.agent/logs/*` append-only; never rewrite history, archive instead.
-

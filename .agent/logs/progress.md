@@ -13,3 +13,7 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-06-29 13:37:29 [AGENT-005] Defined AGENT-005 around auto task creation and optional human steering.
 - 2026-06-29 13:43:11 [AGENT-005] Implemented work --auto-create and updated docs/hooks so humans only steer through plan/task files.
 - 2026-06-29 13:43:56 [AGENT-005] Dogfooded fresh-project auto-create flow without any pre-created worker task.
+- 2026-06-29 13:49:18 [AGENT-006] Audited existing plan/task/GitHub templates and identified missing format invariants.
+- 2026-06-29 13:52:17 [AGENT-006] Strengthened plan/task/GitHub templates and synchronized task doc status on work start.
+- 2026-06-29 13:53:05 [AGENT-006] Fixed start receipt ordering so generated task status updates do not immediately stale the session.
+- 2026-06-29 13:54:06 [AGENT-006] Verified fresh project templates and generated task docs after receipt-order fix.

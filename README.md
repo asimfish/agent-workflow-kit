@@ -57,6 +57,19 @@ tools/agent_workflow_hook.py   # lifecycle hook bridge (Codex/Claude/Cursor)
   state/  (current_session.json, locks/  — gitignored, local only)
 ```
 
+## Template Coverage
+
+Installed projects include templates and rules for the three documents that most
+often become messy:
+
+- Plan format: `.agent/PROJECT_PLAN.md` defines fixed sections, task-board row
+  format, dependency format, and change-log format.
+- Task records: `.agent/tasks/_template.md` defines task contract, write scope,
+  stage checklist, stage log format, verification, and completion record.
+- GitHub workflow: `.agent/rules/github-standards.md`, `.github/PULL_REQUEST_TEMPLATE.md`,
+  and `.githooks/` define Conventional Commits, task IDs, PR fields, staged doc
+  updates, secret checks, and push gates.
+
 ## Commands
 
 ```text

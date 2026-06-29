@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-29 13:44:08",
+  "updated_at": "2026-06-29 13:54:06",
   "tasks": {
     "AGENT-002": {
       "title": "dogfood workflow kit in super_project",
@@ -62,6 +62,22 @@
       "deps": [],
       "created_at": "2026-06-29 13:37:03",
       "updated_at": "2026-06-29 13:44:08"
+    },
+    "AGENT-006": {
+      "title": "harden document and github templates",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/",
+        "docs/",
+        "README.md",
+        "AGENTS.md",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-06-29 13:48:50",
+      "updated_at": "2026-06-29 13:54:06"
     }
   }
 }
