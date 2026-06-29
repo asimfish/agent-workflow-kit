@@ -8,3 +8,4 @@
 | AGENT-004 | done | codex | `tools/, templates/, docs/, README.md, AGENTS.md, .agent/` | [.agent/tasks/AGENT-004.md](tasks/AGENT-004.md) | simplify autonomous agent interaction |
 | AGENT-005 | done | codex | `tools/, templates/, docs/, README.md, AGENTS.md, .agent/` | [.agent/tasks/AGENT-005.md](tasks/AGENT-005.md) | make human steering optional |
 | AGENT-006 | done | codex | `tools/, templates/, docs/, README.md, AGENTS.md, .agent/` | [.agent/tasks/AGENT-006.md](tasks/AGENT-006.md) | harden document and github templates |
+| AGENT-007 | done | codex | `.agent/, docs/, README.md, tools/, templates/, AGENTS.md, .githooks/, .github/` | [.agent/tasks/AGENT-007.md](tasks/AGENT-007.md) | validate workflow against original requirements |
