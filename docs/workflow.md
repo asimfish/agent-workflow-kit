@@ -3,12 +3,13 @@
 ## Core Loop
 
 1. Human or supervisor agent keeps `.agent/PROJECT_PLAN.md` and task docs directionally correct.
-2. Worker runs `agentctl work --agent <name>` before editing.
-3. If no task exists for the current request, the worker runs `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
-4. Worker records phase progress with `agentctl note`.
-5. Worker creates handoff packets for downstream tasks with `agentctl handoff create`.
-6. Worker completes with `agentctl finish`.
-7. Git hooks verify active task context, doc updates, and commit format.
+2. Human starts a worker with `按 .agent 规范开始工作。` or an equivalent task request.
+3. Worker reads `.agent/WORKFLOW_ENTRY.md` and runs `agentctl work --agent <name>` before editing.
+4. If no task exists for the current request, the worker runs `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
+5. Worker records phase progress with `agentctl note`.
+6. Worker creates handoff packets for downstream tasks with `agentctl handoff create`.
+7. Worker completes with `agentctl finish`.
+8. Git hooks verify active task context, doc updates, and commit format.
 
 ## Multi-Agent Split
 
@@ -32,7 +33,13 @@ Each worker writes only its scope. The supervisor owns manifest merge and final 
 
 ## Low-Friction Agent Loop
 
-For normal workers, prefer the short loop:
+Humans do not need to send the loop. They can say:
+
+```text
+按 .agent 规范开始工作。
+```
+
+Agents then run the short loop themselves:
 
 ```bash
 agentctl work --agent codex

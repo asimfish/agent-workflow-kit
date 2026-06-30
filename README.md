@@ -35,18 +35,31 @@ git clone https://github.com/asimfish/super_project.git && cd super_project
 ### Agent Bootstrap
 
 If you give this repository link to an agent, the agent should do the install
-itself. A minimal request is:
+itself. A minimal install request is:
 
 ```text
-Install https://github.com/asimfish/super_project.git into this project and then
-follow the installed Agent Workflow Kit. After installation, work autonomously:
-read AGENTS.md and .agent/PROJECT_PLAN.md, run work/work --auto-create as needed,
-record progress with note, finish with finish, and commit/push using the required
-task ID and GitHub rules.
+Install https://github.com/asimfish/super_project.git into this project.
 ```
 
 After `install.sh` runs, the target project owns its local `.agent/` directory.
 That directory lives in the target project root, not globally.
+
+After installation, humans can start agents with one short prompt:
+
+```text
+按 .agent 规范开始工作。
+```
+
+English equivalent:
+
+```text
+Follow .agent and start work.
+```
+
+The installed `AGENTS.md`, `.agent/WORKFLOW_ENTRY.md`, and agent hook configs
+tell Codex, Claude Code, Cursor, and similar tools how to translate that short
+prompt into the full workflow: read the plan and task docs, run `agentctl work`,
+record `note`, `finish` phases, and obey GitHub commit/push rules.
 
 `init` will:
 
@@ -72,6 +85,7 @@ tools/agent_workflow_hook.py   # lifecycle hook bridge (Codex/Claude/Cursor)
   board.json        agents.json         # machine-readable board + agent registry
   tasks/  decisions/  handoffs/  bus/ gates/ logs/
   rules/  (code / documentation / github / agent-operating standards)
+  WORKFLOW_ENTRY.md  # one-file entry protocol for all agents
   state/  (current_session.json, locks/  — gitignored, local only)
 ```
 
@@ -118,18 +132,19 @@ Exit codes: `0` ok, `1` violations, `2` usage error, `3` no active session.
 ## Core loop
 
 1. Human or supervisor agent keeps `PROJECT_PLAN.md` and task docs directionally correct.
-2. Worker runs `agentctl work --agent <name>` before editing. This resumes an
+2. Human starts a worker with `按 .agent 规范开始工作。` or an equivalent task request.
+3. Worker reads `.agent/WORKFLOW_ENTRY.md` and runs `agentctl work --agent <name>` before editing. This resumes an
    active task or auto-claims the next assigned `ready`/`todo` task.
-3. If no task exists, the worker creates and starts one from the current request
+4. If no task exists, the worker creates and starts one from the current request
    with `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
-4. Worker records progress with `agentctl note`.
-5. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
-6. On resume/compaction the session-start hook re-injects the focus; run
+5. Worker records progress with `agentctl note`.
+6. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
+7. On resume/compaction the session-start hook re-injects the focus; run
    `agentctl focus` to re-anchor a long task at any time.
-7. Worker runs `agentctl finish` (task -> `review`, lock released).
-8. Reviewer approval is optional for human oversight; when used, `agentctl gate approve`
+8. Worker runs `agentctl finish` (task -> `review`, lock released).
+9. Reviewer approval is optional for human oversight; when used, `agentctl gate approve`
    moves the task to `done` and checks the plan box.
-9. Git hooks verify session, doc updates, commit format, task IDs, and review/done
+10. Git hooks verify session, doc updates, commit format, task IDs, and review/done
    state before commit/push.
 
 ## Multi-agent split (example)
@@ -150,14 +165,10 @@ in-progress task owned by a different agent, so agents do not clobber each other
 ## Intended interaction model
 
 After installation, humans should not need to drive workflow commands. A normal
-agent prompt can be as small as:
+agent prompt is:
 
 ```text
-Use the installed Agent Workflow Kit autonomously. If a task exists, run
-`python3 tools/agentctl.py work --agent codex`; if no task exists for my request,
-run `python3 tools/agentctl.py work --agent codex --auto-create --title "<request>" --scope "<paths>"`.
-Follow the printed focus, update progress with `agentctl note`, finish with
-`agentctl finish`, then commit and push using the required task ID.
+按 .agent 规范开始工作。
 ```
 
 Humans mostly inspect and edit durable documents:

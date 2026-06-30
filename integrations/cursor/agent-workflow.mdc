@@ -7,20 +7,15 @@ alwaysApply: true
 
 Use this rule in projects that install Agent Workflow Kit.
 
-Before editing:
+Before editing, read and follow `.agent/WORKFLOW_ENTRY.md`.
 
-- Run `python3 tools/agentctl.py work --agent cursor`.
-- If no task exists for the current user request, create and start one yourself:
-  `python3 tools/agentctl.py work --agent cursor --auto-create --title "<current request>" --scope "<paths>"`.
-- Humans normally steer by editing `.agent/PROJECT_PLAN.md` and task docs. Re-read those files and run `python3 tools/agentctl.py refresh` when they change.
+The human can start with only:
 
-During work:
+```text
+按 .agent 规范开始工作。
+```
 
-- Keep edits inside the task write scope.
-- Run `python3 tools/agentctl.py note "<short factual update>"` after each meaningful phase.
-- Run `python3 tools/agentctl.py refresh` after re-reading changed plan or rule files.
-
-Before completion:
-
-- Run task verification commands.
-- Run `python3 tools/agentctl.py finish`.
+That short prompt means: run `python3 tools/agentctl.py work --agent cursor`
+before editing, auto-create a task if needed, follow the printed focus, record
+progress with `note`, finish with `finish`, and obey the GitHub rules under
+`.agent/rules/`.

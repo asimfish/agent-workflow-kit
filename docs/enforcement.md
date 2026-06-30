@@ -4,7 +4,18 @@ This kit uses three enforcement layers.
 
 ## Layer 1: Agent Entry Protocol
 
-`AGENTS.md`, `.cursor/rules/agent-workflow.mdc`, `.cursor/hooks.json`, `.codex/hooks.json`, and `.claude/settings.json` tell the agent what must happen before work starts:
+`.agent/WORKFLOW_ENTRY.md` is the single source of truth for startup behavior.
+`AGENTS.md`, `.cursor/rules/agent-workflow.mdc`, `.cursor/hooks.json`,
+`.codex/hooks.json`, and `.claude/settings.json` point the agent to that entry
+and tell it what must happen before work starts.
+
+The human prompt can be only:
+
+```text
+按 .agent 规范开始工作。
+```
+
+The agent expands that short prompt into:
 
 ```bash
 python3 tools/agentctl.py work --agent codex

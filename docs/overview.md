@@ -23,7 +23,14 @@ enforceable, plan-driven workflow for multiple AI agents. It has two layers:
 
 ## Interaction model
 
-The primary interface is the `agentctl` CLI plus automatic hooks, across two roles.
+The primary human interface is the project documents plus one short agent prompt:
+
+```text
+按 .agent 规范开始工作。
+```
+
+`.agent/WORKFLOW_ENTRY.md` is the single startup contract. Hooks and adapter
+files inject it into Codex, Claude Code, Cursor, and similar tools.
 
 ### Human (Supervisor / Reviewer) — optional steering
 
@@ -32,6 +39,8 @@ Humans normally inspect and edit `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, an
 ordinary agent work.
 
 ### Agent (Worker) — claim + update + deliver
+
+Agents translate the short prompt into the controller loop:
 
 ```bash
 agentctl work --agent agent1                     # resume or auto-claim assigned work

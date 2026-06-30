@@ -165,17 +165,36 @@ def current_focus(root: Path) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def workflow_entry(root: Path) -> str:
+    path = root / ".agent" / "WORKFLOW_ENTRY.md"
+    if path.is_file():
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+    return ""
+
+
 def session_start() -> int:
     root = find_root()
     if not (root / ".agent").exists():
         return 0
-    message = (
-        "This repo uses Agent Workflow Kit. Before editing, enter the autonomous work loop:\n"
-        "  python3 tools/agentctl.py work --agent <agent-name>\n"
-        "It will resume the current task or auto-claim the next assigned task, then print the required focus.\n"
-        "If no task is assigned for the current user request, create and start one yourself:\n"
-        "  python3 tools/agentctl.py work --agent <agent-name> --auto-create --title \"<current request>\" --scope \"<paths>\""
-    )
+    entry = workflow_entry(root)
+    if entry:
+        message = (
+            "This repo uses Agent Workflow Kit. Read and follow "
+            "`.agent/WORKFLOW_ENTRY.md` before editing. The human may only say "
+            "`按 .agent 规范开始工作。`; that short prompt means the full workflow below:\n\n"
+            + entry
+        )
+    else:
+        message = (
+            "This repo uses Agent Workflow Kit. Before editing, enter the autonomous work loop:\n"
+            "  python3 tools/agentctl.py work --agent <agent-name>\n"
+            "It will resume the current task or auto-claim the next assigned task, then print the required focus.\n"
+            "If no task is assigned for the current user request, create and start one yourself:\n"
+            "  python3 tools/agentctl.py work --agent <agent-name> --auto-create --title \"<current request>\" --scope \"<paths>\""
+        )
     focus = current_focus(root)
     if focus:
         message += (
@@ -198,7 +217,7 @@ def pre_tool_use() -> int:
         return block(
             "PreToolUse",
             "Agent Workflow Kit blocked this write/mutating action because no active task session exists. "
-            "Run: python3 tools/agentctl.py work --agent <agent-name>. "
+            "Read `.agent/WORKFLOW_ENTRY.md`, then run: python3 tools/agentctl.py work --agent <agent-name>. "
             "If no task exists for the current request, run: python3 tools/agentctl.py work --agent <agent-name> "
             "--auto-create --title \"<current request>\" --scope \"<paths>\".",
         )
