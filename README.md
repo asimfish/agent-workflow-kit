@@ -55,6 +55,8 @@ That directory lives in the target project root, not globally.
 - distribute `tools/agentctl.py` so the project's hooks can call it;
 - install the Git hooks into `.githooks/` and set `git config core.hooksPath .githooks`;
 - seed `.agent/board.json` and `.agent/agents.json`.
+- record `.agent/adoption.json` in existing Git repositories so pre-push checks
+  apply to new commits after installation, not to old project history.
 
 ## Layout (installed into a project)
 

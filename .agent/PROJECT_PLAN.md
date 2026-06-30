@@ -28,6 +28,7 @@ Define the durable project outcome in one or two paragraphs.
 | M1 | Define project workflow | in-progress | Plan, rules, hooks, and task docs exist |
 
 ## Task Board
+- [x] AGENT-009 - support adoption baseline for existing repositories (owner: codex)
 - [x] AGENT-008 - make agent bootstrap and github references explicit (owner: codex)
 - [x] AGENT-007 - validate workflow against original requirements (owner: codex)
 Format: `- [ ] T-001 - short task title (owner: agent-id)`.

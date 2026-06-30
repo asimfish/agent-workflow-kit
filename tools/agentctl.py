@@ -42,6 +42,7 @@ SESSION_FILE = "current_session.json"
 LOCKS_DIR = "locks"
 BOARD_FILE = "board.json"
 AGENTS_FILE = "agents.json"
+ADOPTION_FILE = "adoption.json"
 PLAN_FILE = "PROJECT_PLAN.md"
 TASKS_FILE = "TASKS.md"
 TASKS_DIR = "tasks"
@@ -180,12 +181,32 @@ def _agents_path(root: Path) -> Path:
     return root / WORKFLOW_DIR / AGENTS_FILE
 
 
+def _adoption_path(root: Path) -> Path:
+    return root / WORKFLOW_DIR / ADOPTION_FILE
+
+
 def _load_agents(root: Path) -> dict:
     return _load_json(_agents_path(root), {"version": 1, "agents": {}})
 
 
 def _save_agents(root: Path, data: dict) -> None:
     _save_json(_agents_path(root), data)
+
+
+def _record_adoption_baseline(root: Path) -> None:
+    """Record the pre-install HEAD so old history is not retroactively gated."""
+    path = _adoption_path(root)
+    if path.is_file():
+        return
+    head = _git(root, "rev-parse", "HEAD").strip()
+    if not head:
+        return
+    _save_json(path, {
+        "version": 1,
+        "created_at": _now(),
+        "ignore_commits_through": head,
+        "policy": "pre-push checks apply only to commits after this adoption baseline",
+    })
 
 
 def _bus_dir(root: Path, kind: str) -> Path:
@@ -414,6 +435,7 @@ def cmd_init(args: argparse.Namespace) -> int:
             "supervisor": {"role": "planning, task split, final review",
                            "backend": "any", "write_scope": [".agent/", "docs/"],
                            "tools": [], "model": ""}}})
+    _record_adoption_baseline(root)
     _ensure_gitignore(root)
     for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
         _bus_dir(root, kind).mkdir(parents=True, exist_ok=True)
@@ -1062,7 +1084,11 @@ def _check_commit_msg(root: Path, msg_file: str | None) -> list:
 def _check_prepush(root: Path, commit_range: str | None) -> list:
     if not commit_range:
         return ["pre-push mode requires --commit-range"]
-    log = _git(root, "log", "--format=%H%x1f%s%x1f%b%x1e", commit_range)
+    rev_args = [commit_range]
+    baseline = _load_json(_adoption_path(root), {}).get("ignore_commits_through")
+    if baseline and _git(root, "rev-parse", "--verify", f"{baseline}^{{commit}}").strip():
+        rev_args.append(f"^{baseline}")
+    log = _git(root, "log", "--format=%H%x1f%s%x1f%b%x1e", *rev_args)
     if not log:
         return []
     p = []
