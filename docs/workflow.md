@@ -7,9 +7,32 @@
 3. Worker reads `.agent/WORKFLOW_ENTRY.md` and runs `agentctl work --agent <name>` before editing.
 4. If no task exists for the current request, the worker runs `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
 5. Worker records phase progress with `agentctl note`.
-6. Worker creates handoff packets for downstream tasks with `agentctl handoff create`.
-7. Worker completes with `agentctl finish`.
-8. Git hooks verify active task context, doc updates, and commit format.
+6. Worker can run a bounded loop with `agentctl loop run <id> --once` when the
+   next step is triage, document hygiene, or experiment monitoring.
+7. Worker creates handoff packets for downstream tasks with `agentctl handoff create`.
+8. Worker completes with `agentctl finish`.
+9. Git hooks verify active task context, doc updates, and commit format.
+
+## Loop Contract
+
+Every loop in `.agent/loops/` must close six links:
+
+- Trigger: who or what starts this cycle.
+- Execute: which agent acts and what scope it may write.
+- Check: how the result is verified.
+- Feedback: how the result changes the next run.
+- Memory: where durable records are written.
+- Next: stop, hand off, continue later, or ask a human.
+
+Loops currently run one cycle at a time:
+
+```bash
+agentctl loop list
+agentctl loop run daily-plan-triage --once
+```
+
+This intentionally avoids unbounded token spend while still producing durable
+run reports in `.agent/loops/runs/`.
 
 ## Multi-Agent Split
 

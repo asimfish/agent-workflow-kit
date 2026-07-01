@@ -24,6 +24,7 @@ responsible for reading this file and operating the workflow.
 When working in this repository, do this before any edit or mutating command:
 
 1. Read `AGENTS.md`, `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, and the relevant task doc under `.agent/tasks/`.
+   If a loop is relevant, read `.agent/loops/` as well.
 2. Enter the autonomous work loop:
 
    ```bash
@@ -55,6 +56,15 @@ assigned, for example `codex`, `claude`, `cursor`, or `agent`.
   ```bash
   python3 tools/agentctl.py note "<short factual update>"
   ```
+
+- When the next step is a bounded feedback cycle, run one loop cycle only:
+
+  ```bash
+  python3 tools/agentctl.py loop run <loop-id> --once
+  ```
+
+  Every loop must close Trigger, Execute, Check, Feedback, Memory, and Next, and
+  must write a report under `.agent/loops/runs/`.
 
 ## Finish And Commit
 

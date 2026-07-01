@@ -22,3 +22,7 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-06-30 04:03:09 [AGENT-008] Added explicit agent bootstrap instructions and external GitHub standards references.
 - 2026-06-30 15:59:13 [AGENT-009] Implemented and verified adoption baseline support for existing repositories with old non-compliant history.
 - 2026-06-30 20:05:00 [T-001] Added .agent/WORKFLOW_ENTRY.md as the single startup entry and updated templates, hooks, and docs so humans can prompt agents with only '按 .agent 规范开始工作。'.
+- 2026-07-01 16:34:16 [T-002] Added minimal loop contract files and parser/runtime skeleton: loop list/show works and validates Trigger/Execute/Check/Feedback/Memory/Next sections.
+- 2026-07-01 16:36:44 [T-002] Loop feedback closed one real issue: daily-plan-triage found T-002 missing from TASKS.md, agentctl task-create detection was fixed, current task index/plan row was added, and the next triage run passed.
+- 2026-07-01 16:38:27 [T-002] Implemented loop runtime and templates; install smoke test confirmed loops install, task creation writes T-002 row despite template examples, daily-plan-triage writes a run report, and manual check passes.
+- 2026-07-01 16:39:57 [T-002] Final verification passed: py_compile, loop list, manual workflow check, git diff --check, and fresh install smoke test with loop run all succeeded.

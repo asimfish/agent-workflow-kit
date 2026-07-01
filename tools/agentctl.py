@@ -14,6 +14,7 @@ Commands:
   complete   move the active task to review (write completion record, free lock)
   gate       approve/reject a task in review (-> done / blocked)
   handoff    create/list/show/close cross-agent task packets
+  loop       list/show/run one-shot project loops
   refresh    re-record doc hashes after plan/rules/task docs changed
   board      print the task board (human or --json)
   task       create / show task documents and board entries
@@ -34,6 +35,7 @@ import re
 import string
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 WORKFLOW_DIR = ".agent"
@@ -55,6 +57,11 @@ BUS_INBOX = "inbox"
 BUS_OUTBOX = "outbox"
 BUS_DONE = "done"
 BUS_FAILED = "failed"
+LOOPS_DIR = "loops"
+LOOP_RUNS_DIR = "runs"
+LOOP_STATE_FILE = "state.json"
+
+LOOP_REQUIRED_SECTIONS = ("Trigger", "Execute", "Check", "Feedback", "Memory", "Next")
 
 STATUSES = ["todo", "ready", "in_progress", "blocked", "review", "approved", "done", "failed"]
 ACTIVE_STATUSES = {"in_progress"}
@@ -211,6 +218,18 @@ def _record_adoption_baseline(root: Path) -> None:
 
 def _bus_dir(root: Path, kind: str) -> Path:
     return root / WORKFLOW_DIR / BUS_DIR / kind
+
+
+def _loops_dir(root: Path) -> Path:
+    return root / WORKFLOW_DIR / LOOPS_DIR
+
+
+def _loop_runs_dir(root: Path) -> Path:
+    return _loops_dir(root) / LOOP_RUNS_DIR
+
+
+def _loop_state_path(root: Path) -> Path:
+    return _loops_dir(root) / LOOP_STATE_FILE
 
 
 def _lock_path(root: Path, task: str) -> Path:
@@ -779,14 +798,16 @@ def _task_create(root: Path, args: argparse.Namespace) -> int:
     tasks_md = root / WORKFLOW_DIR / TASKS_FILE
     ttext = _read(tasks_md)
     row = f"| {task} | todo | {owner or '-'} | `{', '.join(scope) or '-'}` | [.agent/tasks/{task}.md](tasks/{task}.md) | {title} |"
-    if "| ID |" in ttext and task not in ttext:
+    task_rows = _tasks_index_rows(ttext)
+    if "| ID |" in ttext and task not in task_rows:
         _write(tasks_md, ttext.rstrip("\n") + "\n" + row + "\n")
-    elif task in ttext:
+    elif task in task_rows:
         _update_tasks_index(root, task, status="todo", owner=owner or "-", scope=scope, title=title)
     plan = root / WORKFLOW_DIR / PLAN_FILE
     ptext = _read(plan)
     bullet = f"- [ ] {task} - {title}" + (f" (owner: {owner})" if owner else "")
-    if "## Task Board" in ptext and task not in ptext:
+    has_plan_bullet = re.search(rf"^- \[[ x]\][^\n]*{re.escape(task)}\b", ptext, flags=re.M)
+    if "## Task Board" in ptext and not has_plan_bullet:
         _write(plan, re.sub(r"(## Task Board\n)", rf"\1{bullet}\n", ptext, count=1))
     print(f"agentctl: created {task} ({title})")
     return 0
@@ -1017,12 +1038,356 @@ def cmd_handoff(args: argparse.Namespace) -> int:
     return 2
 
 
+# ---------- loops ----------
+
+def _loop_files(root: Path) -> list[Path]:
+    base = _loops_dir(root)
+    if not base.is_dir():
+        return []
+    return [
+        p for p in sorted(base.glob("*.md"))
+        if p.name != "_template.md" and not p.name.startswith(".")
+    ]
+
+
+def _loop_path(root: Path, loop_id: str) -> Path:
+    safe = loop_id.strip().replace("/", "-")
+    return _loops_dir(root) / f"{safe}.md"
+
+
+def _loop_contract(root: Path, loop_id: str) -> tuple[Path, str, list[str]]:
+    path = _loop_path(root, loop_id)
+    text = _read(path)
+    if not text:
+        return path, text, [f"missing loop file: {path.relative_to(root)}"]
+    missing = []
+    for section in LOOP_REQUIRED_SECTIONS:
+        if not _extract_section(text, f"## {section}"):
+            missing.append(section)
+    return path, text, missing
+
+
+def _loop_summary_line(root: Path, path: Path) -> dict:
+    text = _read(path)
+    missing = [
+        section for section in LOOP_REQUIRED_SECTIONS
+        if not _extract_section(text, f"## {section}")
+    ]
+    trigger = "-"
+    trig = _extract_section(text, "## Trigger").splitlines()
+    for line in trig:
+        clean = line.strip(" -")
+        if clean:
+            trigger = clean
+            break
+    return {
+        "id": path.stem,
+        "path": str(path.relative_to(root)),
+        "trigger": trigger,
+        "ok": not missing,
+        "missing": missing,
+    }
+
+
+def _format_bullets(items) -> str:
+    if not items:
+        return "- none"
+    return "\n".join(f"- {item}" for item in items)
+
+
+def _short_file_status(root: Path, rel: str) -> str:
+    path = root / rel
+    return "present" if path.exists() else "missing"
+
+
+def _tasks_index_rows(text: str) -> dict:
+    rows = {}
+    for line in text.splitlines():
+        if not line.startswith("| ") or line.startswith("| ID ") or line.startswith("|---"):
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) >= 6 and TASK_ID_RE.fullmatch(cells[0]):
+            rows[cells[0]] = {"status": cells[1], "owner": cells[2], "scope": cells[3], "title": cells[5]}
+    return rows
+
+
+def _loop_daily_plan_triage(root: Path) -> dict:
+    board = _load_board(root)
+    plan = _read(root / WORKFLOW_DIR / PLAN_FILE)
+    tasks_md = _read(root / WORKFLOW_DIR / TASKS_FILE)
+    task_rows = _tasks_index_rows(tasks_md)
+    checks = []
+    feedback = []
+    next_steps = []
+    tasks = board.get("tasks", {})
+
+    if not tasks:
+        checks.append("board has no tasks")
+    for tid, entry in sorted(tasks.items()):
+        row = task_rows.get(tid)
+        doc = root / WORKFLOW_DIR / TASKS_DIR / f"{tid}.md"
+        status = entry.get("status") or ""
+        if not row:
+            checks.append(f"{tid}: missing row in .agent/TASKS.md")
+        elif row["status"] != status:
+            checks.append(f"{tid}: board status {status} differs from TASKS.md status {row['status']}")
+        if not doc.is_file():
+            checks.append(f"{tid}: missing task doc")
+        if status == "review":
+            feedback.append(f"{tid}: awaiting review gate")
+        if status == "in_progress":
+            feedback.append(f"{tid}: currently in progress; keep notes current")
+        if status == "done" and not _plan_checked(root, tid):
+            checks.append(f"{tid}: done but not checked in PROJECT_PLAN.md")
+    if "## Task Board" not in plan:
+        checks.append("PROJECT_PLAN.md missing Task Board section")
+    if checks:
+        next_steps.append("Resolve plan/task/board inconsistencies before relying on automation.")
+    else:
+        next_steps.append("Plan, task index, and board are consistent enough for the next loop.")
+    return {
+        "status": "partial" if checks else "success",
+        "read": [".agent/PROJECT_PLAN.md", ".agent/TASKS.md", ".agent/board.json", ".agent/tasks/*.md"],
+        "actions": ["Compared board state, task index rows, task docs, and plan checkboxes."],
+        "checks": checks or ["No plan/task/board inconsistencies found."],
+        "feedback": feedback or ["No review or in-progress follow-up requiring triage."],
+        "memory": ["Wrote this loop run report.", "Updated .agent/loops/state.json."],
+        "next": next_steps,
+    }
+
+
+def _loop_doc_hygiene(root: Path) -> dict:
+    checks = []
+    feedback = []
+    required = (
+        "## Task Contract", "## Context To Read Before Starting", "## Work Scope",
+        "## Stage Plan", "## Stage Log", "## Verification", "## Completion Record",
+    )
+    for doc in sorted((root / WORKFLOW_DIR / TASKS_DIR).glob("*.md")):
+        if doc.name == "_template.md":
+            continue
+        rel = str(doc.relative_to(root))
+        text = _read(doc)
+        for header in required:
+            if header not in text:
+                checks.append(f"{rel}: missing {header}")
+        stage_log = _extract_section(text, "## Stage Log")
+        lines = [ln.strip() for ln in stage_log.splitlines() if ln.strip().startswith("- ")]
+        duplicates = [item for item, count in Counter(lines).items() if count > 1]
+        if duplicates:
+            checks.append(f"{rel}: duplicate Stage Log lines: {len(duplicates)}")
+        if "Status: review" in text and "- Summary:" in text and "- Summary:\n" in text:
+            checks.append(f"{rel}: review task has empty completion summary")
+        if "- No updates yet." in stage_log and len(lines) > 1:
+            checks.append(f"{rel}: Stage Log still contains placeholder plus real updates")
+    for rel in (".agent/PROJECT_PLAN.md", ".agent/TASKS.md", ".agent/WORKFLOW_ENTRY.md"):
+        feedback.append(f"{rel}: {_short_file_status(root, rel)}")
+    return {
+        "status": "partial" if checks else "success",
+        "read": [".agent/tasks/*.md", ".agent/PROJECT_PLAN.md", ".agent/TASKS.md", ".agent/WORKFLOW_ENTRY.md"],
+        "actions": ["Checked task document schema, duplicate stage log entries, and required workflow docs."],
+        "checks": checks or ["No document hygiene issues found in task docs."],
+        "feedback": feedback,
+        "memory": ["Wrote this loop run report.", "Updated .agent/loops/state.json."],
+        "next": ["Fix reported document hygiene issues." if checks else "No doc cleanup is required before the next loop."],
+    }
+
+
+def _bounded_walk_markers(root: Path, bases: list[str], limit: int = 5000) -> tuple[Counter, list[str], bool]:
+    counts = Counter()
+    samples = []
+    capped = False
+    seen = 0
+    for rel in bases:
+        base = root / rel
+        if not base.exists():
+            continue
+        for dirpath, _dirs, files in os.walk(base):
+            for fn in files:
+                seen += 1
+                if seen > limit:
+                    capped = True
+                    return counts, samples, capped
+                if fn in {"DONE", "ERROR"}:
+                    counts[fn] += 1
+                    if len(samples) < 10:
+                        samples.append(str((Path(dirpath) / fn).relative_to(root)))
+    return counts, samples, capped
+
+
+def _loop_experiment_monitor(root: Path) -> dict:
+    bases = ["results", "experiments/analysis_outputs", "experiments/logs"]
+    counts, samples, capped = _bounded_walk_markers(root, bases)
+    checks = []
+    if not any((root / rel).exists() for rel in bases):
+        checks.append("no standard experiment result directories found")
+    if counts.get("ERROR", 0):
+        checks.append(f"found {counts['ERROR']} ERROR markers")
+    if capped:
+        checks.append("experiment scan hit file limit; narrow the loop scope before relying on counts")
+    feedback = [
+        f"DONE markers: {counts.get('DONE', 0)}",
+        f"ERROR markers: {counts.get('ERROR', 0)}",
+    ]
+    if samples:
+        feedback.append("sample markers: " + ", ".join(samples))
+    return {
+        "status": "partial" if checks else ("success" if counts else "no-op"),
+        "read": bases + ["EXPERIMENT_STATE.json", "RESEARCH_LOG.md"],
+        "actions": ["Scanned bounded experiment directories for DONE/ERROR markers.", "Did not launch experiments."],
+        "checks": checks or ["No experiment errors found in bounded scan."],
+        "feedback": feedback,
+        "memory": ["Wrote this loop run report.", "Updated .agent/loops/state.json."],
+        "next": [
+            "Create a task-specific relaunch list before starting new runs." if checks else
+            "Use task-specific analysis scripts for deeper experiment decisions."
+        ],
+    }
+
+
+def _loop_contract_only(root: Path, loop_id: str, missing: list[str]) -> dict:
+    return {
+        "status": "failed" if missing else "no-op",
+        "read": [str(_loop_path(root, loop_id).relative_to(root))],
+        "actions": ["Validated loop contract only; no built-in analyzer is registered for this loop."],
+        "checks": [f"missing required sections: {', '.join(missing)}"] if missing else ["Loop contract contains all required sections."],
+        "feedback": ["Register a built-in analyzer or execute this loop through an agent-specific adapter."],
+        "memory": ["Wrote this loop run report.", "Updated .agent/loops/state.json."],
+        "next": ["Stop; no automatic next cycle is available for custom loops."],
+    }
+
+
+def _run_loop_once(root: Path, loop_id: str, missing: list[str]) -> dict:
+    builtins = {
+        "daily-plan-triage": _loop_daily_plan_triage,
+        "doc-hygiene": _loop_doc_hygiene,
+        "experiment-monitor": _loop_experiment_monitor,
+    }
+    fn = builtins.get(loop_id)
+    if not fn:
+        return _loop_contract_only(root, loop_id, missing)
+    if missing:
+        return _loop_contract_only(root, loop_id, missing)
+    return fn(root)
+
+
+def _write_loop_report(root: Path, loop_id: str, trigger: str, result: dict) -> Path:
+    ts = _dt.datetime.now()
+    stamp = ts.strftime("%Y%m%d-%H%M%S")
+    path = _loop_runs_dir(root) / f"{stamp}-{loop_id}.md"
+    session = _load_session(root)
+    lines = [
+        "# Loop Run",
+        "",
+        f"- Loop: {loop_id}",
+        f"- Trigger: {trigger}",
+        f"- Agent: {session.get('agent') or '-'}",
+        f"- Task: {session.get('task') or '-'}",
+        f"- Started: {ts.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- Finished: {ts.strftime('%Y-%m-%d %H:%M:%S')}",
+        f"- Status: {result.get('status', 'unknown')}",
+        "",
+        "## Read",
+        _format_bullets(result.get("read") or []),
+        "",
+        "## Actions",
+        _format_bullets(result.get("actions") or []),
+        "",
+        "## Checks",
+        _format_bullets(result.get("checks") or []),
+        "",
+        "## Feedback",
+        _format_bullets(result.get("feedback") or []),
+        "",
+        "## Memory Updates",
+        _format_bullets(result.get("memory") or []),
+        "",
+        "## Next",
+        _format_bullets(result.get("next") or []),
+        "",
+    ]
+    _write(path, "\n".join(lines))
+    state = _load_json(_loop_state_path(root), {"version": 1, "loops": {}})
+    state.setdefault("loops", {})[loop_id] = {
+        "last_run_at": ts.strftime("%Y-%m-%d %H:%M:%S"),
+        "last_status": result.get("status", "unknown"),
+        "last_report": str(path.relative_to(root)),
+    }
+    _save_json(_loop_state_path(root), state)
+    return path
+
+
+def _loop_list(root: Path, args: argparse.Namespace) -> int:
+    rows = [_loop_summary_line(root, p) for p in _loop_files(root)]
+    if args.json:
+        print(json.dumps(rows, indent=2, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("agentctl: no loops found in .agent/loops")
+        return 0
+    for row in rows:
+        state = "ok" if row["ok"] else f"missing:{','.join(row['missing'])}"
+        print(f"{row['id']}\t{state}\t{row['trigger']}")
+    return 0
+
+
+def _loop_show(root: Path, args: argparse.Namespace) -> int:
+    path, text, missing = _loop_contract(root, args.id)
+    if not text:
+        print(f"agentctl: loop not found: {args.id}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps({
+            "id": args.id,
+            "path": str(path.relative_to(root)),
+            "ok": not missing,
+            "missing": missing,
+            "sections": {section: _extract_section(text, f"## {section}") for section in LOOP_REQUIRED_SECTIONS},
+        }, indent=2, ensure_ascii=False))
+    else:
+        print(text)
+    return 0
+
+
+def _loop_run(root: Path, args: argparse.Namespace) -> int:
+    if not args.once:
+        print("agentctl: loop run currently requires --once; scheduled loops are intentionally not enabled yet.", file=sys.stderr)
+        return 2
+    path, text, missing = _loop_contract(root, args.id)
+    if not text:
+        print(f"agentctl: loop not found: {args.id}", file=sys.stderr)
+        return 2
+    result = _run_loop_once(root, args.id, missing)
+    report = _write_loop_report(root, args.id, args.trigger or "manual", result)
+    print(f"agentctl: loop {args.id} -> {result.get('status')} ({report.relative_to(root)})")
+    if missing:
+        print(f"agentctl: loop contract missing sections: {', '.join(missing)}")
+        return 1
+    return 0 if result.get("status") not in {"failed", "blocked"} else 1
+
+
+def cmd_loop(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    if args.loop_action == "list":
+        return _loop_list(root, args)
+    if args.loop_action == "show":
+        return _loop_show(root, args)
+    if args.loop_action == "run":
+        return _loop_run(root, args)
+    print("agentctl: unknown loop action", file=sys.stderr)
+    return 2
+
+
 def _check_base(root: Path) -> list:
     p = []
     if not (root / "AGENTS.md").is_file():
         p.append("missing AGENTS.md")
     if not (root / WORKFLOW_DIR / PLAN_FILE).is_file():
         p.append(f"missing {WORKFLOW_DIR}/{PLAN_FILE}")
+    for path in _loop_files(root):
+        row = _loop_summary_line(root, path)
+        if not row["ok"]:
+            p.append(f"loop {row['id']} missing required sections: {', '.join(row['missing'])}")
     return p
 
 
@@ -1284,6 +1649,19 @@ def build_parser() -> argparse.ArgumentParser:
     hm.add_argument("--status", choices=["done", "failed"], required=True)
     hm.add_argument("--note")
     sp.set_defaults(func=cmd_handoff)
+
+    sp = sub.add_parser("loop")
+    lsub = sp.add_subparsers(dest="loop_action", required=True)
+    ll = lsub.add_parser("list")
+    ll.add_argument("--json", action="store_true")
+    ls = lsub.add_parser("show")
+    ls.add_argument("id")
+    ls.add_argument("--json", action="store_true")
+    lr = lsub.add_parser("run")
+    lr.add_argument("id")
+    lr.add_argument("--once", action="store_true")
+    lr.add_argument("--trigger", default="manual")
+    sp.set_defaults(func=cmd_loop)
 
     sp = sub.add_parser("check")
     sp.add_argument("--mode", default="manual")

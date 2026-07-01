@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "loops": {
+    "daily-plan-triage": {
+      "last_run_at": "2026-07-01 16:36:29",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20260701-163629-daily-plan-triage.md"
+    },
+    "doc-hygiene": {
+      "last_run_at": "2026-07-01 16:34:28",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20260701-163428-doc-hygiene.md"
+    },
+    "experiment-monitor": {
+      "last_run_at": "2026-07-01 16:34:28",
+      "last_status": "partial",
+      "last_report": ".agent/loops/runs/20260701-163428-experiment-monitor.md"
+    }
+  }
+}

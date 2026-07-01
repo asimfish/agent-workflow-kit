@@ -7,6 +7,8 @@
 - `.agent/tasks/*.md`: task contract, stage plan, stage log, verification, completion record.
 - `.agent/handoffs/*.md`: explicit cross-agent handoffs when one task output becomes another task input.
 - `.agent/decisions/*.md`: architecture or process decisions that should outlive one task.
+- `.agent/loops/*.md`: bounded loop contracts with Trigger, Execute, Check, Feedback, Memory, and Next.
+- `.agent/loops/runs/*.md`: durable run reports for each loop cycle.
 - `.agent/logs/*.md` and `.agent/logs/*.ndjson`: append-only audit trail.
 
 ## Maintenance Rules
@@ -72,3 +74,4 @@ todo -> ready -> in_progress -> review -> approved -> done
 - Every write to a plan/task/board file updates its `last_updated` (or appends a
   dated log line). A fresh agent should be able to trust the newest timestamp.
 - Keep `.agent/logs/*` append-only; never rewrite history, archive instead.
+- Keep loop run reports factual. Do not replace run reports with chat summaries.

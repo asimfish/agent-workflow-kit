@@ -84,6 +84,7 @@ tools/agent_workflow_hook.py   # lifecycle hook bridge (Codex/Claude/Cursor)
   PROJECT_PLAN.md   TASKS.md            # human-readable plan + index
   board.json        agents.json         # machine-readable board + agent registry
   tasks/  decisions/  handoffs/  bus/ gates/ logs/
+  loops/  (bounded Trigger -> Execute -> Check -> Feedback -> Memory -> Next contracts)
   rules/  (code / documentation / github / agent-operating standards)
   WORKFLOW_ENTRY.md  # one-file entry protocol for all agents
   state/  (current_session.json, locks/  — gitignored, local only)
@@ -119,6 +120,7 @@ agentctl complete --summary [--tests] low-level completion command -> review
 agentctl gate approve|reject --task --by [--note]   review -> done / blocked
 agentctl handoff create --from --to --summary [--artifact]   write task packet
 agentctl handoff list|show|mark                       inspect or close packets
+agentctl loop list|show|run <id> --once                inspect or run bounded loops
 agentctl refresh                     re-record doc hashes after plan/rules changed
 agentctl board [--json]              show the task board
 agentctl task show <id>              show one task
@@ -138,14 +140,30 @@ Exit codes: `0` ok, `1` violations, `2` usage error, `3` no active session.
 4. If no task exists, the worker creates and starts one from the current request
    with `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
 5. Worker records progress with `agentctl note`.
-6. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
-7. On resume/compaction the session-start hook re-injects the focus; run
+6. Worker may run a bounded loop with `agentctl loop run <id> --once` when the
+   project needs triage, document hygiene, or experiment monitoring.
+7. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
+8. On resume/compaction the session-start hook re-injects the focus; run
    `agentctl focus` to re-anchor a long task at any time.
-8. Worker runs `agentctl finish` (task -> `review`, lock released).
-9. Reviewer approval is optional for human oversight; when used, `agentctl gate approve`
+9. Worker runs `agentctl finish` (task -> `review`, lock released).
+10. Reviewer approval is optional for human oversight; when used, `agentctl gate approve`
    moves the task to `done` and checks the plan box.
-10. Git hooks verify session, doc updates, commit format, task IDs, and review/done
+11. Git hooks verify session, doc updates, commit format, task IDs, and review/done
    state before commit/push.
+
+## Loop Contracts
+
+Loops are small one-shot cycles stored under `.agent/loops/`. Every loop must
+answer six questions: Trigger, Execute, Check, Feedback, Memory, and Next.
+
+```bash
+agentctl loop list
+agentctl loop show daily-plan-triage
+agentctl loop run daily-plan-triage --once
+```
+
+Each run writes a durable report under `.agent/loops/runs/` and updates
+`.agent/loops/state.json`. See `docs/loop-engineering.md`.
 
 ## Multi-agent split (example)
 
