@@ -26,3 +26,9 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-01 16:36:44 [T-002] Loop feedback closed one real issue: daily-plan-triage found T-002 missing from TASKS.md, agentctl task-create detection was fixed, current task index/plan row was added, and the next triage run passed.
 - 2026-07-01 16:38:27 [T-002] Implemented loop runtime and templates; install smoke test confirmed loops install, task creation writes T-002 row despite template examples, daily-plan-triage writes a run report, and manual check passes.
 - 2026-07-01 16:39:57 [T-002] Final verification passed: py_compile, loop list, manual workflow check, git diff --check, and fresh install smoke test with loop run all succeeded.
+- 2026-07-01 18:39:47 [T-003] Defined T-003 scope: implement checkpoint-triggered continuous loops without adding daemon, cron, worktree pool, or automatic expensive experiment launches.
+- 2026-07-01 18:45:36 [T-003] Implemented checkpoint loop policy and wired the intended workflow nodes: work-start, pre-finish, post-finish, and explicit experiment-check.
+- 2026-07-01 18:48:20 [T-003] Validated checkpoint runs in this repo; added loop-state locking after concurrent checkpoint runs exposed a real state overwrite risk.
+- 2026-07-01 18:50:39 [T-003] Fresh install smoke test passed: work auto-ran work-start, finish auto-ran pre/post doc hygiene, experiment checkpoint ran explicitly, and same-second doc-hygiene reports used unique filenames.
+- 2026-07-01 18:54:14 [T-003] Reopened T-003 to fix a plan-triage gap: PROJECT_PLAN.md was missing T-001/T-003 task board rows, and daily-plan-triage now reports board tasks missing from the plan.
+- 2026-07-01 18:54:42 [T-003] Verified enhanced daily-plan-triage passes after adding missing PROJECT_PLAN.md rows for active review tasks.

@@ -121,6 +121,7 @@ agentctl gate approve|reject --task --by [--note]   review -> done / blocked
 agentctl handoff create --from --to --summary [--artifact]   write task packet
 agentctl handoff list|show|mark                       inspect or close packets
 agentctl loop list|show|run <id> --once                inspect or run bounded loops
+agentctl loop auto --checkpoint <name> --once          run checkpoint loop policy
 agentctl refresh                     re-record doc hashes after plan/rules changed
 agentctl board [--json]              show the task board
 agentctl task show <id>              show one task
@@ -136,12 +137,14 @@ Exit codes: `0` ok, `1` violations, `2` usage error, `3` no active session.
 1. Human or supervisor agent keeps `PROJECT_PLAN.md` and task docs directionally correct.
 2. Human starts a worker with `按 .agent 规范开始工作。` or an equivalent task request.
 3. Worker reads `.agent/WORKFLOW_ENTRY.md` and runs `agentctl work --agent <name>` before editing. This resumes an
-   active task or auto-claims the next assigned `ready`/`todo` task.
+   active task or auto-claims the next assigned `ready`/`todo` task, then runs the
+   `work-start` checkpoint loop.
 4. If no task exists, the worker creates and starts one from the current request
    with `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
 5. Worker records progress with `agentctl note`.
-6. Worker may run a bounded loop with `agentctl loop run <id> --once` when the
-   project needs triage, document hygiene, or experiment monitoring.
+6. Workflow checkpoints run bounded loops continuously without a daemon:
+   `work-start` runs plan triage, `pre-finish`/`post-finish` run document hygiene,
+   and `experiment-check` can be invoked for experiment monitoring.
 7. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
 8. On resume/compaction the session-start hook re-injects the focus; run
    `agentctl focus` to re-anchor a long task at any time.
@@ -155,15 +158,19 @@ Exit codes: `0` ok, `1` violations, `2` usage error, `3` no active session.
 
 Loops are small one-shot cycles stored under `.agent/loops/`. Every loop must
 answer six questions: Trigger, Execute, Check, Feedback, Memory, and Next.
+Checkpoint policy lives in `.agent/loops/checkpoints.json`; it decides which
+loops run at `work-start`, `pre-finish`, `post-finish`, and `experiment-check`.
 
 ```bash
 agentctl loop list
 agentctl loop show daily-plan-triage
 agentctl loop run daily-plan-triage --once
+agentctl loop auto --checkpoint experiment-check --once
 ```
 
-Each run writes a durable report under `.agent/loops/runs/` and updates
-`.agent/loops/state.json`. See `docs/loop-engineering.md`.
+`agentctl work` and `agentctl finish` call the relevant checkpoint loops
+automatically. Each run writes a durable report under `.agent/loops/runs/` and
+updates `.agent/loops/state.json`. See `docs/loop-engineering.md`.
 
 ## Multi-agent split (example)
 

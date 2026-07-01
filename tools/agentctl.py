@@ -14,7 +14,7 @@ Commands:
   complete   move the active task to review (write completion record, free lock)
   gate       approve/reject a task in review (-> done / blocked)
   handoff    create/list/show/close cross-agent task packets
-  loop       list/show/run one-shot project loops
+  loop       list/show/run one-shot project loops; auto-run checkpoint loops
   refresh    re-record doc hashes after plan/rules/task docs changed
   board      print the task board (human or --json)
   task       create / show task documents and board entries
@@ -35,6 +35,7 @@ import re
 import string
 import subprocess
 import sys
+import time
 from collections import Counter
 from pathlib import Path
 
@@ -60,8 +61,34 @@ BUS_FAILED = "failed"
 LOOPS_DIR = "loops"
 LOOP_RUNS_DIR = "runs"
 LOOP_STATE_FILE = "state.json"
+LOOP_CHECKPOINTS_FILE = "checkpoints.json"
 
 LOOP_REQUIRED_SECTIONS = ("Trigger", "Execute", "Check", "Feedback", "Memory", "Next")
+DEFAULT_LOOP_CHECKPOINTS = {
+    "version": 1,
+    "checkpoints": {
+        "work-start": {
+            "loops": ["daily-plan-triage"],
+            "strict": False,
+            "debounce_minutes": 30,
+        },
+        "pre-finish": {
+            "loops": ["doc-hygiene"],
+            "strict": True,
+            "debounce_minutes": 0,
+        },
+        "post-finish": {
+            "loops": ["doc-hygiene"],
+            "strict": False,
+            "debounce_minutes": 0,
+        },
+        "experiment-check": {
+            "loops": ["experiment-monitor"],
+            "strict": False,
+            "debounce_minutes": 30,
+        },
+    },
+}
 
 STATUSES = ["todo", "ready", "in_progress", "blocked", "review", "approved", "done", "failed"]
 ACTIVE_STATUSES = {"in_progress"}
@@ -232,6 +259,14 @@ def _loop_state_path(root: Path) -> Path:
     return _loops_dir(root) / LOOP_STATE_FILE
 
 
+def _loop_checkpoints_path(root: Path) -> Path:
+    return _loops_dir(root) / LOOP_CHECKPOINTS_FILE
+
+
+def _loop_state_lock_path(root: Path) -> Path:
+    return _state_dir(root) / LOCKS_DIR / "loop-state.lock"
+
+
 def _lock_path(root: Path, task: str) -> Path:
     return _state_dir(root) / LOCKS_DIR / f"{task}.lock"
 
@@ -294,6 +329,11 @@ def _extract_section(text: str, header: str) -> str:
 def _plan_checked(root: Path, task: str) -> bool:
     text = _read(root / WORKFLOW_DIR / PLAN_FILE)
     return re.search(rf"- \[x\][^\n]*{re.escape(task)}", text) is not None
+
+
+def _plan_has_task_row(root: Path, task: str) -> bool:
+    text = _read(root / WORKFLOW_DIR / PLAN_FILE)
+    return re.search(rf"^- \[[ x]\]\s+{re.escape(task)}\b", text, flags=re.M) is not None
 
 
 def _check_plan_box(root: Path, task: str) -> None:
@@ -499,6 +539,7 @@ def cmd_work(args: argparse.Namespace) -> int:
     if active and _task_status(root, active) == "in_progress" and not args.force:
         print(f"agentctl: resuming active task {active} (agent={st.get('agent') or agent})")
         _print_focus(root, active)
+        _run_loop_checkpoint(root, "work-start", once=True, trigger="work-resume", strict=False)
         return 0
     task = _select_next_task(root, agent)
     if not task:
@@ -584,6 +625,7 @@ def cmd_start(args: argparse.Namespace) -> int:
                          "scope": scope, "notes": [], "doc_hashes": _hash_docs(root, task)})
     print(f"agentctl: started {task} (agent={agent}) -> in_progress")
     _print_focus(root, task)
+    _run_loop_checkpoint(root, "work-start", once=True, trigger="work-start", strict=False)
     return 0
 
 
@@ -643,6 +685,9 @@ def cmd_complete(args: argparse.Namespace) -> int:
         print("agentctl: --summary is required", file=sys.stderr)
         return 2
     tests = args.tests or ""
+    rc = _run_loop_checkpoint(root, "pre-finish", once=True, trigger="pre-finish", strict=True)
+    if rc:
+        return rc
     ts = _now()
     task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
     if task_doc.is_file():
@@ -673,6 +718,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
     st["doc_hashes"] = _hash_docs(root, task)
     _save_session(root, st)
     print(f"agentctl: {task} -> review. optional review gate: agentctl gate approve --task {task} --by <reviewer>")
+    _run_loop_checkpoint(root, "post-finish", once=True, trigger="post-finish", strict=False)
     return 0
 
 
@@ -1089,6 +1135,87 @@ def _loop_summary_line(root: Path, path: Path) -> dict:
     }
 
 
+def _load_loop_checkpoints(root: Path) -> dict:
+    policy = _load_json(_loop_checkpoints_path(root), {})
+    if not isinstance(policy, dict):
+        policy = {}
+    checkpoints = policy.get("checkpoints")
+    if not isinstance(checkpoints, dict):
+        checkpoints = {}
+    merged = json.loads(json.dumps(DEFAULT_LOOP_CHECKPOINTS))
+    merged["checkpoints"].update(checkpoints)
+    return merged
+
+
+def _parse_time(value: str | None) -> _dt.datetime | None:
+    if not value:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y%m%d-%H%M%S"):
+        try:
+            return _dt.datetime.strptime(value, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _checkpoint_recent(state: dict, checkpoint: str, debounce_minutes: int) -> bool:
+    if debounce_minutes <= 0:
+        return False
+    entry = (state.get("checkpoints") or {}).get(checkpoint) or {}
+    last = _parse_time(entry.get("last_run_at"))
+    if not last:
+        return False
+    return (_dt.datetime.now() - last).total_seconds() < debounce_minutes * 60
+
+
+def _acquire_lock_file(path: Path, timeout_seconds: float = 10.0, stale_seconds: float = 300.0) -> int:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    deadline = time.monotonic() + timeout_seconds
+    payload = f"pid={os.getpid()} acquired_at={_now()}\n".encode("utf-8")
+    while True:
+        try:
+            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, payload)
+            return fd
+        except FileExistsError:
+            try:
+                if time.time() - path.stat().st_mtime > stale_seconds:
+                    path.unlink()
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.monotonic() >= deadline:
+                raise TimeoutError(f"timed out waiting for lock {path}")
+            time.sleep(0.05)
+
+
+def _release_lock_file(path: Path, fd: int) -> None:
+    try:
+        os.close(fd)
+    finally:
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _update_loop_state(root: Path, updater) -> dict:
+    lock = _loop_state_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        state = _load_json(_loop_state_path(root), {"version": 1, "loops": {}, "checkpoints": {}})
+        if not isinstance(state, dict):
+            state = {"version": 1, "loops": {}, "checkpoints": {}}
+        state.setdefault("version", 1)
+        state.setdefault("loops", {})
+        state.setdefault("checkpoints", {})
+        updater(state)
+        _save_json(_loop_state_path(root), state)
+        return state
+    finally:
+        _release_lock_file(lock, fd)
+
+
 def _format_bullets(items) -> str:
     if not items:
         return "- none"
@@ -1133,6 +1260,8 @@ def _loop_daily_plan_triage(root: Path) -> dict:
             checks.append(f"{tid}: board status {status} differs from TASKS.md status {row['status']}")
         if not doc.is_file():
             checks.append(f"{tid}: missing task doc")
+        if not _plan_has_task_row(root, tid):
+            checks.append(f"{tid}: missing task board row in PROJECT_PLAN.md")
         if status == "review":
             feedback.append(f"{tid}: awaiting review gate")
         if status == "in_progress":
@@ -1274,7 +1403,12 @@ def _run_loop_once(root: Path, loop_id: str, missing: list[str]) -> dict:
 def _write_loop_report(root: Path, loop_id: str, trigger: str, result: dict) -> Path:
     ts = _dt.datetime.now()
     stamp = ts.strftime("%Y%m%d-%H%M%S")
-    path = _loop_runs_dir(root) / f"{stamp}-{loop_id}.md"
+    base = _loop_runs_dir(root) / f"{stamp}-{loop_id}"
+    path = base.with_suffix(".md")
+    suffix = 2
+    while path.exists():
+        path = Path(f"{base}-{suffix}.md")
+        suffix += 1
     session = _load_session(root)
     lines = [
         "# Loop Run",
@@ -1307,13 +1441,13 @@ def _write_loop_report(root: Path, loop_id: str, trigger: str, result: dict) -> 
         "",
     ]
     _write(path, "\n".join(lines))
-    state = _load_json(_loop_state_path(root), {"version": 1, "loops": {}})
-    state.setdefault("loops", {})[loop_id] = {
-        "last_run_at": ts.strftime("%Y-%m-%d %H:%M:%S"),
-        "last_status": result.get("status", "unknown"),
-        "last_report": str(path.relative_to(root)),
-    }
-    _save_json(_loop_state_path(root), state)
+    def update(state: dict) -> None:
+        state.setdefault("loops", {})[loop_id] = {
+            "last_run_at": ts.strftime("%Y-%m-%d %H:%M:%S"),
+            "last_status": result.get("status", "unknown"),
+            "last_report": str(path.relative_to(root)),
+        }
+    _update_loop_state(root, update)
     return path
 
 
@@ -1366,6 +1500,88 @@ def _loop_run(root: Path, args: argparse.Namespace) -> int:
     return 0 if result.get("status") not in {"failed", "blocked"} else 1
 
 
+def _checkpoint_status(statuses: list[str]) -> str:
+    if not statuses:
+        return "no-op"
+    if any(s in {"failed", "blocked"} for s in statuses):
+        return "failed"
+    if any(s == "partial" for s in statuses):
+        return "partial"
+    if any(s == "no-op" for s in statuses):
+        return "no-op"
+    return "success"
+
+
+def _run_loop_checkpoint(root: Path, checkpoint: str, *, once: bool, trigger: str,
+                         strict: bool | None = None, force: bool = False,
+                         quiet: bool = False) -> int:
+    if not once:
+        print("agentctl: loop auto currently requires --once; scheduled loops are not enabled.", file=sys.stderr)
+        return 2
+    policy = _load_loop_checkpoints(root)
+    spec = (policy.get("checkpoints") or {}).get(checkpoint)
+    if not isinstance(spec, dict):
+        print(f"agentctl: unknown loop checkpoint: {checkpoint}", file=sys.stderr)
+        return 2
+    loop_ids = spec.get("loops") or []
+    if isinstance(loop_ids, str):
+        loop_ids = [loop_ids]
+    loop_ids = [str(x).strip() for x in loop_ids if str(x).strip()]
+    strict_effective = bool(spec.get("strict")) if strict is None else bool(strict)
+    debounce = int(spec.get("debounce_minutes") or 0)
+    state = _load_json(_loop_state_path(root), {"version": 1, "loops": {}, "checkpoints": {}})
+    if _checkpoint_recent(state, checkpoint, debounce) and not force:
+        if not quiet:
+            print(f"agentctl: loop checkpoint {checkpoint} skipped (debounced {debounce}m)")
+        return 0
+    reports = []
+    statuses = []
+    for loop_id in loop_ids:
+        path, text, missing = _loop_contract(root, loop_id)
+        if not text:
+            print(f"agentctl: loop not found for checkpoint {checkpoint}: {loop_id}", file=sys.stderr)
+            statuses.append("failed")
+            continue
+        result = _run_loop_once(root, loop_id, missing)
+        report = _write_loop_report(root, loop_id, f"checkpoint:{checkpoint}:{trigger}", result)
+        statuses.append(str(result.get("status", "unknown")))
+        reports.append(str(report.relative_to(root)))
+        if not quiet:
+            print(f"agentctl: loop {loop_id} -> {result.get('status')} ({report.relative_to(root)})")
+            if missing:
+                print(f"agentctl: loop contract missing sections: {', '.join(missing)}")
+    aggregate = _checkpoint_status(statuses)
+    def update(state: dict) -> None:
+        state.setdefault("checkpoints", {})[checkpoint] = {
+            "last_run_at": _now(),
+            "last_status": aggregate,
+            "last_reports": reports,
+            "strict": strict_effective,
+            "trigger": trigger,
+        }
+    _update_loop_state(root, update)
+    if not quiet:
+        print(f"agentctl: checkpoint {checkpoint} -> {aggregate}")
+    if aggregate in {"failed", "blocked"}:
+        return 1
+    if strict_effective and aggregate == "partial":
+        print(f"agentctl: checkpoint {checkpoint} is strict and reported partial results.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _loop_auto(root: Path, args: argparse.Namespace) -> int:
+    return _run_loop_checkpoint(
+        root,
+        args.checkpoint,
+        once=args.once,
+        trigger=args.trigger or "manual",
+        strict=True if args.strict else None,
+        force=args.force,
+        quiet=False,
+    )
+
+
 def cmd_loop(args: argparse.Namespace) -> int:
     root = _repo_root()
     if args.loop_action == "list":
@@ -1374,6 +1590,8 @@ def cmd_loop(args: argparse.Namespace) -> int:
         return _loop_show(root, args)
     if args.loop_action == "run":
         return _loop_run(root, args)
+    if args.loop_action == "auto":
+        return _loop_auto(root, args)
     print("agentctl: unknown loop action", file=sys.stderr)
     return 2
 
@@ -1661,6 +1879,12 @@ def build_parser() -> argparse.ArgumentParser:
     lr.add_argument("id")
     lr.add_argument("--once", action="store_true")
     lr.add_argument("--trigger", default="manual")
+    la = lsub.add_parser("auto")
+    la.add_argument("--checkpoint", required=True)
+    la.add_argument("--once", action="store_true")
+    la.add_argument("--trigger", default="manual")
+    la.add_argument("--strict", action="store_true")
+    la.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_loop)
 
     sp = sub.add_parser("check")

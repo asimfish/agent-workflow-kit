@@ -6,7 +6,7 @@ unusable as agents and tasks multiply.
 ## Trigger
 
 - Mode: manual
-- Future Modes: cron, pre-finish, session-start
+- Checkpoints: pre-finish, post-finish
 - Debounce: run after meaningful task-doc changes, not after every small edit.
 
 ## Execute

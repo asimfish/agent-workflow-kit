@@ -61,7 +61,7 @@ debugging and scripted migrations.
 
 ## Layer 2: Local Git Hooks
 
-Installed hooks live in `.git/hooks/`:
+Installed hooks live in `.githooks/`, and `init` sets `git config core.hooksPath .githooks`:
 
 - `pre-commit`: requires an active agent session and staged task/plan/log updates when code or data changes.
 - `commit-msg`: requires Conventional Commits and a task ID.

@@ -4,11 +4,12 @@
 
 1. Human or supervisor agent keeps `.agent/PROJECT_PLAN.md` and task docs directionally correct.
 2. Human starts a worker with `按 .agent 规范开始工作。` or an equivalent task request.
-3. Worker reads `.agent/WORKFLOW_ENTRY.md` and runs `agentctl work --agent <name>` before editing.
+3. Worker reads `.agent/WORKFLOW_ENTRY.md` and runs `agentctl work --agent <name>` before editing. The command also runs the `work-start` checkpoint loop.
 4. If no task exists for the current request, the worker runs `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
 5. Worker records phase progress with `agentctl note`.
-6. Worker can run a bounded loop with `agentctl loop run <id> --once` when the
-   next step is triage, document hygiene, or experiment monitoring.
+6. `agentctl finish` runs `pre-finish` and `post-finish` checkpoint loops for
+   document hygiene. Experiment tasks can run `agentctl loop auto --checkpoint
+   experiment-check --once` before deciding whether to relaunch jobs.
 7. Worker creates handoff packets for downstream tasks with `agentctl handoff create`.
 8. Worker completes with `agentctl finish`.
 9. Git hooks verify active task context, doc updates, and commit format.
@@ -24,15 +25,22 @@ Every loop in `.agent/loops/` must close six links:
 - Memory: where durable records are written.
 - Next: stop, hand off, continue later, or ask a human.
 
-Loops currently run one cycle at a time:
+Loops run one cycle at a time. Continuous behavior is checkpoint-triggered:
 
 ```bash
 agentctl loop list
 agentctl loop run daily-plan-triage --once
+agentctl loop auto --checkpoint work-start --once
+agentctl loop auto --checkpoint pre-finish --once
+agentctl loop auto --checkpoint experiment-check --once
 ```
 
 This intentionally avoids unbounded token spend while still producing durable
 run reports in `.agent/loops/runs/`.
+
+Checkpoint policy is project-local in `.agent/loops/checkpoints.json`. Humans can
+edit that file when a project needs different loop mapping, strictness, or
+debounce windows.
 
 ## Multi-Agent Split
 

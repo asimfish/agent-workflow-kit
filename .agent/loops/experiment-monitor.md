@@ -6,7 +6,7 @@ experiments blindly.
 ## Trigger
 
 - Mode: manual
-- Future Modes: cron, task-finished
+- Checkpoint: experiment-check
 - Debounce: do not rerun more than once every 30 minutes unless result files
   changed.
 

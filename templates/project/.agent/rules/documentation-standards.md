@@ -8,6 +8,7 @@
 - `.agent/handoffs/*.md`: explicit cross-agent handoffs when one task output becomes another task input.
 - `.agent/decisions/*.md`: architecture or process decisions that should outlive one task.
 - `.agent/loops/*.md`: bounded loop contracts with Trigger, Execute, Check, Feedback, Memory, and Next.
+- `.agent/loops/checkpoints.json`: project-local mapping from workflow checkpoints to loop contracts.
 - `.agent/loops/runs/*.md`: durable run reports for each loop cycle.
 - `.agent/logs/*.md` and `.agent/logs/*.ndjson`: append-only audit trail.
 

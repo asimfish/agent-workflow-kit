@@ -28,7 +28,9 @@ Define the durable project outcome in one or two paragraphs.
 | M1 | Define project workflow | in-progress | Plan, rules, hooks, and task docs exist |
 
 ## Task Board
+- [ ] T-003 - add continuous loop automation (owner: codex)
 - [ ] T-002 - add minimal loop runtime (owner: codex)
+- [ ] T-001 - simplify agent startup prompt (owner: codex)
 - [x] AGENT-009 - support adoption baseline for existing repositories (owner: codex)
 - [x] AGENT-008 - make agent bootstrap and github references explicit (owner: codex)
 - [x] AGENT-007 - validate workflow against original requirements (owner: codex)

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-01 16:40:10",
+  "updated_at": "2026-07-01 18:55:07",
   "tasks": {
     "AGENT-002": {
       "title": "dogfood workflow kit in super_project",
@@ -156,6 +156,22 @@
       "deps": [],
       "created_at": "2026-07-01 16:29:30",
       "updated_at": "2026-07-01 16:40:10"
+    },
+    "T-003": {
+      "title": "add continuous loop automation",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tools/agent_workflow_hook.py",
+        ".agent/",
+        "templates/project/.agent/",
+        "README.md",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-01 18:39:14",
+      "updated_at": "2026-07-01 18:55:07"
     }
   }
 }

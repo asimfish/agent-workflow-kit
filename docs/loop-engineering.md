@@ -18,6 +18,7 @@ Installed projects include:
 ```text
 .agent/loops/
   _template.md
+  checkpoints.json
   daily-plan-triage.md
   doc-hygiene.md
   experiment-monitor.md
@@ -44,21 +45,32 @@ Every loop file must contain these headings:
 python3 tools/agentctl.py loop list
 python3 tools/agentctl.py loop show daily-plan-triage
 python3 tools/agentctl.py loop run daily-plan-triage --once
+python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
 ```
 
-Only one-shot runs are supported in this phase. Cron, worktree pools, connector
-loops, and automatic experiment launches are intentionally out of scope until the
-base loop contract is proven.
+Only one-shot runs are supported in this phase. Continuous behavior comes from
+workflow checkpoints, not from a daemon:
+
+- `work-start`: runs `daily-plan-triage` after `agentctl work` starts or resumes a task.
+- `pre-finish`: runs strict `doc-hygiene` before a task can move to review.
+- `post-finish`: writes a final non-strict `doc-hygiene` memory report after review.
+- `experiment-check`: runs `experiment-monitor` when an experiment task asks for it.
+
+Cron, worktree pools, connector loops, and automatic experiment launches are
+intentionally out of scope until checkpoint loops are proven in real projects.
 
 Each run writes:
 
 ```text
 .agent/loops/runs/YYYYMMDD-HHMMSS-<loop-id>.md
+.agent/loops/runs/YYYYMMDD-HHMMSS-<loop-id>-2.md  # if a same-second run already exists
 .agent/loops/state.json
 ```
 
 The run report records what was read, what happened, which checks ran, what
 feedback was produced, what memory changed, and what should happen next.
+Checkpoint state is also recorded in `.agent/loops/state.json`, so the next
+cycle can see the latest checkpoint status and report paths.
 
 ## Built-In Loops
 

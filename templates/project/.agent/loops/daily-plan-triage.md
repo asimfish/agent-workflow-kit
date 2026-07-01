@@ -6,7 +6,7 @@ so agents can start from durable state instead of chat memory.
 ## Trigger
 
 - Mode: manual
-- Future Modes: cron, session-start
+- Checkpoint: work-start
 - Debounce: do not rerun more than once every 30 minutes unless the plan changed.
 
 ## Execute

@@ -31,6 +31,9 @@ When working in this repository, do this before any edit or mutating command:
    python3 tools/agentctl.py work --agent <agent-name>
    ```
 
+   This also runs the `work-start` checkpoint loop from
+   `.agent/loops/checkpoints.json`.
+
 3. If no existing task matches the user's request, create and start one yourself:
 
    ```bash
@@ -66,6 +69,12 @@ assigned, for example `codex`, `claude`, `cursor`, or `agent`.
   Every loop must close Trigger, Execute, Check, Feedback, Memory, and Next, and
   must write a report under `.agent/loops/runs/`.
 
+- For experiment or benchmark monitoring, use the project checkpoint:
+
+  ```bash
+  python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
+  ```
+
 ## Finish And Commit
 
 Before claiming a phase complete:
@@ -77,6 +86,8 @@ Before claiming a phase complete:
    ```bash
    python3 tools/agentctl.py finish --summary "<what changed>" --tests "<commands run>"
    ```
+
+   `finish` runs `pre-finish` and `post-finish` checkpoint loops automatically.
 
 GitHub commits and pushes must obey `.agent/rules/github-standards.md`.
 Git hooks enforce Conventional Commits, task IDs, staged workflow docs, and

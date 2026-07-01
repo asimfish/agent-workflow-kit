@@ -2,19 +2,57 @@
   "version": 1,
   "loops": {
     "daily-plan-triage": {
-      "last_run_at": "2026-07-01 16:36:29",
+      "last_run_at": "2026-07-01 18:54:21",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260701-163629-daily-plan-triage.md"
+      "last_report": ".agent/loops/runs/20260701-185421-daily-plan-triage.md"
     },
     "doc-hygiene": {
-      "last_run_at": "2026-07-01 16:34:28",
+      "last_run_at": "2026-07-01 18:55:07",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260701-163428-doc-hygiene.md"
+      "last_report": ".agent/loops/runs/20260701-185507-doc-hygiene-2.md"
     },
     "experiment-monitor": {
-      "last_run_at": "2026-07-01 16:34:28",
+      "last_run_at": "2026-07-01 18:47:12",
       "last_status": "partial",
-      "last_report": ".agent/loops/runs/20260701-163428-experiment-monitor.md"
+      "last_report": ".agent/loops/runs/20260701-184712-experiment-monitor.md"
+    }
+  },
+  "checkpoints": {
+    "work-start": {
+      "last_run_at": "2026-07-01 18:54:21",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20260701-185421-daily-plan-triage.md"
+      ],
+      "strict": false,
+      "trigger": "manual"
+    },
+    "pre-finish": {
+      "last_run_at": "2026-07-01 18:55:07",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20260701-185507-doc-hygiene.md"
+      ],
+      "strict": true,
+      "trigger": "pre-finish"
+    },
+    "experiment-check": {
+      "last_run_at": "2026-07-01 18:47:12",
+      "last_status": "partial",
+      "last_reports": [
+        ".agent/loops/runs/20260701-184712-experiment-monitor.md"
+      ],
+      "strict": false,
+      "trigger": "manual"
+    },
+    "post-finish": {
+      "last_run_at": "2026-07-01 18:55:07",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20260701-185507-doc-hygiene-2.md"
+      ],
+      "strict": false,
+      "trigger": "post-finish"
     }
   }
 }

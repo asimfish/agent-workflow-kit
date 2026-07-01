@@ -6,7 +6,7 @@ Memory, and Next. Keep each loop small, bounded, and auditable.
 ## Trigger
 
 - Mode: manual
-- Future Modes: cron, session-start, task-finished
+- Optional Checkpoint: work-start | pre-finish | post-finish | experiment-check
 - Debounce: do not run again if a useful run completed recently
 
 ## Execute
@@ -42,6 +42,6 @@ Memory, and Next. Keep each loop small, bounded, and auditable.
 
 ## Next
 
-- Stop after one run unless an explicit scheduler or downstream loop triggers a
+- Stop after one run unless a workflow checkpoint or downstream loop triggers a
   new cycle.
 - Do not run unbounded loops.

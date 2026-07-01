@@ -13,3 +13,4 @@
 | AGENT-009 | done | codex | `tools/, templates/, docs/, README.md, .agent/` | [.agent/tasks/AGENT-009.md](tasks/AGENT-009.md) | support adoption baseline for existing repositories |
 | T-001 | review | codex | `README.md, AGENTS.md, templates/project/, integrations/, tools/agent_workflow_hook.py, docs/` | [.agent/tasks/T-001.md](tasks/T-001.md) | simplify agent startup prompt |
 | T-002 | review | codex | `.agent/, templates/project/.agent/, tools/agentctl.py, README.md, docs/` | [.agent/tasks/T-002.md](tasks/T-002.md) | add minimal loop runtime |
+| T-003 | review | codex | `tools/agentctl.py, tools/agent_workflow_hook.py, .agent/, templates/project/.agent/, README.md, docs/` | [.agent/tasks/T-003.md](tasks/T-003.md) | add continuous loop automation |
