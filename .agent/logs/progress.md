@@ -32,3 +32,6 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-01 18:50:39 [T-003] Fresh install smoke test passed: work auto-ran work-start, finish auto-ran pre/post doc hygiene, experiment checkpoint ran explicitly, and same-second doc-hygiene reports used unique filenames.
 - 2026-07-01 18:54:14 [T-003] Reopened T-003 to fix a plan-triage gap: PROJECT_PLAN.md was missing T-001/T-003 task board rows, and daily-plan-triage now reports board tasks missing from the plan.
 - 2026-07-01 18:54:42 [T-003] Verified enhanced daily-plan-triage passes after adding missing PROJECT_PLAN.md rows for active review tasks.
+- 2026-07-02 02:31:52 [T-004] Defined README cleanup task and added T-004 to PROJECT_PLAN.md so plan, task index, board, and task doc are aligned.
+- 2026-07-02 02:33:14 [T-004] Rewrote README into a quick-start-first structure covering install, human interaction, agent work cycle, checkpoint loops, modules, GitHub standards, and boundaries.
+- 2026-07-02 02:33:39 [T-004] Final README cleanup checks passed: agentctl manual check and git diff whitespace check both succeeded.

@@ -1,228 +1,260 @@
 # Agent Workflow Kit
 
-An installable Git-repo toolkit that drops a complete, enforceable workflow into any
-project so that **multiple AI agents work to the same standards, follow one plan,
-keep task docs maintained, and do not drift on long tasks**.
+Project-level workflow kit for AI agents. Install it into any Git repository so
+Codex, Claude Code, Cursor, or another coding agent can follow the same plan,
+task docs, loop checks, and GitHub standards without the human repeating the
+workflow every time.
 
-You develop a new project, point this kit at it, and the project immediately gets:
-coding/doc/commit standards, plan-driven task tracking, a machine-readable task
-board, per-task locks, and lifecycle + Git hooks that enforce all of it.
+Repository:
 
-## Why
-
-Four problems this solves when several agents share one repo:
-
-1. **Standards** — commits, docs, and code follow fixed rules (aligned with the
-   `super_skill_team` standard).
-2. **Plan-driven** — every task is read before work and updated after; the plan is
-   the durable source of truth.
-3. **Task docs** — each task has a doc that is read on start and updated on progress,
-   with explicit maintenance rules so things don't get messy as agents/tasks grow.
-4. **No drift on long tasks** — hooks re-inject the current task focus on every
-   resume/compaction so a long-running agent never forgets its task or the plan.
-
-## Install
-
-```bash
-# 1. get the kit
-git clone https://github.com/asimfish/super_project.git && cd super_project
-
-# 2. install into your project
-./install.sh /path/to/your/project
-#   (equivalent to: python3 tools/agentctl.py init /path/to/your/project)
+```text
+https://github.com/asimfish/super_project
 ```
 
-### Agent Bootstrap
+## Quick Start
 
-If you give this repository link to an agent, the agent should do the install
-itself. A minimal install request is:
+### Option A: ask an agent to install it
+
+Start an agent inside your target project and say:
 
 ```text
 Install https://github.com/asimfish/super_project.git into this project.
 ```
 
-After `install.sh` runs, the target project owns its local `.agent/` directory.
-That directory lives in the target project root, not globally.
-
-After installation, humans can start agents with one short prompt:
+After installation, start normal work with:
 
 ```text
 按 .agent 规范开始工作。
 ```
 
-English equivalent:
+The agent should read the installed `AGENTS.md` and `.agent/WORKFLOW_ENTRY.md`,
+then run the workflow by itself.
 
-```text
-Follow .agent and start work.
+### Option B: install manually
+
+```bash
+git clone https://github.com/asimfish/super_project.git
+cd super_project
+./install.sh /path/to/your/project
 ```
 
-The installed `AGENTS.md`, `.agent/WORKFLOW_ENTRY.md`, and agent hook configs
-tell Codex, Claude Code, Cursor, and similar tools how to translate that short
-prompt into the full workflow: read the plan and task docs, run `agentctl work`,
-record `note`, `finish` phases, and obey GitHub commit/push rules.
+This is equivalent to:
 
-`init` will:
+```bash
+python3 tools/agentctl.py init /path/to/your/project
+```
 
-- copy the `.agent/` templates, `AGENTS.md`, the Codex/Claude/Cursor hook configs,
-  and the GitHub Action into the project (never overwriting existing files);
-- distribute `tools/agentctl.py` so the project's hooks can call it;
-- install the Git hooks into `.githooks/` and set `git config core.hooksPath .githooks`;
-- seed `.agent/board.json` and `.agent/agents.json`.
-- record `.agent/adoption.json` in existing Git repositories so pre-push checks
-  apply to new commits after installation, not to old project history.
+## What It Installs
 
-## Layout (installed into a project)
+The target project gets a local `.agent/` system plus hooks and controller files:
 
 ```text
-AGENTS.md                      # agent entry protocol
-tools/agentctl.py              # the controller (stdlib-only)
-tools/agent_workflow_hook.py   # lifecycle hook bridge (Codex/Claude/Cursor)
+AGENTS.md
+tools/agentctl.py
+tools/agent_workflow_hook.py
 .githooks/{pre-commit,commit-msg,pre-push}
-.codex/hooks.json .claude/settings.json .cursor/hooks.json
+.codex/hooks.json
+.claude/settings.json
+.cursor/hooks.json
 .github/workflows/agent-workflow-check.yml
 .agent/
-  PROJECT_PLAN.md   TASKS.md            # human-readable plan + index
-  board.json        agents.json         # machine-readable board + agent registry
-  tasks/  decisions/  handoffs/  bus/ gates/ logs/
-  loops/  (bounded Trigger -> Execute -> Check -> Feedback -> Memory -> Next contracts)
-  rules/  (code / documentation / github / agent-operating standards)
-  WORKFLOW_ENTRY.md  # one-file entry protocol for all agents
-  state/  (current_session.json, locks/  — gitignored, local only)
+  WORKFLOW_ENTRY.md
+  PROJECT_PLAN.md
+  TASKS.md
+  board.json
+  agents.json
+  tasks/
+  loops/
+  rules/
+  logs/
+  handoffs/
+  decisions/
+  gates/
+  state/          # local only, gitignored
 ```
 
-## Template Coverage
+The installed `.agent/` directory belongs to that project. It is not a global
+agent memory.
 
-Installed projects include templates and rules for the three documents that most
-often become messy:
+## Normal Human Interaction
 
-- Plan format: `.agent/PROJECT_PLAN.md` defines fixed sections, task-board row
-  format, dependency format, and change-log format.
-- Task records: `.agent/tasks/_template.md` defines task contract, write scope,
-  stage checklist, stage log format, verification, and completion record.
-- GitHub workflow: `.agent/rules/github-standards.md`, `.github/PULL_REQUEST_TEMPLATE.md`,
-  and `.githooks/` define Conventional Commits, task IDs, PR fields, staged doc
-  updates, secret checks, and push gates.
+Humans do not need to run workflow commands during normal work.
 
-## Commands
+You mainly inspect and edit:
 
 ```text
-agentctl init [path]                 scaffold + distribute agentctl + git hooks
-agentctl task create --id --title [--owner --scope --deps]
-agentctl agents add --id --role [--backend --scope --tools --model]
-agentctl work --agent [--task]       resume current work or claim next assigned task
-agentctl work --agent --auto-create --title --scope   create/claim/start a task
-agentctl start --task --agent [--scope --force]   low-level explicit task start
-agentctl focus [--task]              print task goal/scope/TODO (re-read anytime)
-agentctl note "..."                  shorthand progress note for the active task
-agentctl progress --note             low-level progress command
-agentctl finish --summary [--tests]  shorthand completion command -> review
-agentctl complete --summary [--tests] low-level completion command -> review
-agentctl gate approve|reject --task --by [--note]   review -> done / blocked
-agentctl handoff create --from --to --summary [--artifact]   write task packet
-agentctl handoff list|show|mark                       inspect or close packets
-agentctl loop list|show|run <id> --once                inspect or run bounded loops
-agentctl loop auto --checkpoint <name> --once          run checkpoint loop policy
-agentctl refresh                     re-record doc hashes after plan/rules changed
-agentctl board [--json]              show the task board
-agentctl task show <id>              show one task
-agentctl check --mode <m> [--message-file f] [--commit-range r] [--json]
-agentctl status [--json]             show the current session
+.agent/PROJECT_PLAN.md
+.agent/TASKS.md
+.agent/tasks/*.md
+.agent/rules/*.md
+.agent/loops/checkpoints.json
 ```
 
-`check` modes: `manual` (lifecycle hook), `pre-commit`, `commit-msg`, `pre-push`, `ci`.
-Exit codes: `0` ok, `1` violations, `2` usage error, `3` no active session.
+If direction, priority, scope, or acceptance criteria are wrong, edit those
+files. The next agent run must re-read them and continue from the durable state.
 
-## Core loop
-
-1. Human or supervisor agent keeps `PROJECT_PLAN.md` and task docs directionally correct.
-2. Human starts a worker with `按 .agent 规范开始工作。` or an equivalent task request.
-3. Worker reads `.agent/WORKFLOW_ENTRY.md` and runs `agentctl work --agent <name>` before editing. This resumes an
-   active task or auto-claims the next assigned `ready`/`todo` task, then runs the
-   `work-start` checkpoint loop.
-4. If no task exists, the worker creates and starts one from the current request
-   with `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
-5. Worker records progress with `agentctl note`.
-6. Workflow checkpoints run bounded loops continuously without a daemon:
-   `work-start` runs plan triage, `pre-finish`/`post-finish` run document hygiene,
-   and `experiment-check` can be invoked for experiment monitoring.
-7. Worker creates task packets with `agentctl handoff create` when outputs feed downstream tasks.
-8. On resume/compaction the session-start hook re-injects the focus; run
-   `agentctl focus` to re-anchor a long task at any time.
-9. Worker runs `agentctl finish` (task -> `review`, lock released).
-10. Reviewer approval is optional for human oversight; when used, `agentctl gate approve`
-   moves the task to `done` and checks the plan box.
-11. Git hooks verify session, doc updates, commit format, task IDs, and review/done
-   state before commit/push.
-
-## Loop Contracts
-
-Loops are small one-shot cycles stored under `.agent/loops/`. Every loop must
-answer six questions: Trigger, Execute, Check, Feedback, Memory, and Next.
-Checkpoint policy lives in `.agent/loops/checkpoints.json`; it decides which
-loops run at `work-start`, `pre-finish`, `post-finish`, and `experiment-check`.
-
-```bash
-agentctl loop list
-agentctl loop show daily-plan-triage
-agentctl loop run daily-plan-triage --once
-agentctl loop auto --checkpoint experiment-check --once
-```
-
-`agentctl work` and `agentctl finish` call the relevant checkpoint loops
-automatically. Each run writes a durable report under `.agent/loops/runs/` and
-updates `.agent/loops/state.json`. See `docs/loop-engineering.md`.
-
-## Multi-agent split (example)
-
-For data collection split across agents, create disjoint write scopes
-(Fan-out/Fan-in):
-
-```bash
-agentctl task create --id T-101 --title "collect 1-20"  --owner agent1 --scope data/raw/001-020
-agentctl task create --id T-102 --title "collect 21-40" --owner agent2 --scope data/raw/021-040
-agentctl task create --id T-103 --title "collect 41-60" --owner agent3 --scope data/raw/041-060
-agentctl task create --id T-199 --title "merge + validate" --owner supervisor --scope data/manifest
-```
-
-`agentctl work` refuses to start a task whose write scope overlaps another
-in-progress task owned by a different agent, so agents do not clobber each other.
-
-## Intended interaction model
-
-After installation, humans should not need to drive workflow commands. A normal
-agent prompt is:
+The shortest normal prompt remains:
 
 ```text
 按 .agent 规范开始工作。
 ```
 
-Humans mostly inspect and edit durable documents:
+## Agent Work Cycle
 
-```bash
-# open .agent/PROJECT_PLAN.md and .agent/tasks/*.md
-# edit them if direction, priorities, scope, or acceptance criteria changed
-```
+When an agent starts work, it should follow this cycle:
 
-Running `agentctl board`, `agentctl task show`, or `agentctl gate approve` remains
-available, but it is not a required human step in the normal loop. Agents should
-notice human document edits, re-read them, refresh their receipt, and keep going.
+1. Read `AGENTS.md`, `.agent/WORKFLOW_ENTRY.md`, the project plan, task index,
+   rules, and relevant task doc.
+2. Run `agentctl work --agent <agent-name>`.
+3. If no matching task exists, create one with
+   `agentctl work --agent <agent-name> --auto-create --title "..." --scope "..."`.
+4. Work only inside the active task write scope.
+5. Record meaningful progress with `agentctl note "..."`.
+6. Finish with `agentctl finish --summary "..." --tests "..."`.
+7. Commit with Conventional Commits and a task ID.
+8. Push only after Git hooks pass.
 
-## Status machine
+`agentctl work` and `agentctl finish` automatically run checkpoint loops, so the
+agent does not need to remember separate triage and document hygiene commands.
+
+## Loop Design
+
+This kit treats a loop as a bounded feedback cycle, not an infinite background
+agent. Every loop answers six questions:
+
+| Link | Question |
+|---|---|
+| Trigger | Who or what starts this cycle? |
+| Execute | What does the agent do, and what may it write? |
+| Check | How is the result verified? |
+| Feedback | How does this result affect the next run? |
+| Memory | Where is the durable record written? |
+| Next | Stop, continue later, hand off, or ask a human? |
+
+Checkpoint policy lives in:
 
 ```text
-todo -> ready -> in_progress -> review -> approved -> done
-                         └----> blocked        └----> failed
+.agent/loops/checkpoints.json
 ```
 
-## Enforcement (three layers)
+Default checkpoints:
 
-- **Lifecycle hooks** (`tools/agent_workflow_hook.py`, wired via the three hook
-  configs): inject the protocol + focus on session start, block mutating tools when
-  no task session is active, remind to progress/complete on stop.
-- **Git hooks** (`.githooks/`): `pre-commit` (active session + staged doc updates +
-  secret scan), `commit-msg` (Conventional Commits + task ID), `pre-push`
-  (task IDs + tasks must be review/approved/done; done must have a completion record
-  and a checked plan box).
-- **GitHub Action**: runs `agentctl check --mode ci` to catch bypassed local hooks.
+| Checkpoint | Runs | When | Strict |
+|---|---|---|---|
+| `work-start` | `daily-plan-triage` | after `agentctl work` starts or resumes a task | no |
+| `pre-finish` | `doc-hygiene` | before a task moves to review | yes |
+| `post-finish` | `doc-hygiene` | after a task moves to review | no |
+| `experiment-check` | `experiment-monitor` | explicit experiment/benchmark monitoring | no |
 
-See `docs/enforcement.md` and `docs/workflow.md` for details.
+Each loop run writes:
+
+```text
+.agent/loops/runs/YYYYMMDD-HHMMSS-<loop-id>.md
+.agent/loops/state.json
+```
+
+The state file records the latest loop status and checkpoint status so the next
+cycle can use durable memory outside chat.
+
+## Built-In Loops
+
+| Loop | Purpose |
+|---|---|
+| `daily-plan-triage` | Checks `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, `.agent/board.json`, and task docs for stale or inconsistent task state. |
+| `doc-hygiene` | Checks task document structure, duplicate stage logs, leftover placeholders, and empty review records. |
+| `experiment-monitor` | Bounded scan of standard experiment directories for `DONE` and `ERROR` markers. It does not launch experiments. |
+
+Run loops manually when needed:
+
+```bash
+python3 tools/agentctl.py loop list
+python3 tools/agentctl.py loop show daily-plan-triage
+python3 tools/agentctl.py loop run daily-plan-triage --once
+python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
+```
+
+## System Modules
+
+| Module | Files | Role |
+|---|---|---|
+| Entry protocol | `AGENTS.md`, `.agent/WORKFLOW_ENTRY.md` | Tells every agent how to start from the same workflow. |
+| Plan and tasks | `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, `.agent/tasks/*.md`, `.agent/board.json` | Durable plan, task contracts, status, and progress. |
+| Loop runtime | `.agent/loops/*`, `agentctl loop ...` | Bounded Trigger -> Execute -> Check -> Feedback -> Memory -> Next cycles. |
+| Controller | `tools/agentctl.py` | Starts tasks, records notes, finishes tasks, runs checks and loops. |
+| Lifecycle hooks | `tools/agent_workflow_hook.py`, `.codex/`, `.claude/`, `.cursor/` | Injects workflow context and blocks mutating actions when no task is active where supported. |
+| Git hooks | `.githooks/` | Enforces commit format, task IDs, staged workflow docs, secret checks, and push gates. |
+| CI gate | `.github/workflows/agent-workflow-check.yml` | Catches bypassed local checks on GitHub. |
+| Handoffs | `.agent/handoffs/`, `.agent/bus/` | File-based packets for multi-agent task handoff. |
+
+## GitHub Standards
+
+Commits must follow Conventional Commits and include a task ID:
+
+```text
+feat(scope): short imperative summary
+
+Refs: T-001
+```
+
+Local hooks enforce:
+
+- staged code/data changes must include matching `.agent` updates;
+- commit messages must be Conventional Commits;
+- every pushed commit must reference a task ID;
+- pushed tasks must be `review`, `approved`, or `done`;
+- `done` tasks must have a completion record and checked plan box;
+- staged content is scanned for obvious secrets.
+
+## Multi-Agent Work
+
+Split work by non-overlapping write scope. Example:
+
+```bash
+python3 tools/agentctl.py task create --id T-101 --title "collect 1-20" \
+  --owner agent1 --scope data/raw/001-020
+python3 tools/agentctl.py task create --id T-102 --title "collect 21-40" \
+  --owner agent2 --scope data/raw/021-040
+python3 tools/agentctl.py task create --id T-103 --title "collect 41-60" \
+  --owner agent3 --scope data/raw/041-060
+python3 tools/agentctl.py task create --id T-199 --title "merge and validate" \
+  --owner supervisor --scope data/manifest
+```
+
+`agentctl work` refuses to start a task if its write scope overlaps another
+in-progress task owned by a different agent.
+
+## Common Commands
+
+```text
+agentctl init [path]                                install into a project
+agentctl work --agent <name>                        resume or claim work
+agentctl work --agent <name> --auto-create --title --scope
+agentctl focus                                      reprint current task focus
+agentctl note "..."                                 record progress
+agentctl finish --summary "..." --tests "..."       move task to review
+agentctl gate approve|reject --task --by            review gate
+agentctl loop list|show|run <id> --once             inspect or run one loop
+agentctl loop auto --checkpoint <name> --once       run checkpoint policy
+agentctl board [--json]                             show board
+agentctl check --mode manual|pre-commit|commit-msg|pre-push|ci
+```
+
+## Current Boundaries
+
+The current design intentionally does not include:
+
+- a background daemon or cron scheduler;
+- automatic worktree pools;
+- external connector loops;
+- automatic expensive experiment launches;
+- automatic merge to protected branches.
+
+The system is ready for project-level use. More autonomous scheduling should be
+added only after the checkpoint loops are reliable in real repositories.
+
+## More Detail
+
+- `docs/workflow.md`: full workflow reference.
+- `docs/loop-engineering.md`: loop contract and checkpoint model.
+- `docs/enforcement.md`: hook and GitHub enforcement layers.
+- `.agent/rules/github-standards.md`: commit, push, and PR standards.

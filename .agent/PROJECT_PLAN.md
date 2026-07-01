@@ -28,6 +28,7 @@ Define the durable project outcome in one or two paragraphs.
 | M1 | Define project workflow | in-progress | Plan, rules, hooks, and task docs exist |
 
 ## Task Board
+- [ ] T-004 - simplify README structure (owner: codex)
 - [ ] T-003 - add continuous loop automation (owner: codex)
 - [ ] T-002 - add minimal loop runtime (owner: codex)
 - [ ] T-001 - simplify agent startup prompt (owner: codex)
