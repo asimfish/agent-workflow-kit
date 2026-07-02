@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "id": "20260702-233445-loop-pre-finish-to-T-005",
+  "created_at": "2026-07-02 23:34:45",
+  "status": "done",
+  "kind": "loop-follow-up",
+  "checkpoint": "pre-finish",
+  "from_task": "loop-pre-finish",
+  "to_task": "T-005",
+  "by": "codex",
+  "summary": "checkpoint pre-finish reported partial under strict mode",
+  "artifacts": [
+    ".agent/loops/runs/20260702-233501-doc-hygiene.md"
+  ],
+  "notes": "auto-created by loop checkpoint; fix the reported checks, then re-run the checkpoint to auto-close this packet.\n2026-07-02 23:36:04: checkpoint pre-finish succeeded (trigger=t005-dod-close)",
+  "occurrences": 2,
+  "updated_at": "2026-07-02 23:36:04"
+}

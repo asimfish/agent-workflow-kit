@@ -28,6 +28,7 @@ Define the durable project outcome in one or two paragraphs.
 | M1 | Define project workflow | in-progress | Plan, rules, hooks, and task docs exist |
 
 ## Task Board
+- [ ] T-005 - loop feedback drives next cycle via follow-up packets (owner: codex)
 - [ ] T-004 - simplify README structure (owner: codex)
 - [ ] T-003 - add continuous loop automation (owner: codex)
 - [ ] T-002 - add minimal loop runtime (owner: codex)
@@ -74,3 +75,4 @@ Format: `- T-002 depends on T-001 because <reason>.`
 Format: `- YYYY-MM-DD HH:MM:SS - <agent-or-human> - <change and reason>.`
 
 - Initial plan created by Agent Workflow Kit.
+- 2026-07-02 17:58:00 - codex - added T-005 board row manually; task-create dedup regex matched AGENT-005 as T-005 (fixed in tools/agentctl.py).

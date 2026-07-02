@@ -15,3 +15,4 @@
 | T-002 | review | codex | `.agent/, templates/project/.agent/, tools/agentctl.py, README.md, docs/` | [.agent/tasks/T-002.md](tasks/T-002.md) | add minimal loop runtime |
 | T-003 | review | codex | `tools/agentctl.py, tools/agent_workflow_hook.py, .agent/, templates/project/.agent/, README.md, docs/` | [.agent/tasks/T-003.md](tasks/T-003.md) | add continuous loop automation |
 | T-004 | review | codex | `README.md, .agent/, docs/` | [.agent/tasks/T-004.md](tasks/T-004.md) | simplify README structure |
+| T-005 | review | codex | `tools/agentctl.py, .agent/, docs/` | [.agent/tasks/T-005.md](tasks/T-005.md) | loop feedback drives next cycle via follow-up packets |

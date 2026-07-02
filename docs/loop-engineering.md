@@ -72,6 +72,37 @@ feedback was produced, what memory changed, and what should happen next.
 Checkpoint state is also recorded in `.agent/loops/state.json`, so the next
 cycle can see the latest checkpoint status and report paths.
 
+## Feedback Link
+
+Loop runs are chained: each run reads the previous run's outcome and each
+failing checkpoint leaves a durable work item. No scheduling daemon is
+involved; the feedback lives in `.agent/` files.
+
+Previous-state injection:
+
+- Every run report contains a `- Previous:` line with the prior run's status
+  and report path (`- Previous: none recorded` on the first run).
+- Built-in loops compare the current status against the previous one and add a
+  feedback line: issues resolved since the last run, issues persisting since
+  the last run, or a regression after a previously successful run.
+
+Checkpoint follow-up packets:
+
+- When a checkpoint aggregates to `failed`/`blocked`, or to `partial` under
+  strict mode, it writes a `loop-follow-up` packet into the bus inbox of the
+  active task (`supervisor` when no session is active).
+- Re-running a still-failing checkpoint does not create a second packet; the
+  open packet is updated in place and its `occurrences` counter increments.
+- When the same checkpoint later aggregates to `success`, its open follow-up
+  packets are marked `done` and moved to `.agent/bus/done/` automatically.
+- The current open packet id is mirrored in `.agent/loops/state.json` under
+  `checkpoints.<name>.open_follow_up`.
+- `daily-plan-triage` lists open loop follow-ups in its Feedback section, so
+  the next work cycle starts from them. A typical resolution is: fix the
+  reported checks, then re-run
+  `python3 tools/agentctl.py loop auto --checkpoint <name> --once --force`
+  to let the checkpoint auto-close its packet.
+
 ## Built-In Loops
 
 `daily-plan-triage` compares `.agent/board.json`, `.agent/TASKS.md`, task docs,

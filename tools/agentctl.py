@@ -62,6 +62,7 @@ LOOPS_DIR = "loops"
 LOOP_RUNS_DIR = "runs"
 LOOP_STATE_FILE = "state.json"
 LOOP_CHECKPOINTS_FILE = "checkpoints.json"
+LOOP_FOLLOW_UP_KIND = "loop-follow-up"
 
 LOOP_REQUIRED_SECTIONS = ("Trigger", "Execute", "Check", "Feedback", "Memory", "Next")
 DEFAULT_LOOP_CHECKPOINTS = {
@@ -326,20 +327,25 @@ def _extract_section(text: str, header: str) -> str:
     return "\n".join(out).strip()
 
 
+def _task_word_re(task: str) -> str:
+    # \b alone is not enough: 'T-005' is a literal suffix of 'AGENT-005'.
+    return rf"(?<![\w-]){re.escape(task)}\b"
+
+
 def _plan_checked(root: Path, task: str) -> bool:
     text = _read(root / WORKFLOW_DIR / PLAN_FILE)
-    return re.search(rf"- \[x\][^\n]*{re.escape(task)}", text) is not None
+    return re.search(rf"- \[x\][^\n]*{_task_word_re(task)}", text) is not None
 
 
 def _plan_has_task_row(root: Path, task: str) -> bool:
     text = _read(root / WORKFLOW_DIR / PLAN_FILE)
-    return re.search(rf"^- \[[ x]\]\s+{re.escape(task)}\b", text, flags=re.M) is not None
+    return re.search(rf"^- \[[ x]\]\s+{_task_word_re(task)}", text, flags=re.M) is not None
 
 
 def _check_plan_box(root: Path, task: str) -> None:
     plan = root / WORKFLOW_DIR / PLAN_FILE
     text = _read(plan)
-    new = re.sub(rf"- \[ \]([^\n]*{re.escape(task)}[^\n]*)", r"- [x]\1", text, count=1)
+    new = re.sub(rf"- \[ \](\s+{_task_word_re(task)}[^\n]*)", r"- [x]\1", text, count=1)
     if new != text:
         _write(plan, new)
 
@@ -852,7 +858,7 @@ def _task_create(root: Path, args: argparse.Namespace) -> int:
     plan = root / WORKFLOW_DIR / PLAN_FILE
     ptext = _read(plan)
     bullet = f"- [ ] {task} - {title}" + (f" (owner: {owner})" if owner else "")
-    has_plan_bullet = re.search(rf"^- \[[ x]\][^\n]*{re.escape(task)}\b", ptext, flags=re.M)
+    has_plan_bullet = re.search(rf"^- \[[ x]\][^\n]*{_task_word_re(task)}", ptext, flags=re.M)
     if "## Task Board" in ptext and not has_plan_bullet:
         _write(plan, re.sub(r"(## Task Board\n)", rf"\1{bullet}\n", ptext, count=1))
     print(f"agentctl: created {task} ({title})")
@@ -1086,6 +1092,89 @@ def cmd_handoff(args: argparse.Namespace) -> int:
 
 # ---------- loops ----------
 
+def _loop_follow_up_packets(root: Path, checkpoint: str | None = None) -> list[tuple[Path, dict]]:
+    """Open (status=ready) loop follow-up packets sitting in the inbox."""
+    packets = []
+    inbox = _bus_dir(root, BUS_INBOX)
+    if not inbox.is_dir():
+        return packets
+    for path in sorted(inbox.rglob("*.json")):
+        pkt = _load_json(path, {})
+        if pkt.get("kind") != LOOP_FOLLOW_UP_KIND:
+            continue
+        if checkpoint and pkt.get("checkpoint") != checkpoint:
+            continue
+        if pkt.get("status") != "ready":
+            continue
+        packets.append((path, pkt))
+    return packets
+
+
+def _create_loop_follow_up(root: Path, checkpoint: str, aggregate: str,
+                           reports: list[str], strict: bool) -> tuple[str, bool]:
+    """Create (or refresh) the follow-up packet for a failed checkpoint.
+
+    Returns (packet_id, created). Deduplicates per checkpoint: re-running a
+    still-failing checkpoint updates the existing open packet instead of
+    flooding the inbox.
+    """
+    session = _load_session(root)
+    summary = f"checkpoint {checkpoint} reported {aggregate}" + (" under strict mode" if strict else "")
+    existing = _loop_follow_up_packets(root, checkpoint)
+    if existing:
+        path, pkt = existing[0]
+        pkt["updated_at"] = _now()
+        pkt["summary"] = summary
+        pkt["artifacts"] = reports
+        pkt["occurrences"] = int(pkt.get("occurrences") or 1) + 1
+        _save_json(path, pkt)
+        outbox = _bus_dir(root, BUS_OUTBOX) / (pkt.get("by") or "loop-engine") / f"{pkt['id']}.json"
+        if outbox.is_file():
+            _save_json(outbox, pkt)
+        return pkt["id"], False
+    from_task = f"loop-{checkpoint}"
+    to_task = session.get("task") or "supervisor"
+    packet = {
+        "version": 1,
+        "id": _packet_id(from_task, to_task),
+        "created_at": _now(),
+        "status": "ready",
+        "kind": LOOP_FOLLOW_UP_KIND,
+        "checkpoint": checkpoint,
+        "from_task": from_task,
+        "to_task": to_task,
+        "by": session.get("agent") or "loop-engine",
+        "summary": summary,
+        "artifacts": reports,
+        "notes": "auto-created by loop checkpoint; fix the reported checks, then re-run the checkpoint to auto-close this packet.",
+        "occurrences": 1,
+    }
+    outbox, inbox = _packet_paths(root, packet)
+    _save_json(outbox, packet)
+    _save_json(inbox, packet)
+    _append_handoff_doc(root, packet)
+    return packet["id"], True
+
+
+def _close_loop_follow_ups(root: Path, checkpoint: str, note: str) -> list[str]:
+    """Mark open follow-up packets for a now-successful checkpoint as done."""
+    closed = []
+    for _path, pkt in _loop_follow_up_packets(root, checkpoint):
+        pkt["status"] = "done"
+        pkt["updated_at"] = _now()
+        pkt["notes"] = (pkt.get("notes") or "") + f"\n{pkt['updated_at']}: {note}"
+        dest = _bus_dir(root, BUS_DONE) / f"{pkt.get('id')}.json"
+        _save_json(dest, pkt)
+        for stale in _matching_packet_paths(root, pkt.get("id") or ""):
+            if stale != dest and (BUS_INBOX in stale.parts or BUS_OUTBOX in stale.parts):
+                try:
+                    stale.unlink()
+                except OSError:
+                    pass
+        closed.append(pkt.get("id") or "")
+    return [c for c in closed if c]
+
+
 def _loop_files(root: Path) -> list[Path]:
     base = _loops_dir(root)
     if not base.is_dir():
@@ -1270,14 +1359,26 @@ def _loop_daily_plan_triage(root: Path) -> dict:
             checks.append(f"{tid}: done but not checked in PROJECT_PLAN.md")
     if "## Task Board" not in plan:
         checks.append("PROJECT_PLAN.md missing Task Board section")
+    open_follow_ups = _loop_follow_up_packets(root)
+    for _path, pkt in open_follow_ups:
+        feedback.append(
+            f"open loop follow-up {pkt.get('id')} (checkpoint={pkt.get('checkpoint')}, "
+            f"occurrences={pkt.get('occurrences', 1)}): {pkt.get('summary')}"
+        )
+        next_steps.append(
+            f"Resolve follow-up {pkt.get('id')}: fix the reported checks, then re-run "
+            f"'agentctl loop auto --checkpoint {pkt.get('checkpoint')} --once --force' to auto-close it."
+        )
     if checks:
         next_steps.append("Resolve plan/task/board inconsistencies before relying on automation.")
-    else:
+    elif not open_follow_ups:
         next_steps.append("Plan, task index, and board are consistent enough for the next loop.")
     return {
         "status": "partial" if checks else "success",
-        "read": [".agent/PROJECT_PLAN.md", ".agent/TASKS.md", ".agent/board.json", ".agent/tasks/*.md"],
-        "actions": ["Compared board state, task index rows, task docs, and plan checkboxes."],
+        "read": [".agent/PROJECT_PLAN.md", ".agent/TASKS.md", ".agent/board.json", ".agent/tasks/*.md",
+                 f".agent/{BUS_DIR}/{BUS_INBOX}/ (loop follow-ups)"],
+        "actions": ["Compared board state, task index rows, task docs, and plan checkboxes.",
+                    "Scanned the bus inbox for open loop follow-up packets."],
         "checks": checks or ["No plan/task/board inconsistencies found."],
         "feedback": feedback or ["No review or in-progress follow-up requiring triage."],
         "memory": ["Wrote this loop run report.", "Updated .agent/loops/state.json."],
@@ -1386,6 +1487,28 @@ def _loop_contract_only(root: Path, loop_id: str, missing: list[str]) -> dict:
     }
 
 
+def _attach_previous_run(root: Path, loop_id: str, result: dict) -> dict:
+    """Feed the prior run's outcome into this run (the Feedback link)."""
+    prev = (_load_json(_loop_state_path(root), {}).get("loops") or {}).get(loop_id) or {}
+    if not prev.get("last_run_at"):
+        return result
+    result["previous"] = {
+        "run_at": prev.get("last_run_at"),
+        "status": prev.get("last_status"),
+        "report": prev.get("last_report"),
+    }
+    prev_status = prev.get("last_status")
+    cur_status = result.get("status")
+    feedback = result.setdefault("feedback", [])
+    if prev_status in {"partial", "failed", "blocked"} and cur_status == "success":
+        feedback.append(f"previous run ({prev.get('last_run_at')}) was {prev_status}; its issues are resolved in this run.")
+    elif prev_status in {"partial", "failed", "blocked"} and cur_status in {"partial", "failed", "blocked"}:
+        feedback.append(f"issues persist since previous run ({prev.get('last_run_at')}, {prev_status}); see {prev.get('last_report')}.")
+    elif prev_status == "success" and cur_status in {"partial", "failed", "blocked"}:
+        feedback.append(f"regression since previous successful run ({prev.get('last_run_at')}).")
+    return result
+
+
 def _run_loop_once(root: Path, loop_id: str, missing: list[str]) -> dict:
     builtins = {
         "daily-plan-triage": _loop_daily_plan_triage,
@@ -1393,11 +1516,13 @@ def _run_loop_once(root: Path, loop_id: str, missing: list[str]) -> dict:
         "experiment-monitor": _loop_experiment_monitor,
     }
     fn = builtins.get(loop_id)
-    if not fn:
-        return _loop_contract_only(root, loop_id, missing)
     if missing:
-        return _loop_contract_only(root, loop_id, missing)
-    return fn(root)
+        result = _loop_contract_only(root, loop_id, missing)
+    elif fn:
+        result = fn(root)
+    else:
+        result = _loop_contract_only(root, loop_id, missing)
+    return _attach_previous_run(root, loop_id, result)
 
 
 def _write_loop_report(root: Path, loop_id: str, trigger: str, result: dict) -> Path:
@@ -1410,6 +1535,11 @@ def _write_loop_report(root: Path, loop_id: str, trigger: str, result: dict) -> 
         path = Path(f"{base}-{suffix}.md")
         suffix += 1
     session = _load_session(root)
+    prev = result.get("previous") or {}
+    previous_line = (
+        f"- Previous: {prev.get('status')} at {prev.get('run_at')} ({prev.get('report')})"
+        if prev else "- Previous: none recorded"
+    )
     lines = [
         "# Loop Run",
         "",
@@ -1420,6 +1550,7 @@ def _write_loop_report(root: Path, loop_id: str, trigger: str, result: dict) -> 
         f"- Started: {ts.strftime('%Y-%m-%d %H:%M:%S')}",
         f"- Finished: {ts.strftime('%Y-%m-%d %H:%M:%S')}",
         f"- Status: {result.get('status', 'unknown')}",
+        previous_line,
         "",
         "## Read",
         _format_bullets(result.get("read") or []),
@@ -1551,6 +1682,16 @@ def _run_loop_checkpoint(root: Path, checkpoint: str, *, once: bool, trigger: st
             if missing:
                 print(f"agentctl: loop contract missing sections: {', '.join(missing)}")
     aggregate = _checkpoint_status(statuses)
+    failing = aggregate in {"failed", "blocked"} or (strict_effective and aggregate == "partial")
+    follow_up_id = None
+    follow_up_created = False
+    closed_follow_ups: list[str] = []
+    if failing:
+        follow_up_id, follow_up_created = _create_loop_follow_up(
+            root, checkpoint, aggregate, reports, strict_effective)
+    elif aggregate == "success":
+        closed_follow_ups = _close_loop_follow_ups(
+            root, checkpoint, f"checkpoint {checkpoint} succeeded (trigger={trigger})")
     def update(state: dict) -> None:
         state.setdefault("checkpoints", {})[checkpoint] = {
             "last_run_at": _now(),
@@ -1558,10 +1699,16 @@ def _run_loop_checkpoint(root: Path, checkpoint: str, *, once: bool, trigger: st
             "last_reports": reports,
             "strict": strict_effective,
             "trigger": trigger,
+            "open_follow_up": follow_up_id if failing else None,
         }
     _update_loop_state(root, update)
     if not quiet:
         print(f"agentctl: checkpoint {checkpoint} -> {aggregate}")
+        if follow_up_id:
+            verb = "created" if follow_up_created else "updated"
+            print(f"agentctl: follow-up packet {verb}: {follow_up_id} (see agentctl handoff show {follow_up_id})")
+        for pid in closed_follow_ups:
+            print(f"agentctl: follow-up packet auto-closed: {pid}")
     if aggregate in {"failed", "blocked"}:
         return 1
     if strict_effective and aggregate == "partial":

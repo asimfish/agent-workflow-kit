@@ -2,14 +2,14 @@
   "version": 1,
   "loops": {
     "daily-plan-triage": {
-      "last_run_at": "2026-07-02 02:32:55",
+      "last_run_at": "2026-07-02 23:35:38",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260702-023255-daily-plan-triage.md"
+      "last_report": ".agent/loops/runs/20260702-233538-daily-plan-triage.md"
     },
     "doc-hygiene": {
-      "last_run_at": "2026-07-02 02:33:47",
+      "last_run_at": "2026-07-02 23:38:22",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260702-023347-doc-hygiene-2.md"
+      "last_report": ".agent/loops/runs/20260702-233822-doc-hygiene-2.md"
     },
     "experiment-monitor": {
       "last_run_at": "2026-07-01 18:47:12",
@@ -19,22 +19,24 @@
   },
   "checkpoints": {
     "work-start": {
-      "last_run_at": "2026-07-02 02:32:55",
+      "last_run_at": "2026-07-02 23:28:26",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260702-023255-daily-plan-triage.md"
+        ".agent/loops/runs/20260702-232826-daily-plan-triage.md"
       ],
       "strict": false,
-      "trigger": "manual"
+      "trigger": "work-resume",
+      "open_follow_up": null
     },
     "pre-finish": {
-      "last_run_at": "2026-07-02 02:33:47",
+      "last_run_at": "2026-07-02 23:38:22",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260702-023347-doc-hygiene.md"
+        ".agent/loops/runs/20260702-233822-doc-hygiene.md"
       ],
       "strict": true,
-      "trigger": "pre-finish"
+      "trigger": "pre-finish",
+      "open_follow_up": null
     },
     "experiment-check": {
       "last_run_at": "2026-07-01 18:47:12",
@@ -46,13 +48,14 @@
       "trigger": "manual"
     },
     "post-finish": {
-      "last_run_at": "2026-07-02 02:33:47",
+      "last_run_at": "2026-07-02 23:38:22",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260702-023347-doc-hygiene-2.md"
+        ".agent/loops/runs/20260702-233822-doc-hygiene-2.md"
       ],
       "strict": false,
-      "trigger": "post-finish"
+      "trigger": "post-finish",
+      "open_follow_up": null
     }
   }
 }

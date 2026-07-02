@@ -35,3 +35,5 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-02 02:31:52 [T-004] Defined README cleanup task and added T-004 to PROJECT_PLAN.md so plan, task index, board, and task doc are aligned.
 - 2026-07-02 02:33:14 [T-004] Rewrote README into a quick-start-first structure covering install, human interaction, agent work cycle, checkpoint loops, modules, GitHub standards, and boundaries.
 - 2026-07-02 02:33:39 [T-004] Final README cleanup checks passed: agentctl manual check and git diff whitespace check both succeeded.
+- 2026-07-02 23:37:22 [T-005] Stage 1-2 verified: agentctl.py adds previous-state injection (Previous: line + resolved/persisting/regression feedback) and checkpoint follow-up packets (create on failed/strict-partial, dedup via occurrences, auto-close on success; state.json mirrors open_follow_up).
+- 2026-07-02 23:37:22 [T-005] Stage 3 done: daily-plan-triage surfaces open follow-ups with resolution hint; docs/loop-engineering.md gains Feedback Link section; DoD scenario test passed (fail -> 1 packet, re-fail -> occurrences=2 no duplicate, success -> auto-closed to bus/done; check --mode manual OK).
