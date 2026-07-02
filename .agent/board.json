@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-02 23:45:55",
+  "updated_at": "2026-07-03 00:00:54",
   "tasks": {
     "AGENT-002": {
       "title": "dogfood workflow kit in super_project",
@@ -201,16 +201,17 @@
     },
     "T-006": {
       "title": "generic executor for custom loop contracts",
-      "status": "todo",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/agentctl.py",
         ".agent/",
-        "docs/"
+        "docs/",
+        "templates/project/.agent/loops/"
       ],
       "deps": [],
       "created_at": "2026-07-02 23:40:28",
-      "updated_at": "2026-07-02 23:40:28"
+      "updated_at": "2026-07-03 00:00:54"
     }
   }
 }

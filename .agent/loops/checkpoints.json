@@ -2,22 +2,30 @@
   "version": 1,
   "checkpoints": {
     "work-start": {
-      "loops": ["daily-plan-triage"],
+      "loops": [
+        "daily-plan-triage"
+      ],
       "strict": false,
       "debounce_minutes": 30
     },
     "pre-finish": {
-      "loops": ["doc-hygiene"],
+      "loops": [
+        "doc-hygiene"
+      ],
       "strict": true,
       "debounce_minutes": 0
     },
     "post-finish": {
-      "loops": ["doc-hygiene"],
+      "loops": [
+        "doc-hygiene"
+      ],
       "strict": false,
       "debounce_minutes": 0
     },
     "experiment-check": {
-      "loops": ["experiment-monitor"],
+      "loops": [
+        "experiment-monitor"
+      ],
       "strict": false,
       "debounce_minutes": 30
     }

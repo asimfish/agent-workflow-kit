@@ -63,6 +63,11 @@ LOOP_RUNS_DIR = "runs"
 LOOP_STATE_FILE = "state.json"
 LOOP_CHECKPOINTS_FILE = "checkpoints.json"
 LOOP_FOLLOW_UP_KIND = "loop-follow-up"
+LOOP_COMMAND_FENCE = "loop-check"
+LOOP_BUILTIN_IDS = ("daily-plan-triage", "doc-hygiene", "experiment-monitor")
+LOOP_COMMAND_TIMEOUT_DEFAULT = 120
+LOOP_COMMAND_TIMEOUT_MAX = 3600
+LOOP_COMMAND_OUTPUT_CAP_DEFAULT = 2000
 
 LOOP_REQUIRED_SECTIONS = ("Trigger", "Execute", "Check", "Feedback", "Memory", "Next")
 DEFAULT_LOOP_CHECKPOINTS = {
@@ -1202,6 +1207,75 @@ def _loop_contract(root: Path, loop_id: str) -> tuple[Path, str, list[str]]:
     return path, text, missing
 
 
+def _loop_command_spec(text: str) -> tuple[dict | None, list[str]]:
+    """Parse the optional ```loop-check``` command block of a loop contract.
+
+    Returns (spec, errors). spec is None when no block is declared. Inside the
+    block: `$ <command>` lines are executed in order, `timeout:`/`max-output:`
+    lines set integer options, `#` lines are comments.
+    """
+    lines = text.splitlines()
+    block: list[str] | None = None
+    blocks: list[list[str]] = []
+    for line in lines:
+        stripped = line.strip()
+        if block is None:
+            if stripped == f"```{LOOP_COMMAND_FENCE}":
+                block = []
+            continue
+        if stripped == "```":
+            blocks.append(block)
+            block = None
+            continue
+        block.append(line)
+    errors: list[str] = []
+    if block is not None:
+        errors.append(f"unterminated ```{LOOP_COMMAND_FENCE}``` block")
+    if not blocks and not errors:
+        return None, []
+    if len(blocks) > 1:
+        errors.append(f"more than one ```{LOOP_COMMAND_FENCE}``` block; declare exactly one")
+    spec = {
+        "timeout": LOOP_COMMAND_TIMEOUT_DEFAULT,
+        "max_output": LOOP_COMMAND_OUTPUT_CAP_DEFAULT,
+        "commands": [],
+    }
+    option_keys = {"timeout": "timeout", "max-output": "max_output"}
+    for raw in (blocks[0] if blocks else []):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("$"):
+            cmd = line[1:].strip()
+            if not cmd:
+                errors.append("empty command after '$'")
+            else:
+                spec["commands"].append(cmd)
+            continue
+        key, sep, value = line.partition(":")
+        key = key.strip().lower()
+        if sep and key in option_keys:
+            try:
+                num = int(value.strip())
+            except ValueError:
+                errors.append(f"option '{key}' must be an integer, got '{value.strip()}'")
+                continue
+            if num <= 0:
+                errors.append(f"option '{key}' must be positive, got {num}")
+                continue
+            if key == "timeout" and num > LOOP_COMMAND_TIMEOUT_MAX:
+                errors.append(f"option 'timeout' capped at {LOOP_COMMAND_TIMEOUT_MAX}s, got {num}")
+                continue
+            spec[option_keys[key]] = num
+            continue
+        errors.append(f"unrecognized line in {LOOP_COMMAND_FENCE} block: '{line}'")
+    if blocks and not spec["commands"]:
+        errors.append(f"{LOOP_COMMAND_FENCE} block declares no '$ <command>' lines")
+    if errors:
+        return None, errors
+    return spec, []
+
+
 def _loop_summary_line(root: Path, path: Path) -> dict:
     text = _read(path)
     missing = [
@@ -1487,6 +1561,54 @@ def _loop_contract_only(root: Path, loop_id: str, missing: list[str]) -> dict:
     }
 
 
+def _cap_output(text: str, limit: int) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"... (output capped at {limit} chars)"
+
+
+def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
+    """Execute the commands a custom loop contract declares; exit codes decide status."""
+    checks = []
+    feedback = []
+    failed = 0
+    for cmd in spec["commands"]:
+        try:
+            proc = subprocess.run(cmd, shell=True, cwd=root, capture_output=True,
+                                  text=True, timeout=spec["timeout"])
+            code = proc.returncode
+            output = (proc.stdout or "") + (proc.stderr or "")
+        except subprocess.TimeoutExpired as exc:
+            code = None
+            output = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + \
+                     ((exc.stderr or "") if isinstance(exc.stderr, str) else "")
+        if code == 0:
+            checks.append(f"$ {cmd} -> exit 0")
+            continue
+        failed += 1
+        if code is None:
+            checks.append(f"$ {cmd} -> timeout after {spec['timeout']}s")
+        else:
+            checks.append(f"$ {cmd} -> exit {code}")
+        capped = _cap_output(output, spec["max_output"])
+        if capped:
+            feedback.append(f"output of failing '$ {cmd}': {capped}")
+    status = "failed" if failed else "success"
+    loop_rel = str(_loop_path(root, loop_id).relative_to(root))
+    return {
+        "status": status,
+        "read": [loop_rel],
+        "actions": [f"Executed {len(spec['commands'])} declared check command(s) from the loop contract "
+                    f"(timeout {spec['timeout']}s, output cap {spec['max_output']} chars)."],
+        "checks": checks,
+        "feedback": feedback or ["All declared commands passed."],
+        "memory": ["Wrote this loop run report.", "Updated .agent/loops/state.json."],
+        "next": ["No action needed before the next cycle." if not failed else
+                 f"Fix the {failed} failing command(s), then re-run 'agentctl loop run {loop_id} --once'."],
+    }
+
+
 def _attach_previous_run(root: Path, loop_id: str, result: dict) -> dict:
     """Feed the prior run's outcome into this run (the Feedback link)."""
     prev = (_load_json(_loop_state_path(root), {}).get("loops") or {}).get(loop_id) or {}
@@ -1521,7 +1643,16 @@ def _run_loop_once(root: Path, loop_id: str, missing: list[str]) -> dict:
     elif fn:
         result = fn(root)
     else:
-        result = _loop_contract_only(root, loop_id, missing)
+        spec, errors = _loop_command_spec(_read(_loop_path(root, loop_id)))
+        if errors:
+            result = _loop_contract_only(root, loop_id, [])
+            result["status"] = "failed"
+            result["checks"] = [f"invalid {LOOP_COMMAND_FENCE} block: {e}" for e in errors]
+            result["next"] = [f"Fix the {LOOP_COMMAND_FENCE} block in the loop contract, then re-run."]
+        elif spec:
+            result = _loop_run_commands(root, loop_id, spec)
+        else:
+            result = _loop_contract_only(root, loop_id, missing)
     return _attach_previous_run(root, loop_id, result)
 
 
@@ -1753,6 +1884,11 @@ def _check_base(root: Path) -> list:
         row = _loop_summary_line(root, path)
         if not row["ok"]:
             p.append(f"loop {row['id']} missing required sections: {', '.join(row['missing'])}")
+        spec, errors = _loop_command_spec(_read(path))
+        for err in errors:
+            p.append(f"loop {row['id']}: {LOOP_COMMAND_FENCE} block invalid: {err}")
+        if spec and row["id"] in LOOP_BUILTIN_IDS:
+            p.append(f"loop {row['id']} is built-in; its {LOOP_COMMAND_FENCE} block would be ignored — remove it")
     return p
 
 

@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "id": "20260702-235734-loop-custom-check-to-T-006",
+  "created_at": "2026-07-02 23:57:34",
+  "status": "done",
+  "kind": "loop-follow-up",
+  "checkpoint": "custom-check",
+  "from_task": "loop-custom-check",
+  "to_task": "T-006",
+  "by": "codex",
+  "summary": "checkpoint custom-check reported failed",
+  "artifacts": [
+    ".agent/loops/runs/20260702-235751-tmp-t006-fail.md"
+  ],
+  "notes": "auto-created by loop checkpoint; fix the reported checks, then re-run the checkpoint to auto-close this packet.\n2026-07-02 23:58:07: checkpoint custom-check succeeded (trigger=t006-dod-close)",
+  "occurrences": 2,
+  "updated_at": "2026-07-02 23:58:07"
+}

@@ -16,4 +16,4 @@
 | T-003 | done | codex | `tools/agentctl.py, tools/agent_workflow_hook.py, .agent/, templates/project/.agent/, README.md, docs/` | [.agent/tasks/T-003.md](tasks/T-003.md) | add continuous loop automation |
 | T-004 | done | codex | `README.md, .agent/, docs/` | [.agent/tasks/T-004.md](tasks/T-004.md) | simplify README structure |
 | T-005 | done | codex | `tools/agentctl.py, .agent/, docs/` | [.agent/tasks/T-005.md](tasks/T-005.md) | loop feedback drives next cycle via follow-up packets |
-| T-006 | todo | codex | `tools/agentctl.py, .agent/, docs/` | [.agent/tasks/T-006.md](tasks/T-006.md) | generic executor for custom loop contracts |
+| T-006 | done | codex | `tools/agentctl.py, .agent/, docs/, templates/project/.agent/loops/` | [.agent/tasks/T-006.md](tasks/T-006.md) | generic executor for custom loop contracts |

@@ -103,6 +103,41 @@ Checkpoint follow-up packets:
   `python3 tools/agentctl.py loop auto --checkpoint <name> --once --force`
   to let the checkpoint auto-close its packet.
 
+## Custom Loop Commands
+
+Loops whose id is not built-in can declare executable checks directly in the
+contract. Put one fenced `loop-check` block inside the loop file:
+
+````markdown
+## Check
+
+```loop-check
+timeout: 120
+max-output: 2000
+# comments are allowed
+$ python3 -m py_compile tools/agentctl.py
+$ pytest -q tests/smoke
+```
+````
+
+Rules:
+
+- `$ <command>` lines run in order, from the repository root, via the shell.
+- `timeout:` is the per-command limit in seconds (default 120, max 3600).
+- `max-output:` caps captured output per failing command (default 2000 chars).
+- All commands exit 0 -> the run is `success`; any non-zero exit or timeout ->
+  `failed`. Failing commands get their capped output in the Feedback section.
+- Declare exactly one block. A malformed block makes the run `failed` and is
+  also reported by `agentctl check`.
+- Built-in loop ids (`daily-plan-triage`, `doc-hygiene`, `experiment-monitor`)
+  keep their built-in behavior; a `loop-check` block on them is a check error.
+- Custom loops participate in the feedback link like built-ins: reports carry
+  a `Previous:` line, and checkpoint failures create follow-up packets.
+
+`project-check` ships as an installed example; edit its command block to run
+project-specific checks, and wire it into `.agent/loops/checkpoints.json` if it
+should run at a workflow checkpoint.
+
 ## Built-In Loops
 
 `daily-plan-triage` compares `.agent/board.json`, `.agent/TASKS.md`, task docs,
