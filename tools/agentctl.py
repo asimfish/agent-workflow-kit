@@ -68,6 +68,7 @@ LOOP_BUILTIN_IDS = ("daily-plan-triage", "doc-hygiene", "experiment-monitor")
 LOOP_COMMAND_TIMEOUT_DEFAULT = 120
 LOOP_COMMAND_TIMEOUT_MAX = 3600
 LOOP_COMMAND_OUTPUT_CAP_DEFAULT = 2000
+LOOP_ESCALATE_AFTER_DEFAULT = 3
 
 LOOP_REQUIRED_SECTIONS = ("Trigger", "Execute", "Check", "Feedback", "Memory", "Next")
 DEFAULT_LOOP_CHECKPOINTS = {
@@ -696,6 +697,25 @@ def cmd_complete(args: argparse.Namespace) -> int:
         print("agentctl: --summary is required", file=sys.stderr)
         return 2
     tests = args.tests or ""
+    ack = bool(getattr(args, "ack_escalations", False))
+    escalated = _escalated_follow_ups(root, task)
+    if escalated and not ack:
+        for _path, pkt in escalated:
+            print(f"agentctl: escalated follow-up {pkt.get('id')} targets {task} "
+                  f"(checkpoint {pkt.get('checkpoint')}, {pkt.get('occurrences', 1)} failures).", file=sys.stderr)
+        print("agentctl: finish blocked; resolve the checkpoint failures (a success auto-closes the packet) "
+              "or re-run with --ack-escalations to record a human override.", file=sys.stderr)
+        return 1
+    if escalated and ack:
+        for path, pkt in escalated:
+            pkt["updated_at"] = _now()
+            pkt["acknowledged_by"] = st.get("agent") or "unknown"
+            pkt["notes"] = (pkt.get("notes") or "") + (
+                f"\n{pkt['updated_at']}: escalation acknowledged via finish --ack-escalations "
+                f"by {pkt['acknowledged_by']}."
+            )
+            _save_json(path, pkt)
+            print(f"agentctl: escalation acknowledged: {pkt.get('id')}")
     rc = _run_loop_checkpoint(root, "pre-finish", once=True, trigger="pre-finish", strict=True)
     if rc:
         return rc
@@ -742,7 +762,8 @@ def cmd_finish(args: argparse.Namespace) -> int:
         title = (_load_board(root).get("tasks", {}).get(task) or {}).get("title") or task
         summary = f"Completed {task}: {title}"
     tests = args.tests or "not recorded"
-    return cmd_complete(argparse.Namespace(summary=summary, tests=tests))
+    return cmd_complete(argparse.Namespace(summary=summary, tests=tests,
+                                           ack_escalations=bool(getattr(args, "ack_escalations", False))))
 
 
 def cmd_gate(args: argparse.Namespace) -> int:
@@ -1116,12 +1137,14 @@ def _loop_follow_up_packets(root: Path, checkpoint: str | None = None) -> list[t
 
 
 def _create_loop_follow_up(root: Path, checkpoint: str, aggregate: str,
-                           reports: list[str], strict: bool) -> tuple[str, bool]:
+                           reports: list[str], strict: bool,
+                           escalate_after: int = LOOP_ESCALATE_AFTER_DEFAULT) -> tuple[str, bool, bool]:
     """Create (or refresh) the follow-up packet for a failed checkpoint.
 
-    Returns (packet_id, created). Deduplicates per checkpoint: re-running a
-    still-failing checkpoint updates the existing open packet instead of
-    flooding the inbox.
+    Returns (packet_id, created, escalated_now). Deduplicates per checkpoint:
+    re-running a still-failing checkpoint updates the existing open packet
+    instead of flooding the inbox. When occurrences reaches escalate_after the
+    packet is flagged escalated exactly once and requires a human decision.
     """
     session = _load_session(root)
     summary = f"checkpoint {checkpoint} reported {aggregate}" + (" under strict mode" if strict else "")
@@ -1132,11 +1155,20 @@ def _create_loop_follow_up(root: Path, checkpoint: str, aggregate: str,
         pkt["summary"] = summary
         pkt["artifacts"] = reports
         pkt["occurrences"] = int(pkt.get("occurrences") or 1) + 1
+        escalated_now = False
+        if not pkt.get("escalated") and escalate_after > 0 and pkt["occurrences"] >= escalate_after:
+            pkt["escalated"] = True
+            pkt["escalated_at"] = _now()
+            pkt["notes"] = (pkt.get("notes") or "") + (
+                f"\n{pkt['escalated_at']}: ESCALATED after {pkt['occurrences']} failures; "
+                "needs a human decision (or 'agentctl finish --ack-escalations' to override)."
+            )
+            escalated_now = True
         _save_json(path, pkt)
         outbox = _bus_dir(root, BUS_OUTBOX) / (pkt.get("by") or "loop-engine") / f"{pkt['id']}.json"
         if outbox.is_file():
             _save_json(outbox, pkt)
-        return pkt["id"], False
+        return pkt["id"], False, escalated_now
     from_task = f"loop-{checkpoint}"
     to_task = session.get("task") or "supervisor"
     packet = {
@@ -1154,11 +1186,32 @@ def _create_loop_follow_up(root: Path, checkpoint: str, aggregate: str,
         "notes": "auto-created by loop checkpoint; fix the reported checks, then re-run the checkpoint to auto-close this packet.",
         "occurrences": 1,
     }
+    escalated_now = False
+    if escalate_after == 1:
+        packet["escalated"] = True
+        packet["escalated_at"] = _now()
+        packet["notes"] += (
+            f"\n{packet['escalated_at']}: ESCALATED after {packet['occurrences']} failure(s); "
+            "needs a human decision (or 'agentctl finish --ack-escalations' to override)."
+        )
+        escalated_now = True
     outbox, inbox = _packet_paths(root, packet)
     _save_json(outbox, packet)
     _save_json(inbox, packet)
     _append_handoff_doc(root, packet)
-    return packet["id"], True
+    return packet["id"], True, escalated_now
+
+
+def _escalated_follow_ups(root: Path, task: str | None = None) -> list[tuple[Path, dict]]:
+    """Open follow-up packets that have been escalated, optionally per target task."""
+    out = []
+    for path, pkt in _loop_follow_up_packets(root):
+        if not pkt.get("escalated"):
+            continue
+        if task and pkt.get("to_task") != task:
+            continue
+        out.append((path, pkt))
+    return out
 
 
 def _close_loop_follow_ups(root: Path, checkpoint: str, note: str) -> list[str]:
@@ -1435,6 +1488,16 @@ def _loop_daily_plan_triage(root: Path) -> dict:
         checks.append("PROJECT_PLAN.md missing Task Board section")
     open_follow_ups = _loop_follow_up_packets(root)
     for _path, pkt in open_follow_ups:
+        if pkt.get("escalated"):
+            checks.append(
+                f"ESCALATED loop follow-up {pkt.get('id')} (checkpoint={pkt.get('checkpoint')}, "
+                f"occurrences={pkt.get('occurrences', 1)}): repeated failures need a human decision"
+            )
+            next_steps.append(
+                f"Escalated follow-up {pkt.get('id')}: a human should decide how to unblock checkpoint "
+                f"{pkt.get('checkpoint')}; 'finish --ack-escalations' overrides only with recorded intent."
+            )
+            continue
         feedback.append(
             f"open loop follow-up {pkt.get('id')} (checkpoint={pkt.get('checkpoint')}, "
             f"occurrences={pkt.get('occurrences', 1)}): {pkt.get('summary')}"
@@ -1816,10 +1879,15 @@ def _run_loop_checkpoint(root: Path, checkpoint: str, *, once: bool, trigger: st
     failing = aggregate in {"failed", "blocked"} or (strict_effective and aggregate == "partial")
     follow_up_id = None
     follow_up_created = False
+    follow_up_escalated = False
     closed_follow_ups: list[str] = []
     if failing:
-        follow_up_id, follow_up_created = _create_loop_follow_up(
-            root, checkpoint, aggregate, reports, strict_effective)
+        try:
+            escalate_after = int(spec.get("escalate_after") or LOOP_ESCALATE_AFTER_DEFAULT)
+        except (TypeError, ValueError):
+            escalate_after = LOOP_ESCALATE_AFTER_DEFAULT
+        follow_up_id, follow_up_created, follow_up_escalated = _create_loop_follow_up(
+            root, checkpoint, aggregate, reports, strict_effective, escalate_after)
     elif aggregate == "success":
         closed_follow_ups = _close_loop_follow_ups(
             root, checkpoint, f"checkpoint {checkpoint} succeeded (trigger={trigger})")
@@ -1838,6 +1906,9 @@ def _run_loop_checkpoint(root: Path, checkpoint: str, *, once: bool, trigger: st
         if follow_up_id:
             verb = "created" if follow_up_created else "updated"
             print(f"agentctl: follow-up packet {verb}: {follow_up_id} (see agentctl handoff show {follow_up_id})")
+        if follow_up_escalated:
+            print(f"agentctl: follow-up packet ESCALATED: {follow_up_id} — repeated failures need a human decision "
+                  f"(finish is blocked for the target task until acknowledged).", file=sys.stderr)
         for pid in closed_follow_ups:
             print(f"agentctl: follow-up packet auto-closed: {pid}")
     if aggregate in {"failed", "blocked"}:
@@ -1890,6 +1961,14 @@ def _check_base(root: Path) -> list:
         if spec and row["id"] in LOOP_BUILTIN_IDS:
             p.append(f"loop {row['id']} is built-in; its {LOOP_COMMAND_FENCE} block would be ignored — remove it")
     return p
+
+
+def _check_escalations(root: Path) -> list:
+    return [
+        f"escalated loop follow-up {pkt.get('id')} (checkpoint={pkt.get('checkpoint')}, "
+        f"occurrences={pkt.get('occurrences', 1)}) needs a human decision"
+        for _path, pkt in _escalated_follow_ups(root)
+    ]
 
 
 def _check_receipt(root: Path) -> list:
@@ -2003,7 +2082,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     root = _repo_root()
     mode = args.mode or "manual"
     if mode == "manual":
-        problems = _check_base(root) + _check_receipt(root)
+        problems = _check_base(root) + _check_receipt(root) + _check_escalations(root)
     elif mode == "pre-commit":
         problems = _check_base(root) + _check_precommit(root)
     elif mode == "commit-msg":
@@ -2011,7 +2090,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     elif mode == "pre-push":
         problems = _check_prepush(root, args.commit_range)
     elif mode == "ci":
-        problems = _check_base(root) + _check_board_consistency(root)
+        problems = _check_base(root) + _check_board_consistency(root) + _check_escalations(root)
     else:
         print(f"agentctl: unknown check mode '{mode}'", file=sys.stderr)
         return 2
@@ -2082,11 +2161,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("complete")
     sp.add_argument("--summary")
     sp.add_argument("--tests")
+    sp.add_argument("--ack-escalations", action="store_true", dest="ack_escalations")
     sp.set_defaults(func=cmd_complete)
 
     sp = sub.add_parser("finish")
     sp.add_argument("--summary")
     sp.add_argument("--tests")
+    sp.add_argument("--ack-escalations", action="store_true", dest="ack_escalations")
     sp.set_defaults(func=cmd_finish)
 
     sp = sub.add_parser("gate")

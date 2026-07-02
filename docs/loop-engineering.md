@@ -103,6 +103,22 @@ Checkpoint follow-up packets:
   `python3 tools/agentctl.py loop auto --checkpoint <name> --once --force`
   to let the checkpoint auto-close its packet.
 
+Escalation:
+
+- When an open follow-up packet keeps failing and its `occurrences` counter
+  reaches the checkpoint's `escalate_after` threshold (default 3, configurable
+  per checkpoint in `.agent/loops/checkpoints.json`), the packet is flagged
+  `escalated` exactly once. Escalation means: stop retrying silently, a human
+  decision is needed.
+- Escalated packets are surfaced as check problems: `daily-plan-triage` lists
+  them in its Checks section (the run turns `partial`), and
+  `agentctl check --mode manual` / `--mode ci` fail while one is open.
+- `agentctl finish` (and `complete`) refuse while an escalated packet targets
+  the active task. Either fix the underlying failures — a successful checkpoint
+  still auto-closes escalated packets — or re-run with `--ack-escalations` to
+  record a deliberate human override (`acknowledged_by` plus a note is written
+  into the packet).
+
 ## Custom Loop Commands
 
 Loops whose id is not built-in can declare executable checks directly in the

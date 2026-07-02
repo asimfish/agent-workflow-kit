@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "id": "20260703-002242-loop-t007-check-to-T-007",
+  "created_at": "2026-07-03 00:22:42",
+  "status": "done",
+  "kind": "loop-follow-up",
+  "checkpoint": "t007-check",
+  "from_task": "loop-t007-check",
+  "to_task": "T-007",
+  "by": "codex",
+  "summary": "checkpoint t007-check reported failed",
+  "artifacts": [
+    ".agent/loops/runs/20260703-002538-tmp-t007-fail.md"
+  ],
+  "notes": "auto-created by loop checkpoint; fix the reported checks, then re-run the checkpoint to auto-close this packet.\n2026-07-03 00:23:43: ESCALATED after 2 failures; needs a human decision (or 'agentctl finish --ack-escalations' to override).\n2026-07-03 00:36:11: escalation acknowledged via finish --ack-escalations by codex.\n2026-07-03 00:38:38: checkpoint t007-check succeeded (trigger=t007-close)",
+  "occurrences": 3,
+  "updated_at": "2026-07-03 00:38:38",
+  "escalated": true,
+  "escalated_at": "2026-07-03 00:23:43",
+  "acknowledged_by": "codex"
+}
