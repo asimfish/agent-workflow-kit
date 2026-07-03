@@ -30,6 +30,7 @@ instead of relying on chat memory or repeated human prompts.
 | M1 | Define project workflow | done | Plan, rules, hooks, loop contracts, task docs, and dogfood evidence exist |
 
 ## Task Board
+- [x] T-010 - add repeatable loop regression test (owner: cursor)
 - [x] T-009 - retire obsolete placeholder tasks (owner: codex)
 - [x] T-008 - dogfood installed loop workflow end to end (owner: codex)
 - [x] T-007 - escalate repeatedly failing checkpoint follow-ups (owner: codex)

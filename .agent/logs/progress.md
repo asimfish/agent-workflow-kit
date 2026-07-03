@@ -46,3 +46,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-03 08:02:01 [T-008] README now documents follow-up packets, escalation, ack override, custom loop-check commands, and project-check; formal checks passed.
 - 2026-07-03 18:10:29 [T-009] Retired historical placeholder tasks T-000 and AGENT-003: task docs now have completion records, TASKS.md and PROJECT_PLAN.md are checked/done, board has no placeholder todo, and project plan now states the real Agent Workflow Kit goal.
 - 2026-07-03 18:10:55 [T-009] Verification passed after retiring placeholders: work-start triage success, manual check OK, git diff --check OK, and board now shows T-000/AGENT-003 done with only T-009 active.
+- 2026-07-03 18:33:07 [T-010] Added tests/test_loop_workflow.py (stdlib unittest, fresh temp-project install) covering fail/escalate/block/fix/auto-close and ack override; wired into CI workflow and documented in README; both tests pass locally.

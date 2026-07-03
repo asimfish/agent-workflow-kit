@@ -27,3 +27,7 @@ jobs:
           else
             python3 tools/agentctl.py check --mode ci
           fi
+
+      - name: Run loop workflow regression tests
+        shell: bash
+        run: python3 -m unittest discover -s tests -v

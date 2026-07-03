@@ -286,6 +286,18 @@ agentctl board [--json]                             show board
 agentctl check --mode manual|pre-commit|commit-msg|pre-push|ci
 ```
 
+## Regression Tests
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+`tests/test_loop_workflow.py` installs the kit into fresh temporary Git
+projects and replays the full loop feedback chain: custom loop failure,
+follow-up packet creation, escalation, check/finish blocking, fix with
+auto-close, and the `--ack-escalations` override. CI runs the same tests on
+every push and pull request.
+
 ## Current Boundaries
 
 The current design intentionally does not include:
