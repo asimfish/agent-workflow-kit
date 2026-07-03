@@ -1,7 +1,18 @@
 {
   "version": 1,
-  "updated_at": "2026-07-03 18:06:20",
+  "updated_at": "2026-07-03 18:11:10",
   "tasks": {
+    "T-000": {
+      "title": "Replace starter task with real work",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "initial",
+      "updated_at": "2026-07-03 18:09:18"
+    },
     "AGENT-002": {
       "title": "dogfood workflow kit in super_project",
       "status": "done",
@@ -21,7 +32,7 @@
     },
     "AGENT-003": {
       "title": "review dogfood workflow results",
-      "status": "todo",
+      "status": "done",
       "owner": "reviewer",
       "scope": [
         ".agent/",
@@ -29,7 +40,7 @@
       ],
       "deps": [],
       "created_at": "2026-06-29 03:01:11",
-      "updated_at": "2026-06-29 03:01:11"
+      "updated_at": "2026-07-03 18:09:18"
     },
     "AGENT-004": {
       "title": "simplify autonomous agent interaction",
@@ -241,6 +252,17 @@
       "deps": [],
       "created_at": "2026-07-03 07:59:12",
       "updated_at": "2026-07-03 18:06:20"
+    },
+    "T-009": {
+      "title": "retire obsolete placeholder tasks",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-03 18:08:34",
+      "updated_at": "2026-07-03 18:11:10"
     }
   }
 }

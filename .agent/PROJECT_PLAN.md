@@ -12,7 +12,9 @@ This file is the long-term source of truth for coordinated agent work.
 
 ## Long-Term Goal
 
-Define the durable project outcome in one or two paragraphs.
+Provide an installable, project-level workflow kit that lets multiple AI agents
+work from durable plans, task documents, loop feedback, and GitHub enforcement
+instead of relying on chat memory or repeated human prompts.
 
 ## Current Strategy
 
@@ -25,9 +27,10 @@ Define the durable project outcome in one or two paragraphs.
 
 | Milestone | Target | Status | Exit Criteria |
 |---|---|---|---|
-| M1 | Define project workflow | in-progress | Plan, rules, hooks, and task docs exist |
+| M1 | Define project workflow | done | Plan, rules, hooks, loop contracts, task docs, and dogfood evidence exist |
 
 ## Task Board
+- [x] T-009 - retire obsolete placeholder tasks (owner: codex)
 - [x] T-008 - dogfood installed loop workflow end to end (owner: codex)
 - [x] T-007 - escalate repeatedly failing checkpoint follow-ups (owner: codex)
 - [x] T-006 - generic executor for custom loop contracts (owner: codex)
@@ -45,22 +48,22 @@ Use `[x]` only when the task is `done`.
 - [x] AGENT-006 - harden document and github templates (owner: codex)
 - [x] AGENT-005 - make human steering optional (owner: codex)
 - [x] AGENT-004 - simplify autonomous agent interaction (owner: codex)
-- [ ] AGENT-003 - review dogfood workflow results (owner: reviewer)
+- [x] AGENT-003 - review dogfood workflow results (owner: reviewer)
 - [x] AGENT-002 - dogfood workflow kit in super_project (owner: codex)
 
-- [ ] T-000 - Replace this starter task with real work (owner: supervisor)
+- [x] T-000 - Replace this starter task with real work (owner: supervisor)
 
 ## Agent Allocation
 
 | Agent | Responsibility | Current Task | Write Scope |
 |---|---|---|---|
-| supervisor | planning, task split, final review | T-000 | `.agent/`, docs |
+| supervisor | planning, task split, final review | none | `.agent/`, docs |
 
 ## Dependencies
 
 Format: `- T-002 depends on T-001 because <reason>.`
 
-- T-000 has no dependencies.
+- Placeholder tasks T-000 and AGENT-003 are retired; active dependencies should be declared on new task rows.
 
 ## Risks
 
@@ -79,3 +82,4 @@ Format: `- YYYY-MM-DD HH:MM:SS - <agent-or-human> - <change and reason>.`
 
 - Initial plan created by Agent Workflow Kit.
 - 2026-07-02 17:58:00 - codex - added T-005 board row manually; task-create dedup regex matched AGENT-005 as T-005 (fixed in tools/agentctl.py).
+- 2026-07-03 18:09:18 - codex - retired T-000 and AGENT-003 placeholders after T-001 through T-008 completed and T-008 was gate-approved.

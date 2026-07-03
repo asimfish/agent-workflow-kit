@@ -44,3 +44,5 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-03 07:59:41 [T-008] Defined T-008 as a fresh-install dogfood and README capability-alignment task for T-005/T-006/T-007 loop features.
 - 2026-07-03 08:01:35 [T-008] Fresh installed-project dogfood passed: custom loop failure created one follow-up, repeated failure escalated, manual check failed, finish was blocked, fixing the loop auto-closed the packet, and ack override recorded acknowledged_by=codex in a separate installed project.
 - 2026-07-03 08:02:01 [T-008] README now documents follow-up packets, escalation, ack override, custom loop-check commands, and project-check; formal checks passed.
+- 2026-07-03 18:10:29 [T-009] Retired historical placeholder tasks T-000 and AGENT-003: task docs now have completion records, TASKS.md and PROJECT_PLAN.md are checked/done, board has no placeholder todo, and project plan now states the real Agent Workflow Kit goal.
+- 2026-07-03 18:10:55 [T-009] Verification passed after retiring placeholders: work-start triage success, manual check OK, git diff --check OK, and board now shows T-000/AGENT-003 done with only T-009 active.
