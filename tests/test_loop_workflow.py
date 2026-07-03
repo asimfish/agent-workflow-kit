@@ -99,6 +99,9 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
     def test_fail_escalate_block_fix_autoclose(self):
         self.agentctl("work", "--agent", "codex", "--auto-create",
                       "--title", "loop regression", "--scope", ".agent/,src/", expect=0)
+        healthy = self.agentctl("doctor", "--json", expect=0)
+        self.assertTrue(json.loads(healthy.stdout)["ok"])
+
         self.write_loop("regress-fail", "regress-check", "exit 7")
         self.add_checkpoint("regress-check", "regress-fail", escalate_after=2)
 
@@ -119,6 +122,12 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
 
         check = self.agentctl("check", "--mode", "manual", expect=1)
         self.assertIn("escalated loop follow-up", (check.stdout + check.stderr).lower())
+        doctor = self.agentctl("doctor", "--json", expect=1)
+        doctor_report = json.loads(doctor.stdout)
+        self.assertFalse(doctor_report["ok"])
+        self.assertTrue(
+            any("escalated loop follow-up" in problem for problem in doctor_report["problems"]),
+            doctor_report["problems"])
 
         blocked = self.agentctl("complete", "--summary", "should block",
                                 "--tests", "n/a", expect=1)

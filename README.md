@@ -218,6 +218,7 @@ python3 tools/agentctl.py loop list
 python3 tools/agentctl.py loop show daily-plan-triage
 python3 tools/agentctl.py loop run daily-plan-triage --once
 python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
+python3 tools/agentctl.py doctor
 ```
 
 ## System Modules
@@ -284,7 +285,21 @@ agentctl loop list|show|run <id> --once             inspect or run one loop
 agentctl loop auto --checkpoint <name> --once       run checkpoint policy
 agentctl board [--json]                             show board
 agentctl check --mode manual|pre-commit|commit-msg|pre-push|ci
+agentctl doctor [--json]                            diagnose installed workflow health
 ```
+
+## Diagnostics
+
+Run a read-only health check any time an installed project seems off:
+
+```bash
+python3 tools/agentctl.py doctor
+```
+
+`doctor` checks core files, Git hook wiring, loop contract validity, open or
+escalated follow-up packets, task-board status counts, checkpoint memory, and
+the same base conditions as `agentctl check --mode manual`. It exits nonzero
+when a real workflow problem needs attention.
 
 ## Regression Tests
 

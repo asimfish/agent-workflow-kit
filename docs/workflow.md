@@ -93,6 +93,19 @@ then edit direction, scope, priorities, or acceptance criteria. Agents must trea
 those edits as updated instructions: re-read the changed files, run `agentctl refresh`,
 and continue under the new plan.
 
+## Diagnostics
+
+Use `agentctl doctor` when an installed project does not behave as expected:
+
+```bash
+agentctl doctor
+agentctl doctor --json
+```
+
+It is read-only. It checks required workflow files, Git hook wiring, loop
+contracts, open or escalated loop follow-up packets, task-board status counts,
+checkpoint memory, and the base manual workflow check.
+
 ## Handoffs
 
 Use handoff packets when one task output becomes another task input:

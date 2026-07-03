@@ -47,3 +47,6 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-03 18:10:29 [T-009] Retired historical placeholder tasks T-000 and AGENT-003: task docs now have completion records, TASKS.md and PROJECT_PLAN.md are checked/done, board has no placeholder todo, and project plan now states the real Agent Workflow Kit goal.
 - 2026-07-03 18:10:55 [T-009] Verification passed after retiring placeholders: work-start triage success, manual check OK, git diff --check OK, and board now shows T-000/AGENT-003 done with only T-009 active.
 - 2026-07-03 18:33:07 [T-010] Added tests/test_loop_workflow.py (stdlib unittest, fresh temp-project install) covering fail/escalate/block/fix/auto-close and ack override; wired into CI workflow and documented in README; both tests pass locally.
+- 2026-07-03 18:37:10 [T-011] Implemented read-only agentctl doctor diagnostics, added regression assertions for healthy and escalated installed projects, and documented the command in README/workflow docs.
+- 2026-07-03 18:37:32 [T-011] Initial verification passed: py_compile, doctor text/json output, and loop workflow regression tests all succeeded.
+- 2026-07-03 18:37:54 [T-011] Final verification passed: manual workflow check, unittest discover, diff whitespace check, and forced work-start triage all succeeded.

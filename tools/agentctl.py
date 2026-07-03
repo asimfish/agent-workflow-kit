@@ -2078,6 +2078,136 @@ def _check_board_consistency(root: Path) -> list:
     return p
 
 
+def _doctor_required_paths() -> list[str]:
+    return [
+        "AGENTS.md",
+        "tools/agentctl.py",
+        "tools/agent_workflow_hook.py",
+        ".agent/WORKFLOW_ENTRY.md",
+        ".agent/PROJECT_PLAN.md",
+        ".agent/TASKS.md",
+        ".agent/board.json",
+        ".agent/loops/checkpoints.json",
+        ".agent/rules/github-standards.md",
+        ".githooks/pre-commit",
+        ".githooks/commit-msg",
+        ".githooks/pre-push",
+        ".codex/hooks.json",
+        ".claude/settings.json",
+        ".cursor/hooks.json",
+        ".github/workflows/agent-workflow-check.yml",
+    ]
+
+
+def _doctor_report(root: Path) -> dict:
+    problems: list[str] = []
+    warnings: list[str] = []
+    checks: list[dict] = []
+
+    missing = [rel for rel in _doctor_required_paths() if not (root / rel).exists()]
+    if missing:
+        problems.append("missing required files: " + ", ".join(missing))
+    checks.append({
+        "name": "required files",
+        "status": "ok" if not missing else "fail",
+        "detail": "all required workflow files are present" if not missing else ", ".join(missing),
+    })
+
+    if (root / ".git").exists():
+        hooks_path = _git(root, "config", "--get", "core.hooksPath")
+        if hooks_path != ".githooks":
+            problems.append(f"git core.hooksPath is '{hooks_path or '<unset>'}', expected '.githooks'")
+        checks.append({
+            "name": "git hooks",
+            "status": "ok" if hooks_path == ".githooks" else "fail",
+            "detail": f"core.hooksPath={hooks_path or '<unset>'}",
+        })
+    else:
+        warnings.append("not a Git repository; local Git hooks are not active")
+        checks.append({"name": "git hooks", "status": "warn", "detail": "not a Git repository"})
+
+    loop_rows = [_loop_summary_line(root, p) for p in _loop_files(root)]
+    bad_loops = [row for row in loop_rows if not row.get("ok")]
+    if bad_loops:
+        problems.extend(
+            f"loop {row['id']} missing required sections: {', '.join(row['missing'])}"
+            for row in bad_loops
+        )
+    checks.append({
+        "name": "loop contracts",
+        "status": "ok" if not bad_loops else "fail",
+        "detail": f"{len(loop_rows)} loop(s), {len(bad_loops)} invalid",
+    })
+
+    manual_problems = _check_base(root) + _check_receipt(root) + _check_escalations(root)
+    if manual_problems:
+        problems.extend(manual_problems)
+    checks.append({
+        "name": "manual check",
+        "status": "ok" if not manual_problems else "fail",
+        "detail": "agentctl check --mode manual equivalent",
+    })
+
+    open_follow_ups = _loop_follow_up_packets(root)
+    escalated = [pkt for _path, pkt in open_follow_ups if pkt.get("escalated")]
+    if open_follow_ups:
+        warnings.append(f"{len(open_follow_ups)} open loop follow-up packet(s)")
+    if escalated:
+        problems.append(f"{len(escalated)} escalated loop follow-up packet(s) need a decision")
+    checks.append({
+        "name": "loop follow-ups",
+        "status": "fail" if escalated else ("warn" if open_follow_ups else "ok"),
+        "detail": f"open={len(open_follow_ups)}, escalated={len(escalated)}",
+    })
+
+    tasks = _load_board(root).get("tasks", {})
+    status_counts = Counter(t.get("status", "<missing>") for t in tasks.values())
+    checks.append({
+        "name": "task board",
+        "status": "ok",
+        "detail": ", ".join(f"{k}={status_counts[k]}" for k in sorted(status_counts)) or "empty",
+    })
+
+    state = _load_json(_loop_state_path(root), {"checkpoints": {}})
+    checkpoints = state.get("checkpoints") if isinstance(state, dict) else {}
+    if not isinstance(checkpoints, dict):
+        checkpoints = {}
+    checks.append({
+        "name": "checkpoint memory",
+        "status": "ok",
+        "detail": f"{len(checkpoints)} checkpoint state entr{'y' if len(checkpoints) == 1 else 'ies'}",
+    })
+
+    return {
+        "root": str(root),
+        "ok": not problems,
+        "problems": problems,
+        "warnings": warnings,
+        "checks": checks,
+        "tasks": dict(status_counts),
+    }
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    report = _doctor_report(root)
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(f"agentctl doctor: {'OK' if report['ok'] else 'FAIL'}")
+        for row in report["checks"]:
+            print(f"[{row['status']}] {row['name']}: {row['detail']}")
+        if report["warnings"]:
+            print("Warnings:")
+            for item in report["warnings"]:
+                print(f"  - {item}")
+        if report["problems"]:
+            print("Problems:")
+            for item in report["problems"]:
+                print(f"  - {item}")
+    return 0 if report["ok"] else 1
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     root = _repo_root()
     mode = args.mode or "manual"
@@ -2257,6 +2387,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--commit-range")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_check)
+
+    sp = sub.add_parser("doctor")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_doctor)
 
     sp = sub.add_parser("status")
     sp.add_argument("--json", action="store_true")

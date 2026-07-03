@@ -21,3 +21,4 @@
 | T-008 | done | codex | `tools/agentctl.py, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-008.md](tasks/T-008.md) | dogfood installed loop workflow end to end |
 | T-009 | done | codex | `.agent/` | [.agent/tasks/T-009.md](tasks/T-009.md) | retire obsolete placeholder tasks |
 | T-010 | done | cursor | `tests/, .agent/, .github/, README.md` | [.agent/tasks/T-010.md](tasks/T-010.md) | add repeatable loop regression test |
+| T-011 | done | codex | `tools/agentctl.py, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-011.md](tasks/T-011.md) | add project doctor diagnostics |
