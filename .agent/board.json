@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-03 08:02:01",
+  "updated_at": "2026-07-03 18:06:20",
   "tasks": {
     "AGENT-002": {
       "title": "dogfood workflow kit in super_project",
@@ -229,7 +229,7 @@
     },
     "T-008": {
       "title": "dogfood installed loop workflow end to end",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/agentctl.py",
@@ -240,7 +240,7 @@
       ],
       "deps": [],
       "created_at": "2026-07-03 07:59:12",
-      "updated_at": "2026-07-03 08:02:01"
+      "updated_at": "2026-07-03 18:06:20"
     }
   }
 }
