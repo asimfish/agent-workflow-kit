@@ -28,6 +28,7 @@ Define the durable project outcome in one or two paragraphs.
 | M1 | Define project workflow | in-progress | Plan, rules, hooks, and task docs exist |
 
 ## Task Board
+- [ ] T-008 - dogfood installed loop workflow end to end (owner: codex)
 - [x] T-007 - escalate repeatedly failing checkpoint follow-ups (owner: codex)
 - [x] T-006 - generic executor for custom loop contracts (owner: codex)
 - [x] T-005 - loop feedback drives next cycle via follow-up packets (owner: codex)

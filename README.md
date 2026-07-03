@@ -156,6 +156,52 @@ Each loop run writes:
 The state file records the latest loop status and checkpoint status so the next
 cycle can use durable memory outside chat.
 
+### Feedback Packets
+
+Checkpoint failures are converted into durable work items:
+
+- a failing or blocked checkpoint creates one `loop-follow-up` packet in
+  `.agent/bus/inbox/<task>/`;
+- repeated failures update the same packet instead of flooding the inbox;
+- the packet tracks `occurrences`, latest report paths, and the checkpoint name;
+- a later successful checkpoint auto-closes the packet into `.agent/bus/done/`.
+
+This is the main feedback link between one loop cycle and the next. Agents do
+not need chat memory to know what failed last time.
+
+### Escalation
+
+Each checkpoint can define `escalate_after` in `.agent/loops/checkpoints.json`.
+Default value is `3`.
+
+When a follow-up keeps failing until that threshold:
+
+- the packet is marked `escalated`;
+- `daily-plan-triage` and `agentctl check --mode manual` surface it as a problem;
+- `agentctl finish` / `complete` refuse to finish the target task;
+- fixing the underlying check and rerunning the checkpoint auto-closes it;
+- `--ack-escalations` records an explicit override when a human deliberately
+  accepts the risk.
+
+### Custom Loop Checks
+
+Projects can add their own loop contracts under `.agent/loops/`. A custom loop
+can declare executable checks in a fenced `loop-check` block:
+
+````markdown
+```loop-check
+timeout: 120
+max-output: 2000
+$ python3 -m py_compile tools/agentctl.py
+$ pytest -q
+```
+````
+
+`agentctl loop run <id> --once` executes those commands from the repository root.
+All commands passing means `success`; any non-zero exit or timeout means `failed`.
+Custom loops participate in checkpoint follow-ups and escalation like built-in
+loops.
+
 ## Built-In Loops
 
 | Loop | Purpose |
@@ -163,6 +209,7 @@ cycle can use durable memory outside chat.
 | `daily-plan-triage` | Checks `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, `.agent/board.json`, and task docs for stale or inconsistent task state. |
 | `doc-hygiene` | Checks task document structure, duplicate stage logs, leftover placeholders, and empty review records. |
 | `experiment-monitor` | Bounded scan of standard experiment directories for `DONE` and `ERROR` markers. It does not launch experiments. |
+| `project-check` | Installed custom-loop example. Edit its `loop-check` commands for project-specific verification. |
 
 Run loops manually when needed:
 
