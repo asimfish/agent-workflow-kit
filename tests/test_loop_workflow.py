@@ -166,6 +166,34 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
         pkt = json.loads(packets[0].read_text(encoding="utf-8"))
         self.assertEqual(pkt.get("acknowledged_by"), "codex")
 
+    def test_cycle_accumulates_feedback_and_autocloses(self):
+        self.agentctl("work", "--agent", "codex", "--auto-create",
+                      "--title", "cycle regression", "--scope", ".agent/", expect=0)
+        self.write_loop("regress-cycle", "cycle-check", "exit 5")
+        self.add_checkpoint("cycle-check", "regress-cycle", escalate_after=2)
+
+        cycled = self.agentctl(
+            "loop", "cycle", "--checkpoint", "cycle-check",
+            "--cycles", "2", "--continue-on-failure",
+            "--trigger", "cycle-regress", expect=1)
+        combined = cycled.stdout + cycled.stderr
+        self.assertIn("loop cycle 1/2", combined)
+        self.assertIn("loop cycle 2/2", combined)
+        self.assertIn("loop cycle finished with 2/2 failing cycle(s)", combined)
+
+        packets = self.inbox_packets()
+        self.assertEqual(len(packets), 1, packets)
+        pkt = json.loads(packets[0].read_text(encoding="utf-8"))
+        self.assertEqual(pkt["occurrences"], 2)
+        self.assertTrue(pkt.get("escalated"))
+
+        self.write_loop("regress-cycle", "cycle-check", "true")
+        fixed = self.agentctl(
+            "loop", "cycle", "--checkpoint", "cycle-check",
+            "--cycles", "1", "--trigger", "cycle-fixed", expect=0)
+        self.assertIn("auto-closed", fixed.stdout + fixed.stderr)
+        self.assertEqual(self.inbox_packets(), [])
+
 
 if __name__ == "__main__":
     unittest.main()

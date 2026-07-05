@@ -22,3 +22,4 @@
 | T-009 | done | codex | `.agent/` | [.agent/tasks/T-009.md](tasks/T-009.md) | retire obsolete placeholder tasks |
 | T-010 | done | cursor | `tests/, .agent/, .github/, README.md` | [.agent/tasks/T-010.md](tasks/T-010.md) | add repeatable loop regression test |
 | T-011 | done | codex | `tools/agentctl.py, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-011.md](tasks/T-011.md) | add project doctor diagnostics |
+| T-012 | done | codex | `tools/agentctl.py, tests/, README.md, .agent/` | [.agent/tasks/T-012.md](tasks/T-012.md) | add bounded loop cycle runner |

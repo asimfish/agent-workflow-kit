@@ -218,8 +218,33 @@ python3 tools/agentctl.py loop list
 python3 tools/agentctl.py loop show daily-plan-triage
 python3 tools/agentctl.py loop run daily-plan-triage --once
 python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
+python3 tools/agentctl.py loop cycle --checkpoint experiment-check --cycles 3 --interval 300
 python3 tools/agentctl.py doctor
 ```
+
+### Bounded Loop Cycles
+
+Use `loop cycle` when a checkpoint should keep checking a bounded process, such
+as a training job, benchmark, or document hygiene gate:
+
+```bash
+python3 tools/agentctl.py loop cycle --checkpoint experiment-check --cycles 6 --interval 600
+```
+
+This is the safe continuous-loop mode:
+
+| Link | How `loop cycle` handles it |
+|---|---|
+| Trigger | A human, agent, cron, or previous task starts a command with an explicit `--cycles` count. |
+| Execute | The existing checkpoint loops run once per cycle. |
+| Check | Each cycle reuses the checkpoint's loop checks and strictness policy. |
+| Feedback | Failures update one follow-up packet; repeated failures can escalate. |
+| Memory | Every cycle writes a loop report and updates `.agent/loops/state.json`. |
+| Next | It sleeps for `--interval`, starts the next cycle, then stops after the requested count. |
+
+Failures stop the cycle by default. Use `--continue-on-failure` only when you
+want repeated failures to accumulate into escalation evidence. Use `--force` when
+you deliberately want every cycle to bypass checkpoint debounce.
 
 ## System Modules
 

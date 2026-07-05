@@ -50,3 +50,6 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-03 18:37:10 [T-011] Implemented read-only agentctl doctor diagnostics, added regression assertions for healthy and escalated installed projects, and documented the command in README/workflow docs.
 - 2026-07-03 18:37:32 [T-011] Initial verification passed: py_compile, doctor text/json output, and loop workflow regression tests all succeeded.
 - 2026-07-03 18:37:54 [T-011] Final verification passed: manual workflow check, unittest discover, diff whitespace check, and forced work-start triage all succeeded.
+- 2026-07-06 01:13:34 [T-012] Implemented initial bounded loop cycle CLI for repeated checkpoint runs.
+- 2026-07-06 01:14:17 [T-012] Added README usage notes and fresh-install regression coverage for loop cycle.
+- 2026-07-06 01:15:25 [T-012] Verified py_compile, unittest regression suite, manual check, doctor, diff check, and one local loop cycle.

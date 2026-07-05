@@ -14,7 +14,7 @@ Commands:
   complete   move the active task to review (write completion record, free lock)
   gate       approve/reject a task in review (-> done / blocked)
   handoff    create/list/show/close cross-agent task packets
-  loop       list/show/run one-shot project loops; auto-run checkpoint loops
+  loop       list/show/run/cycle project loops; auto-run checkpoint loops
   refresh    re-record doc hashes after plan/rules/task docs changed
   board      print the task board (human or --json)
   task       create / show task documents and board entries
@@ -1931,6 +1931,59 @@ def _loop_auto(root: Path, args: argparse.Namespace) -> int:
     )
 
 
+def _loop_cycle(root: Path, args: argparse.Namespace) -> int:
+    try:
+        cycles = int(args.cycles)
+    except (TypeError, ValueError):
+        print("agentctl: loop cycle requires --cycles to be a positive integer", file=sys.stderr)
+        return 2
+    if cycles < 1:
+        print("agentctl: loop cycle requires --cycles >= 1", file=sys.stderr)
+        return 2
+    if cycles > 100:
+        print("agentctl: loop cycle refuses more than 100 cycles in one command", file=sys.stderr)
+        return 2
+    try:
+        interval = float(args.interval or 0)
+    except (TypeError, ValueError):
+        print("agentctl: --interval must be a non-negative number of seconds", file=sys.stderr)
+        return 2
+    if interval < 0:
+        print("agentctl: --interval must be a non-negative number of seconds", file=sys.stderr)
+        return 2
+    failures = 0
+    first_rc = 0
+    for i in range(1, cycles + 1):
+        trigger = f"{args.trigger or 'cycle'}:{i}/{cycles}"
+        print(f"agentctl: loop cycle {i}/{cycles} checkpoint={args.checkpoint}")
+        rc = _run_loop_checkpoint(
+            root,
+            args.checkpoint,
+            once=True,
+            trigger=trigger,
+            strict=True if args.strict else None,
+            force=args.force,
+            quiet=False,
+        )
+        if rc:
+            failures += 1
+            if not first_rc:
+                first_rc = rc
+            if not args.continue_on_failure:
+                print(
+                    "agentctl: loop cycle stopped after failure; "
+                    "use --continue-on-failure to keep cycling and accumulate feedback."
+                )
+                return rc
+        if i < cycles and interval:
+            time.sleep(interval)
+    if failures:
+        print(f"agentctl: loop cycle finished with {failures}/{cycles} failing cycle(s)")
+        return first_rc or 1
+    print(f"agentctl: loop cycle finished successfully ({cycles}/{cycles})")
+    return 0
+
+
 def cmd_loop(args: argparse.Namespace) -> int:
     root = _repo_root()
     if args.loop_action == "list":
@@ -1941,6 +1994,8 @@ def cmd_loop(args: argparse.Namespace) -> int:
         return _loop_run(root, args)
     if args.loop_action == "auto":
         return _loop_auto(root, args)
+    if args.loop_action == "cycle":
+        return _loop_cycle(root, args)
     print("agentctl: unknown loop action", file=sys.stderr)
     return 2
 
@@ -2379,6 +2434,17 @@ def build_parser() -> argparse.ArgumentParser:
     la.add_argument("--trigger", default="manual")
     la.add_argument("--strict", action="store_true")
     la.add_argument("--force", action="store_true")
+    lc = lsub.add_parser("cycle")
+    lc.add_argument("--checkpoint", required=True)
+    lc.add_argument("--cycles", required=True, type=int)
+    lc.add_argument("--interval", type=float, default=0.0,
+                    help="Seconds to wait between cycles; default: 0")
+    lc.add_argument("--trigger", default="cycle")
+    lc.add_argument("--strict", action="store_true")
+    lc.add_argument("--force", action="store_true",
+                    help="Bypass checkpoint debounce on every cycle")
+    lc.add_argument("--continue-on-failure", action="store_true",
+                    help="Run remaining cycles after a failing checkpoint")
     sp.set_defaults(func=cmd_loop)
 
     sp = sub.add_parser("check")

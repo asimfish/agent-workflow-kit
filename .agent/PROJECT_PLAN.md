@@ -30,6 +30,7 @@ instead of relying on chat memory or repeated human prompts.
 | M1 | Define project workflow | done | Plan, rules, hooks, loop contracts, task docs, and dogfood evidence exist |
 
 ## Task Board
+- [x] T-012 - add bounded loop cycle runner (owner: codex)
 - [x] T-011 - add project doctor diagnostics (owner: codex)
 - [x] T-010 - add repeatable loop regression test (owner: cursor)
 - [x] T-009 - retire obsolete placeholder tasks (owner: codex)
