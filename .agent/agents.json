@@ -10,6 +10,30 @@
       ],
       "tools": [],
       "model": ""
+    },
+    "fable": {
+      "role": "advanced planning supervisor; writes guidance packets for codex",
+      "backend": "claude",
+      "write_scope": [
+        ".agent/",
+        "docs/"
+      ],
+      "tools": [
+        "agentctl guidance create",
+        "agentctl task create"
+      ],
+      "model": "fable"
+    },
+    "codex": {
+      "role": "implementation worker; reads guidance packets and executes tasks",
+      "backend": "codex",
+      "write_scope": [],
+      "tools": [
+        "agentctl work",
+        "agentctl guidance ack",
+        "agentctl finish"
+      ],
+      "model": ""
     }
   }
 }

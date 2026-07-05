@@ -96,6 +96,10 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
     def inbox_packets(self):
         return sorted((self.root / ".agent" / "bus" / "inbox").rglob("*.json"))
 
+    def guidance_packets(self):
+        proc = self.agentctl("guidance", "list", "--json", expect=0)
+        return json.loads(proc.stdout)["guidance"]
+
     def test_fail_escalate_block_fix_autoclose(self):
         self.agentctl("work", "--agent", "codex", "--auto-create",
                       "--title", "loop regression", "--scope", ".agent/,src/", expect=0)
@@ -193,6 +197,48 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
             "--cycles", "1", "--trigger", "cycle-fixed", expect=0)
         self.assertIn("auto-closed", fixed.stdout + fixed.stderr)
         self.assertEqual(self.inbox_packets(), [])
+
+    def test_supervisor_guidance_surfaces_blocks_and_acknowledges(self):
+        self.agentctl("work", "--agent", "codex", "--auto-create",
+                      "--title", "guided implementation", "--scope", ".agent/", expect=0)
+        task = json.loads(self.agentctl("status", "--json", expect=0).stdout)["task"]
+
+        created = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex",
+            "--task", task,
+            "--summary", "tighten implementation stages",
+            "--plan", "Read the task doc, keep the patch scoped, and add a regression test.",
+            expect=0)
+        self.assertIn("finish gate", created.stdout)
+        packets = self.guidance_packets()
+        self.assertEqual(len(packets), 1, packets)
+        packet_id = packets[0]["id"]
+
+        focus = self.agentctl("focus", expect=0)
+        combined = focus.stdout + focus.stderr
+        self.assertIn("[Supervisor Guidance]", combined)
+        self.assertIn("tighten implementation stages", combined)
+        self.assertIn("Required before finish", combined)
+
+        check = self.agentctl("check", "--mode", "manual", expect=1)
+        self.assertIn("pending supervisor guidance", check.stdout + check.stderr)
+        blocked = self.agentctl("finish", "--summary", "should block",
+                                "--tests", "n/a", expect=1)
+        self.assertIn("finish blocked", blocked.stdout + blocked.stderr)
+
+        acked = self.agentctl("guidance", "ack", packet_id, "--by", "codex",
+                              "--note", "incorporated into the implementation plan", expect=0)
+        self.assertIn("acknowledged by codex", acked.stdout)
+        self.assertEqual(self.inbox_packets(), [])
+        done = self.guidance_packets()
+        self.assertEqual(done[0]["status"], "done")
+        self.assertEqual(done[0]["acknowledged_by"], "codex")
+
+        self.agentctl("check", "--mode", "manual", expect=0)
+        self.agentctl("finish", "--summary", "guidance workflow passed",
+                      "--tests", "guidance create/focus/block/ack", expect=0)
 
 
 if __name__ == "__main__":

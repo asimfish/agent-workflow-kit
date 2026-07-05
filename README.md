@@ -117,6 +117,40 @@ When an agent starts work, it should follow this cycle:
 `agentctl work` and `agentctl finish` automatically run checkpoint loops, so the
 agent does not need to remember separate triage and document hygiene commands.
 
+## Advanced Supervisor Guidance
+
+Use this when a stronger planning model should guide an implementation agent.
+For example, Fable can write the plan and Codex can execute it:
+
+```bash
+python3 tools/agentctl.py guidance create \
+  --from-agent fable \
+  --to-agent codex \
+  --task T-101 \
+  --summary "Implement the benchmark runner in three phases" \
+  --plan-file .agent/plans/T-101-fable-plan.md
+```
+
+The plan is stored as a durable packet under `.agent/bus/` and mirrored into
+`.agent/handoffs/`. When Codex later runs:
+
+```bash
+python3 tools/agentctl.py work --agent codex
+```
+
+the focus output automatically includes any unacknowledged guidance addressed to
+`codex`, including the packet path and a plan excerpt. If the guidance is bound
+to the active task, `agentctl check --mode manual` and `agentctl finish` refuse
+to pass until Codex records that it incorporated the plan:
+
+```bash
+python3 tools/agentctl.py guidance ack <packet-id> --by codex
+```
+
+This keeps the model hierarchy file-based: the stronger model does planning and
+review direction; Codex still owns the task doc, implementation, verification,
+and final commit.
+
 ## Loop Design
 
 This kit treats a loop as a bounded feedback cycle, not an infinite background
@@ -258,6 +292,7 @@ you deliberately want every cycle to bypass checkpoint debounce.
 | Git hooks | `.githooks/` | Enforces commit format, task IDs, staged workflow docs, secret checks, and push gates. |
 | CI gate | `.github/workflows/agent-workflow-check.yml` | Catches bypassed local checks on GitHub. |
 | Handoffs | `.agent/handoffs/`, `.agent/bus/` | File-based packets for multi-agent task handoff. |
+| Supervisor guidance | `.agent/bus/`, `.agent/handoffs/`, `agentctl guidance ...` | Higher-capability planning models can send durable task guidance to worker agents such as Codex. |
 
 ## GitHub Standards
 
@@ -306,6 +341,8 @@ agentctl focus                                      reprint current task focus
 agentctl note "..."                                 record progress
 agentctl finish --summary "..." --tests "..."       move task to review
 agentctl gate approve|reject --task --by            review gate
+agentctl guidance create --from-agent --to-agent    send supervisor plan to an agent
+agentctl guidance list|show|ack                     inspect or acknowledge guidance
 agentctl loop list|show|run <id> --once             inspect or run one loop
 agentctl loop auto --checkpoint <name> --once       run checkpoint policy
 agentctl board [--json]                             show board
@@ -332,11 +369,11 @@ when a real workflow problem needs attention.
 python3 -m unittest discover -s tests
 ```
 
-`tests/test_loop_workflow.py` installs the kit into fresh temporary Git
-projects and replays the full loop feedback chain: custom loop failure,
-follow-up packet creation, escalation, check/finish blocking, fix with
-auto-close, and the `--ack-escalations` override. CI runs the same tests on
-every push and pull request.
+The regression tests install the kit into fresh temporary Git projects. They
+replay the full loop feedback chain, bounded cycle behavior, and supervisor
+guidance flow: Fable-style plan creation, Codex work-start surfacing, finish
+blocking until acknowledgement, and successful completion after `guidance ack`.
+CI runs the same tests on every push and pull request.
 
 ## Current Boundaries
 

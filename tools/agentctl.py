@@ -13,6 +13,7 @@ Commands:
   finish     shorthand complete command for the active task
   complete   move the active task to review (write completion record, free lock)
   gate       approve/reject a task in review (-> done / blocked)
+  guidance   create/list/show/ack supervisor guidance packets
   handoff    create/list/show/close cross-agent task packets
   loop       list/show/run/cycle project loops; auto-run checkpoint loops
   refresh    re-record doc hashes after plan/rules/task docs changed
@@ -63,6 +64,7 @@ LOOP_RUNS_DIR = "runs"
 LOOP_STATE_FILE = "state.json"
 LOOP_CHECKPOINTS_FILE = "checkpoints.json"
 LOOP_FOLLOW_UP_KIND = "loop-follow-up"
+GUIDANCE_KIND = "supervisor-guidance"
 LOOP_COMMAND_FENCE = "loop-check"
 LOOP_BUILTIN_IDS = ("daily-plan-triage", "doc-hygiene", "experiment-monitor")
 LOOP_COMMAND_TIMEOUT_DEFAULT = 120
@@ -307,6 +309,10 @@ def _doc_hash_targets(root: Path, task: str | None):
     ]
     if task:
         targets.append(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md")
+        try:
+            targets.extend(path for path, _pkt in _open_guidance_packets(root, task=task))
+        except NameError:
+            pass
     return targets
 
 
@@ -505,7 +511,15 @@ def cmd_init(args: argparse.Namespace) -> int:
         _save_agents(root, {"version": 1, "agents": {
             "supervisor": {"role": "planning, task split, final review",
                            "backend": "any", "write_scope": [".agent/", "docs/"],
-                           "tools": [], "model": ""}}})
+                           "tools": [], "model": ""},
+            "fable": {"role": "advanced planning supervisor; writes guidance packets for codex",
+                      "backend": "claude", "write_scope": [".agent/", "docs/"],
+                      "tools": ["agentctl guidance create", "agentctl task create"],
+                      "model": "fable"},
+            "codex": {"role": "implementation worker; reads guidance packets and executes tasks",
+                      "backend": "codex", "write_scope": [],
+                      "tools": ["agentctl work", "agentctl guidance ack", "agentctl finish"],
+                      "model": ""}}})
     _record_adoption_baseline(root)
     _ensure_gitignore(root)
     for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
@@ -523,7 +537,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_focus(root: Path, task: str) -> None:
+def _print_focus(root: Path, task: str, agent: str | None = None) -> None:
     task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
     print(f"\n=== FOCUS [{task}] — re-read before continuing ===")
     if task_doc.is_file():
@@ -536,6 +550,8 @@ def _print_focus(root: Path, task: str) -> None:
                 print(f"[{label}]\n{sec}\n")
     else:
         print(f"(no task doc at {WORKFLOW_DIR}/{TASKS_DIR}/{task}.md)")
+    if agent:
+        _print_guidance_focus(root, agent, task)
     print("Required reading: AGENTS.md, .agent/PROJECT_PLAN.md, and the task doc above.")
     print("=== end focus ===")
 
@@ -550,7 +566,7 @@ def cmd_work(args: argparse.Namespace) -> int:
     active = st.get("task")
     if active and _task_status(root, active) == "in_progress" and not args.force:
         print(f"agentctl: resuming active task {active} (agent={st.get('agent') or agent})")
-        _print_focus(root, active)
+        _print_focus(root, active, st.get("agent") or agent)
         _run_loop_checkpoint(root, "work-start", once=True, trigger="work-resume", strict=False)
         return 0
     task = _select_next_task(root, agent)
@@ -636,7 +652,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     _save_session(root, {"task": task, "agent": agent, "started_at": now,
                          "scope": scope, "notes": [], "doc_hashes": _hash_docs(root, task)})
     print(f"agentctl: started {task} (agent={agent}) -> in_progress")
-    _print_focus(root, task)
+    _print_focus(root, task, agent)
     _run_loop_checkpoint(root, "work-start", once=True, trigger="work-start", strict=False)
     return 0
 
@@ -647,7 +663,8 @@ def cmd_focus(args: argparse.Namespace) -> int:
     if not task:
         print("agentctl: no active task. pass --task or run 'agentctl work --agent <name>'.", file=sys.stderr)
         return 2
-    _print_focus(root, task)
+    agent = args.agent or _load_session(root).get("agent")
+    _print_focus(root, task, agent)
     return 0
 
 
@@ -696,6 +713,17 @@ def cmd_complete(args: argparse.Namespace) -> int:
     if not summary:
         print("agentctl: --summary is required", file=sys.stderr)
         return 2
+    pending_guidance = _open_guidance_packets(root, task=task, task_specific_only=True)
+    if pending_guidance:
+        for _path, pkt in pending_guidance:
+            print(
+                f"agentctl: pending supervisor guidance {pkt.get('id')} for {task} "
+                f"from {pkt.get('from_agent') or pkt.get('by')}; "
+                f"ack it with 'agentctl guidance ack {pkt.get('id')}'.",
+                file=sys.stderr,
+            )
+        print("agentctl: finish blocked; incorporate the supervisor guidance and acknowledge it before finishing.", file=sys.stderr)
+        return 1
     tests = args.tests or ""
     ack = bool(getattr(args, "ack_escalations", False))
     escalated = _escalated_follow_ups(root, task)
@@ -944,6 +972,268 @@ def cmd_agents(args: argparse.Namespace) -> int:
         print(f"agentctl: registered agent {args.id}")
         return 0
     print("agentctl: unknown agents action", file=sys.stderr)
+    return 2
+
+
+def _safe_segment(value: str) -> str:
+    value = value.strip() or "unknown"
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "unknown"
+
+
+def _guidance_packet_paths(root: Path, packet: dict) -> tuple[Path, Path]:
+    pid = packet["id"]
+    from_agent = _safe_segment(packet.get("from_agent") or packet.get("by") or "supervisor")
+    to_agent = _safe_segment(packet.get("to_agent") or "agent")
+    return (
+        _bus_dir(root, BUS_OUTBOX) / from_agent / f"{pid}.json",
+        _bus_dir(root, BUS_INBOX) / to_agent / f"{pid}.json",
+    )
+
+
+def _append_guidance_doc(root: Path, packet: dict) -> None:
+    from_agent = _safe_segment(packet.get("from_agent") or "supervisor")
+    to_agent = _safe_segment(packet.get("to_agent") or "agent")
+    path = root / WORKFLOW_DIR / "handoffs" / f"guidance-{from_agent}-to-{to_agent}.md"
+    task = packet.get("task") or "-"
+    plan = (packet.get("plan") or "").strip() or "-"
+    block = (
+        f"\n## {packet['created_at']} - {packet['id']}\n\n"
+        f"- From Agent: {packet.get('from_agent') or '-'}\n"
+        f"- To Agent: {packet.get('to_agent') or '-'}\n"
+        f"- Task: {task}\n"
+        f"- Summary: {packet.get('summary') or '-'}\n"
+        f"- Artifacts: {', '.join(packet.get('artifacts') or []) or '-'}\n"
+        f"- Packet: `.agent/{BUS_DIR}/{BUS_INBOX}/{to_agent}/{packet['id']}.json`\n\n"
+        "### Plan\n\n"
+        f"{plan}\n"
+    )
+    if not path.exists():
+        _write(path, f"# Supervisor Guidance {from_agent} -> {to_agent}\n" + block)
+    else:
+        _write(path, _read(path).rstrip() + "\n" + block)
+
+
+def _open_guidance_packets(root: Path, to_agent: str | None = None, task: str | None = None,
+                           task_specific_only: bool = False) -> list[tuple[Path, dict]]:
+    packets: list[tuple[Path, dict]] = []
+    inbox = _bus_dir(root, BUS_INBOX)
+    if not inbox.is_dir():
+        return packets
+    for path in sorted(inbox.rglob("*.json")):
+        pkt = _load_json(path, {})
+        if pkt.get("kind") != GUIDANCE_KIND or pkt.get("status") != "ready":
+            continue
+        if to_agent and pkt.get("to_agent") != to_agent:
+            continue
+        pkt_task = pkt.get("task") or ""
+        pkt_to_task = pkt.get("to_task") or ""
+        if task:
+            if task_specific_only:
+                if pkt_task != task and pkt_to_task != task:
+                    continue
+            elif pkt_task and pkt_task != task and pkt_to_task != task:
+                continue
+        packets.append((path, pkt))
+    return packets
+
+
+def _guidance_packets(root: Path, agent: str | None = None, task: str | None = None,
+                      status: str | None = None) -> list[tuple[Path, dict]]:
+    packets: list[tuple[Path, dict]] = []
+    seen: set[str] = set()
+    for kind in (BUS_INBOX, BUS_DONE, BUS_FAILED):
+        base = _bus_dir(root, kind)
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*.json")):
+            pkt = _load_json(path, {})
+            if pkt.get("kind") != GUIDANCE_KIND:
+                continue
+            if pkt.get("id") in seen:
+                continue
+            if status and pkt.get("status") != status:
+                continue
+            if agent and agent not in {pkt.get("from_agent"), pkt.get("to_agent")}:
+                continue
+            if task and task not in {pkt.get("task"), pkt.get("to_task")}:
+                continue
+            pkt["_path"] = str(path.relative_to(root))
+            pkt["_box"] = kind
+            packets.append((path, pkt))
+            if pkt.get("id"):
+                seen.add(pkt["id"])
+    return packets
+
+
+def _guidance_plan_from_args(root: Path, args: argparse.Namespace) -> str:
+    plan = args.plan or ""
+    if args.plan_file:
+        if args.plan_file == "-":
+            file_text = sys.stdin.read()
+        else:
+            plan_path = Path(args.plan_file)
+            if not plan_path.is_absolute():
+                plan_path = root / plan_path
+            file_text = _read(plan_path)
+        plan = (plan + "\n" + file_text).strip() if plan else file_text
+    return plan.strip()
+
+
+def _print_guidance_focus(root: Path, agent: str, task: str) -> None:
+    packets = _open_guidance_packets(root, to_agent=agent, task=task)
+    if not packets:
+        return
+    print("[Supervisor Guidance]\n")
+    for path, pkt in packets[:5]:
+        task_label = pkt.get("task") or "general"
+        print(
+            f"- {pkt.get('id')} from {pkt.get('from_agent') or pkt.get('by')} "
+            f"to {pkt.get('to_agent')} task={task_label}"
+        )
+        print(f"  Summary: {pkt.get('summary') or '-'}")
+        plan_lines = [ln for ln in (pkt.get("plan") or "").strip().splitlines() if ln.strip()]
+        if plan_lines:
+            excerpt = " / ".join(plan_lines[:3])
+            if len(excerpt) > 240:
+                excerpt = excerpt[:237] + "..."
+            print(f"  Plan excerpt: {excerpt}")
+        print(f"  Packet: {path.relative_to(root)}")
+        if pkt.get("task") == task or pkt.get("to_task") == task:
+            print(f"  Required before finish: python3 tools/agentctl.py guidance ack {pkt.get('id')} --by {agent}")
+    if len(packets) > 5:
+        print(f"  ... {len(packets) - 5} more guidance packet(s); run agentctl guidance list --agent {agent}")
+    print("")
+
+
+def _guidance_create(root: Path, args: argparse.Namespace) -> int:
+    from_agent = args.from_agent or _load_session(root).get("agent") or "supervisor"
+    to_agent = args.to_agent
+    if not to_agent:
+        print("agentctl: guidance create requires --to-agent", file=sys.stderr)
+        return 2
+    if not args.summary:
+        print("agentctl: guidance create requires --summary", file=sys.stderr)
+        return 2
+    plan = _guidance_plan_from_args(root, args)
+    if not plan:
+        print("agentctl: guidance create requires --plan or --plan-file", file=sys.stderr)
+        return 2
+    artifacts = [a.strip() for a in (args.artifact or "").split(",") if a.strip()]
+    packet = {
+        "version": 1,
+        "kind": GUIDANCE_KIND,
+        "id": _packet_id(f"guidance-{from_agent}", f"agent-{to_agent}"),
+        "created_at": _now(),
+        "status": "ready",
+        "from_agent": from_agent,
+        "to_agent": to_agent,
+        "from_task": f"guidance-{from_agent}",
+        "to_task": args.task or f"agent-{to_agent}",
+        "task": args.task or "",
+        "by": from_agent,
+        "summary": args.summary,
+        "plan": plan,
+        "artifacts": artifacts,
+        "notes": args.note or "",
+    }
+    outbox, inbox = _guidance_packet_paths(root, packet)
+    _save_json(outbox, packet)
+    _save_json(inbox, packet)
+    _append_guidance_doc(root, packet)
+    print(f"agentctl: guidance packet created: {packet['id']}")
+    print(f"  inbox: {inbox.relative_to(root)}")
+    print(f"  outbox: {outbox.relative_to(root)}")
+    if args.task:
+        print(f"  finish gate: task {args.task} must ack this guidance before completion")
+    return 0
+
+
+def _guidance_list(root: Path, args: argparse.Namespace) -> int:
+    rows = [pkt for _path, pkt in _guidance_packets(root, agent=args.agent, task=args.task, status=args.status)]
+    if args.json:
+        print(json.dumps({"guidance": rows}, indent=2, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("agentctl: no guidance packets")
+        return 0
+    for pkt in rows:
+        task = pkt.get("task") or "-"
+        print(
+            f"  {pkt.get('id'):<46} {pkt.get('status', '-'):<8} "
+            f"{pkt.get('from_agent', '-')} -> {pkt.get('to_agent', '-')} "
+            f"task={task} box={pkt.get('_box')}"
+        )
+    return 0
+
+
+def _guidance_show(root: Path, args: argparse.Namespace) -> int:
+    path = _find_packet(root, args.packet)
+    if not path:
+        print(f"agentctl: guidance packet not found: {args.packet}", file=sys.stderr)
+        return 2
+    pkt = _load_json(path, {})
+    if pkt.get("kind") != GUIDANCE_KIND:
+        print(f"agentctl: packet is not supervisor guidance: {args.packet}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(pkt, indent=2, ensure_ascii=False))
+    else:
+        print(f"Guidance: {pkt.get('id')}")
+        print(f"Status: {pkt.get('status')}")
+        print(f"Route: {pkt.get('from_agent')} -> {pkt.get('to_agent')}")
+        print(f"Task: {pkt.get('task') or '-'}")
+        print(f"Created: {pkt.get('created_at')}")
+        print(f"Summary: {pkt.get('summary')}")
+        print(f"Artifacts: {', '.join(pkt.get('artifacts') or []) or '-'}")
+        print(f"Path: {path.relative_to(root)}")
+        print("\nPlan:\n" + ((pkt.get("plan") or "").strip() or "-"))
+    return 0
+
+
+def _guidance_ack(root: Path, args: argparse.Namespace) -> int:
+    path = _find_packet(root, args.packet)
+    if not path:
+        print(f"agentctl: guidance packet not found: {args.packet}", file=sys.stderr)
+        return 2
+    pkt = _load_json(path, {})
+    if pkt.get("kind") != GUIDANCE_KIND:
+        print(f"agentctl: packet is not supervisor guidance: {args.packet}", file=sys.stderr)
+        return 2
+    st = _load_session(root)
+    by = args.by or st.get("agent") or pkt.get("to_agent") or "agent"
+    pkt["status"] = "done"
+    pkt["updated_at"] = _now()
+    pkt["acknowledged_by"] = by
+    pkt["acknowledged_task"] = args.task or st.get("task") or pkt.get("task") or ""
+    if args.note:
+        pkt["notes"] = (pkt.get("notes") or "") + f"\n{pkt['updated_at']}: {args.note}"
+    dest = _bus_dir(root, BUS_DONE) / f"{pkt.get('id')}.json"
+    _save_json(dest, pkt)
+    for stale in _matching_packet_paths(root, pkt.get("id") or args.packet):
+        if stale != dest and (BUS_INBOX in stale.parts or BUS_OUTBOX in stale.parts):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    if st.get("task") and (not pkt.get("task") or pkt.get("task") == st.get("task") or pkt.get("to_task") == st.get("task")):
+        st["doc_hashes"] = _hash_docs(root, st["task"])
+        st["guidance_acknowledged_at"] = pkt["updated_at"]
+        _save_session(root, st)
+    print(f"agentctl: guidance {pkt.get('id')} acknowledged by {by} ({dest.relative_to(root)})")
+    return 0
+
+
+def cmd_guidance(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    if args.guidance_action == "create":
+        return _guidance_create(root, args)
+    if args.guidance_action == "list":
+        return _guidance_list(root, args)
+    if args.guidance_action == "show":
+        return _guidance_show(root, args)
+    if args.guidance_action == "ack":
+        return _guidance_ack(root, args)
+    print("agentctl: unknown guidance action", file=sys.stderr)
     return 2
 
 
@@ -2026,13 +2316,25 @@ def _check_escalations(root: Path) -> list:
     ]
 
 
+def _check_pending_guidance(root: Path) -> list:
+    st = _load_session(root)
+    task = st.get("task")
+    if not task:
+        return []
+    return [
+        f"pending supervisor guidance {pkt.get('id')} for active task {task}; "
+        f"run 'agentctl guidance ack {pkt.get('id')}' after incorporating it"
+        for _path, pkt in _open_guidance_packets(root, task=task, task_specific_only=True)
+    ]
+
+
 def _check_receipt(root: Path) -> list:
     st = _load_session(root)
     if not st.get("task"):
         return []
     cur = _hash_docs(root, st["task"])
     old = st.get("doc_hashes", {})
-    changed = [k for k, v in cur.items() if old.get(k) != v]
+    changed = sorted(k for k in set(cur) | set(old) if cur.get(k) != old.get(k))
     if changed:
         return [f"plan/rules/task docs changed since start ({', '.join(changed)}); "
                 f"re-read them then run 'agentctl refresh'."]
@@ -2267,7 +2569,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     root = _repo_root()
     mode = args.mode or "manual"
     if mode == "manual":
-        problems = _check_base(root) + _check_receipt(root) + _check_escalations(root)
+        problems = _check_base(root) + _check_receipt(root) + _check_escalations(root) + _check_pending_guidance(root)
     elif mode == "pre-commit":
         problems = _check_base(root) + _check_precommit(root)
     elif mode == "commit-msg":
@@ -2333,6 +2635,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("focus")
     sp.add_argument("--task")
+    sp.add_argument("--agent")
     sp.set_defaults(func=cmd_focus)
 
     sp = sub.add_parser("progress")
@@ -2416,6 +2719,32 @@ def build_parser() -> argparse.ArgumentParser:
     hm.add_argument("--status", choices=["done", "failed"], required=True)
     hm.add_argument("--note")
     sp.set_defaults(func=cmd_handoff)
+
+    sp = sub.add_parser("guidance")
+    gsub = sp.add_subparsers(dest="guidance_action", required=True)
+    gc = gsub.add_parser("create")
+    gc.add_argument("--from-agent", default="supervisor")
+    gc.add_argument("--to-agent", required=True)
+    gc.add_argument("--task")
+    gc.add_argument("--summary", required=True)
+    gc.add_argument("--plan")
+    gc.add_argument("--plan-file")
+    gc.add_argument("--artifact", help="Comma-separated artifact paths")
+    gc.add_argument("--note")
+    gl = gsub.add_parser("list")
+    gl.add_argument("--agent")
+    gl.add_argument("--task")
+    gl.add_argument("--status")
+    gl.add_argument("--json", action="store_true")
+    gs = gsub.add_parser("show")
+    gs.add_argument("packet")
+    gs.add_argument("--json", action="store_true")
+    ga = gsub.add_parser("ack")
+    ga.add_argument("packet")
+    ga.add_argument("--by")
+    ga.add_argument("--task")
+    ga.add_argument("--note")
+    sp.set_defaults(func=cmd_guidance)
 
     sp = sub.add_parser("loop")
     lsub = sp.add_subparsers(dest="loop_action", required=True)

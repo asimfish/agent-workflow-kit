@@ -53,3 +53,6 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-06 01:13:34 [T-012] Implemented initial bounded loop cycle CLI for repeated checkpoint runs.
 - 2026-07-06 01:14:17 [T-012] Added README usage notes and fresh-install regression coverage for loop cycle.
 - 2026-07-06 01:15:25 [T-012] Verified py_compile, unittest regression suite, manual check, doctor, diff check, and one local loop cycle.
+- 2026-07-06 01:22:40 [T-013] Implemented supervisor guidance packet CLI, Codex work-start surfacing, finish blocking, default fable/codex profiles, and docs.
+- 2026-07-06 01:24:11 [T-013] Implemented supervisor guidance packet flow with focus surfacing, finish/check blocking, ack handling, docs, and regression coverage.
+- 2026-07-06 01:24:58 [T-013] Verified supervisor guidance with fresh-install tests, full unittest discovery, manual workflow check, and diff check.
