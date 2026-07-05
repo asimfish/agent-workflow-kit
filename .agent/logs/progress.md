@@ -56,3 +56,5 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-06 01:22:40 [T-013] Implemented supervisor guidance packet CLI, Codex work-start surfacing, finish blocking, default fable/codex profiles, and docs.
 - 2026-07-06 01:24:11 [T-013] Implemented supervisor guidance packet flow with focus surfacing, finish/check blocking, ack handling, docs, and regression coverage.
 - 2026-07-06 01:24:58 [T-013] Verified supervisor guidance with fresh-install tests, full unittest discovery, manual workflow check, and diff check.
+- 2026-07-06 01:29:45 [T-014] Fixed pre-push new-branch range calculation and verified hook syntax plus simulated first feature-branch push.
+- 2026-07-06 01:30:16 [T-014] Fixed pre-push new-branch range to use the remote main/master merge base and verified hook syntax plus simulated first branch push.

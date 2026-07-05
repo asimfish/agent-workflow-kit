@@ -24,3 +24,4 @@
 | T-011 | done | codex | `tools/agentctl.py, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-011.md](tasks/T-011.md) | add project doctor diagnostics |
 | T-012 | done | codex | `tools/agentctl.py, tests/, README.md, .agent/` | [.agent/tasks/T-012.md](tasks/T-012.md) | add bounded loop cycle runner |
 | T-013 | done | codex | `tools/agentctl.py, tests/, README.md, templates/project/, .agent/` | [.agent/tasks/T-013.md](tasks/T-013.md) | support supervisor guidance from advanced models to codex |
+| T-014 | done | codex | `hooks/pre-push, .githooks/pre-push, .agent/` | [.agent/tasks/T-014.md](tasks/T-014.md) | fix pre-push range for first feature branch push |
