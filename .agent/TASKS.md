@@ -25,3 +25,4 @@
 | T-012 | done | codex | `tools/agentctl.py, tests/, README.md, .agent/` | [.agent/tasks/T-012.md](tasks/T-012.md) | add bounded loop cycle runner |
 | T-013 | done | codex | `tools/agentctl.py, tests/, README.md, templates/project/, .agent/` | [.agent/tasks/T-013.md](tasks/T-013.md) | support supervisor guidance from advanced models to codex |
 | T-014 | done | codex | `hooks/pre-push, .githooks/pre-push, .agent/` | [.agent/tasks/T-014.md](tasks/T-014.md) | fix pre-push range for first feature branch push |
+| T-015 | done | codex | `tests/, .agent/` | [.agent/tasks/T-015.md](tasks/T-015.md) | add pre-push new branch range regression |

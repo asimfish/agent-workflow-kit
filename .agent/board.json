@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-06 01:30:16",
+  "updated_at": "2026-07-06 17:50:35",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -334,6 +334,18 @@
       "deps": [],
       "created_at": "2026-07-06 01:28:41",
       "updated_at": "2026-07-06 01:30:16"
+    },
+    "T-015": {
+      "title": "add pre-push new branch range regression",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-06 17:48:40",
+      "updated_at": "2026-07-06 17:50:35"
     }
   }
 }
