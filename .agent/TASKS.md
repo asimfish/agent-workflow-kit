@@ -28,3 +28,4 @@
 | T-015 | done | codex | `tests/, .agent/` | [.agent/tasks/T-015.md](tasks/T-015.md) | add pre-push new branch range regression |
 | T-016 | done | codex | `.agent/` | [.agent/tasks/T-016.md](tasks/T-016.md) | prepare supervisor guidance branch for merge |
 | T-017 | done | codex | `tools/agentctl.py, tests/, README.md, templates/project/, .agent/` | [.agent/tasks/T-017.md](tasks/T-017.md) | route supervisor guidance to specific codex sessions |
+| T-018 | done | codex | `.agent/` | [.agent/tasks/T-018.md](tasks/T-018.md) | mark supervisor guidance PR ready |
