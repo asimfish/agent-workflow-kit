@@ -26,16 +26,20 @@ durable instructions to a worker agent, such as Codex:
 ```bash
 python3 tools/agentctl.py guidance create \
   --from-agent fable \
-  --to-agent codex \
+  --to-agent codex-gpt55xhigh \
+  --to-model gpt5.5xhigh \
+  --to-session xxx \
   --task T-101 \
   --summary "Plan for the next implementation phase" \
   --plan-file .agent/plans/T-101-fable-plan.md
 ```
 
-When Codex runs `python3 tools/agentctl.py work --agent codex`, unacknowledged
-guidance addressed to `codex` is printed in the task focus. If the packet is
-bound to the active task, `finish` is blocked until Codex acknowledges it:
+When that Codex worker runs
+`python3 tools/agentctl.py work --agent codex-gpt55xhigh --session-id xxx`,
+unacknowledged guidance addressed to the matching agent/session is printed in the
+task focus. If the packet is bound to the active task, `finish` is blocked until
+the worker acknowledges it:
 
 ```bash
-python3 tools/agentctl.py guidance ack <packet-id> --by codex
+python3 tools/agentctl.py guidance ack <packet-id> --by codex-gpt55xhigh
 ```

@@ -119,37 +119,62 @@ agent does not need to remember separate triage and document hygiene commands.
 
 ## Advanced Supervisor Guidance
 
-Use this when a stronger planning model should guide an implementation agent.
-For example, Fable can write the plan and Codex can execute it:
+Use this when a stronger planning model should guide an implementation worker.
+The intended human prompt can be this short:
+
+```text
+按 .agent 规范开始工作。你作为 fable/supervisor，负责拆解计划并下发给 codex 的 gpt5.5xhigh（他的会话ID是 xxx）执行。
+```
+
+Fable should translate that into durable project state:
+
+1. Create or update task documents for the implementation work.
+2. Register the target worker session when needed:
+
+   ```bash
+   python3 tools/agentctl.py agents add \
+     --id codex-gpt55xhigh \
+     --role "implementation worker" \
+     --backend codex \
+     --model gpt5.5xhigh \
+     --session-id xxx
+   ```
+
+3. Send the plan to that specific worker session:
 
 ```bash
 python3 tools/agentctl.py guidance create \
   --from-agent fable \
-  --to-agent codex \
+  --to-agent codex-gpt55xhigh \
+  --to-model gpt5.5xhigh \
+  --to-session xxx \
   --task T-101 \
   --summary "Implement the benchmark runner in three phases" \
   --plan-file .agent/plans/T-101-fable-plan.md
 ```
 
 The plan is stored as a durable packet under `.agent/bus/` and mirrored into
-`.agent/handoffs/`. When Codex later runs:
+`.agent/handoffs/`. When the matching Codex/GPT-5.5 worker later runs:
 
 ```bash
-python3 tools/agentctl.py work --agent codex
+python3 tools/agentctl.py work --agent codex-gpt55xhigh --model gpt5.5xhigh --session-id xxx
 ```
 
 the focus output automatically includes any unacknowledged guidance addressed to
-`codex`, including the packet path and a plan excerpt. If the guidance is bound
-to the active task, `agentctl check --mode manual` and `agentctl finish` refuse
-to pass until Codex records that it incorporated the plan:
+that exact worker session, including the packet path and a plan excerpt. If the
+guidance is bound to the active task, `agentctl check --mode manual` and
+`agentctl finish` refuse to pass until the worker records that it incorporated
+the plan:
 
 ```bash
-python3 tools/agentctl.py guidance ack <packet-id> --by codex
+python3 tools/agentctl.py guidance ack <packet-id> --by codex-gpt55xhigh
 ```
 
 This keeps the model hierarchy file-based: the stronger model does planning and
 review direction; Codex still owns the task doc, implementation, verification,
-and final commit.
+and final commit. If there is only one Codex worker, `--to-agent codex` without
+`--to-session` still works. Use session-scoped guidance when multiple Codex
+sessions may run in parallel.
 
 ## Loop Design
 
@@ -341,7 +366,7 @@ agentctl focus                                      reprint current task focus
 agentctl note "..."                                 record progress
 agentctl finish --summary "..." --tests "..."       move task to review
 agentctl gate approve|reject --task --by            review gate
-agentctl guidance create --from-agent --to-agent    send supervisor plan to an agent
+agentctl guidance create --from-agent --to-agent    send supervisor plan to an agent/session
 agentctl guidance list|show|ack                     inspect or acknowledge guidance
 agentctl loop list|show|run <id> --once             inspect or run one loop
 agentctl loop auto --checkpoint <name> --once       run checkpoint policy

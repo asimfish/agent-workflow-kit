@@ -60,3 +60,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-06 01:30:16 [T-014] Fixed pre-push new-branch range to use the remote main/master merge base and verified hook syntax plus simulated first branch push.
 - 2026-07-06 17:50:06 [T-015] Added pre-push hook range regression covering first new-branch push and existing-branch push; targeted and full unittest runs pass.
 - 2026-07-06 19:23:55 [T-016] Opened draft PR #1 from feature/T-013-supervisor-guidance to main for supervisor guidance workflow, hook fix, and regression tests.
+- 2026-07-07 00:44:48 [T-017] Implemented session-scoped supervisor guidance routing for Codex workers and verified profile/default session behavior.

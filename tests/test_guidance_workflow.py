@@ -102,6 +102,116 @@ class GuidanceWorkflowRegressionTest(unittest.TestCase):
         self.assertEqual(packet["status"], "done")
         self.assertEqual(packet["acknowledged_by"], "codex")
 
+    def test_session_scoped_guidance_only_blocks_matching_worker_session(self):
+        self.agentctl(
+            "task", "create",
+            "--id", "T-102",
+            "--title", "session routed implementation",
+            "--owner", "codex",
+            "--scope", ".agent/",
+            expect=0)
+
+        self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex",
+            "--to-model", "gpt5.5xhigh",
+            "--to-session", "xxx",
+            "--task", "T-102",
+            "--summary", "Plan for the target high-effort Codex session",
+            "--plan", "Only session xxx should receive and ack this plan.",
+            expect=0)
+        self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex",
+            "--to-model", "gpt5.5xhigh",
+            "--to-session", "yyy",
+            "--task", "T-102",
+            "--summary", "Plan for a different Codex session",
+            "--plan", "Session xxx must not see or be blocked by this plan.",
+            expect=0)
+
+        work = self.agentctl(
+            "work", "--agent", "codex",
+            "--model", "gpt5.5xhigh",
+            "--session-id", "xxx",
+            expect=0)
+        combined = work.stdout + work.stderr
+        self.assertIn("Plan for the target high-effort Codex session", combined)
+        self.assertIn("session=xxx", combined)
+        self.assertNotIn("Plan for a different Codex session", combined)
+
+        visible = self.agentctl(
+            "guidance", "list",
+            "--agent", "codex",
+            "--session-id", "xxx",
+            "--json",
+            expect=0)
+        visible_packets = json.loads(visible.stdout)["guidance"]
+        self.assertEqual(len(visible_packets), 1, visible_packets)
+        self.assertEqual(visible_packets[0]["to_session"], "xxx")
+        packet_id = visible_packets[0]["id"]
+
+        blocked = self.agentctl("check", "--mode", "manual", expect=1)
+        self.assertIn("pending supervisor guidance", blocked.stdout + blocked.stderr)
+
+        self.agentctl(
+            "guidance", "ack", packet_id,
+            "--by", "codex",
+            "--note", "session xxx incorporated the supervisor plan",
+            expect=0)
+        self.agentctl("check", "--mode", "manual", expect=0)
+
+        finished = self.agentctl(
+            "finish",
+            "--summary", "session scoped guidance complete",
+            "--tests", "session routing regression",
+            expect=0)
+        self.assertIn("T-102 -> review", finished.stdout + finished.stderr)
+
+        remaining = self.agentctl(
+            "guidance", "list",
+            "--agent", "codex",
+            "--session-id", "yyy",
+            "--status", "ready",
+            "--json",
+            expect=0)
+        remaining_packets = json.loads(remaining.stdout)["guidance"]
+        self.assertEqual(len(remaining_packets), 1, remaining_packets)
+        self.assertEqual(remaining_packets[0]["to_session"], "yyy")
+
+    def test_agent_profile_session_metadata_routes_guidance_by_default(self):
+        self.agentctl(
+            "agents", "add",
+            "--id", "codex-gpt55xhigh",
+            "--role", "implementation worker",
+            "--backend", "codex",
+            "--model", "gpt5.5xhigh",
+            "--session-id", "xxx",
+            expect=0)
+        self.agentctl(
+            "task", "create",
+            "--id", "T-103",
+            "--title", "profile routed implementation",
+            "--owner", "codex-gpt55xhigh",
+            "--scope", ".agent/",
+            expect=0)
+        created = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex-gpt55xhigh",
+            "--task", "T-103",
+            "--summary", "Profile metadata should target session xxx",
+            "--plan", "Use the registered worker model and session metadata.",
+            expect=0)
+        self.assertIn("model=gpt5.5xhigh session=xxx", created.stdout)
+
+        work = self.agentctl("work", "--agent", "codex-gpt55xhigh", expect=0)
+        combined = work.stdout + work.stderr
+        self.assertIn("model=gpt5.5xhigh session=xxx", combined)
+        self.assertIn("Profile metadata should target session xxx", combined)
+
 
 if __name__ == "__main__":
     unittest.main()

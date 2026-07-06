@@ -236,6 +236,25 @@ def _save_agents(root: Path, data: dict) -> None:
     _save_json(_agents_path(root), data)
 
 
+def _agent_profile(root: Path, agent: str | None) -> dict:
+    if not agent:
+        return {}
+    return (_load_agents(root).get("agents") or {}).get(agent) or {}
+
+
+def _resolve_worker_metadata(root: Path, agent: str | None, args: argparse.Namespace | None = None) -> dict:
+    profile = _agent_profile(root, agent)
+    session_id = ""
+    model = ""
+    if args is not None:
+        session_id = getattr(args, "session_id", "") or ""
+        model = getattr(args, "model", "") or ""
+    return {
+        "session_id": session_id or os.environ.get("AGENT_SESSION_ID", "") or profile.get("session_id", "") or "",
+        "model": model or os.environ.get("AGENT_MODEL", "") or profile.get("model", "") or "",
+    }
+
+
 def _record_adoption_baseline(root: Path) -> None:
     """Record the pre-install HEAD so old history is not retroactively gated."""
     path = _adoption_path(root)
@@ -310,7 +329,19 @@ def _doc_hash_targets(root: Path, task: str | None):
     if task:
         targets.append(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md")
         try:
-            targets.extend(path for path, _pkt in _open_guidance_packets(root, task=task))
+            st = _load_session(root)
+            if st.get("task") == task:
+                targets.extend(
+                    path for path, _pkt in _open_guidance_packets(
+                        root,
+                        to_agent=st.get("agent"),
+                        task=task,
+                        session_id=st.get("session_id") or "",
+                        model=st.get("model") or "",
+                    )
+                )
+            else:
+                targets.extend(path for path, _pkt in _open_guidance_packets(root, task=task))
         except NameError:
             pass
     return targets
@@ -537,7 +568,8 @@ def cmd_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_focus(root: Path, task: str, agent: str | None = None) -> None:
+def _print_focus(root: Path, task: str, agent: str | None = None,
+                 session_id: str = "", model: str = "") -> None:
     task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
     print(f"\n=== FOCUS [{task}] — re-read before continuing ===")
     if task_doc.is_file():
@@ -551,7 +583,7 @@ def _print_focus(root: Path, task: str, agent: str | None = None) -> None:
     else:
         print(f"(no task doc at {WORKFLOW_DIR}/{TASKS_DIR}/{task}.md)")
     if agent:
-        _print_guidance_focus(root, agent, task)
+        _print_guidance_focus(root, agent, task, session_id=session_id, model=model)
     print("Required reading: AGENTS.md, .agent/PROJECT_PLAN.md, and the task doc above.")
     print("=== end focus ===")
 
@@ -559,14 +591,18 @@ def _print_focus(root: Path, task: str, agent: str | None = None) -> None:
 def cmd_work(args: argparse.Namespace) -> int:
     root = _repo_root()
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
+    meta = _resolve_worker_metadata(root, agent, args)
     if args.task:
-        start_args = argparse.Namespace(task=args.task, agent=agent, scope=args.scope, force=args.force)
+        start_args = argparse.Namespace(task=args.task, agent=agent, scope=args.scope, force=args.force,
+                                        session_id=meta["session_id"], model=meta["model"])
         return cmd_start(start_args)
     st = _load_session(root)
     active = st.get("task")
     if active and _task_status(root, active) == "in_progress" and not args.force:
         print(f"agentctl: resuming active task {active} (agent={st.get('agent') or agent})")
-        _print_focus(root, active, st.get("agent") or agent)
+        _print_focus(root, active, st.get("agent") or agent,
+                     session_id=st.get("session_id") or meta["session_id"],
+                     model=st.get("model") or meta["model"])
         _run_loop_checkpoint(root, "work-start", once=True, trigger="work-resume", strict=False)
         return 0
     task = _select_next_task(root, agent)
@@ -591,14 +627,16 @@ def cmd_work(args: argparse.Namespace) -> int:
             if rc:
                 return rc
             print(f"agentctl: auto-created {task} for {agent}")
-            start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force)
+            start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force,
+                                            session_id=meta["session_id"], model=meta["model"])
             return cmd_start(start_args)
         print(f"agentctl: no ready/todo task assigned to {agent}.")
         print("agentctl: if this is a new user request, create and start a task in one command:")
         print("  python3 tools/agentctl.py work --agent " + agent + " --auto-create --title \"...\" --scope path/")
         return 1
     print(f"agentctl: auto-selected {task} for {agent}")
-    start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force)
+    start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force,
+                                    session_id=meta["session_id"], model=meta["model"])
     return cmd_start(start_args)
 
 
@@ -609,6 +647,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         return 2
     task = args.task
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
+    meta = _resolve_worker_metadata(root, agent, args)
     board = _load_board(root)
     tasks = board.setdefault("tasks", {})
     entry = tasks.get(task, {})
@@ -635,7 +674,8 @@ def cmd_start(args: argparse.Namespace) -> int:
                   f"since {existing.get('acquired_at')}. use --force to steal.", file=sys.stderr)
             return 1
     _save_json(lp, {"task": task, "agent": agent, "pid": os.getpid(),
-                    "scope": scope, "acquired_at": _now()})
+                    "scope": scope, "session_id": meta["session_id"], "model": meta["model"],
+                    "acquired_at": _now()})
     # board -> in_progress
     now = _now()
     e = tasks.setdefault(task, {"title": task, "status": "todo", "owner": agent,
@@ -649,10 +689,19 @@ def cmd_start(args: argparse.Namespace) -> int:
     _update_tasks_index(root, task, status="in_progress", owner=agent, scope=e.get("scope"), title=e.get("title"))
     _set_task_doc_status(root, task, "in_progress")
     # Save the read receipt after all start-side document/status writes.
-    _save_session(root, {"task": task, "agent": agent, "started_at": now,
-                         "scope": scope, "notes": [], "doc_hashes": _hash_docs(root, task)})
-    print(f"agentctl: started {task} (agent={agent}) -> in_progress")
-    _print_focus(root, task, agent)
+    session = {"task": task, "agent": agent, "started_at": now,
+               "scope": scope, "session_id": meta["session_id"], "model": meta["model"],
+               "notes": [], "doc_hashes": {}}
+    _save_session(root, session)
+    session["doc_hashes"] = _hash_docs(root, task)
+    _save_session(root, session)
+    label = f"agent={agent}"
+    if meta["model"]:
+        label += f" model={meta['model']}"
+    if meta["session_id"]:
+        label += f" session={meta['session_id']}"
+    print(f"agentctl: started {task} ({label}) -> in_progress")
+    _print_focus(root, task, agent, session_id=meta["session_id"], model=meta["model"])
     _run_loop_checkpoint(root, "work-start", once=True, trigger="work-start", strict=False)
     return 0
 
@@ -663,8 +712,12 @@ def cmd_focus(args: argparse.Namespace) -> int:
     if not task:
         print("agentctl: no active task. pass --task or run 'agentctl work --agent <name>'.", file=sys.stderr)
         return 2
-    agent = args.agent or _load_session(root).get("agent")
-    _print_focus(root, task, agent)
+    st = _load_session(root)
+    agent = args.agent or st.get("agent")
+    meta = _resolve_worker_metadata(root, agent, args)
+    _print_focus(root, task, agent,
+                 session_id=getattr(args, "session_id", None) or st.get("session_id") or meta["session_id"],
+                 model=getattr(args, "model", None) or st.get("model") or meta["model"])
     return 0
 
 
@@ -713,7 +766,14 @@ def cmd_complete(args: argparse.Namespace) -> int:
     if not summary:
         print("agentctl: --summary is required", file=sys.stderr)
         return 2
-    pending_guidance = _open_guidance_packets(root, task=task, task_specific_only=True)
+    pending_guidance = _open_guidance_packets(
+        root,
+        to_agent=st.get("agent"),
+        task=task,
+        task_specific_only=True,
+        session_id=st.get("session_id") or "",
+        model=st.get("model") or "",
+    )
     if pending_guidance:
         for _path, pkt in pending_guidance:
             print(
@@ -958,7 +1018,12 @@ def cmd_agents(args: argparse.Namespace) -> int:
         for aid in sorted(ags):
             a = ags[aid]
             scope = ",".join(a.get("write_scope") or []) or "-"
-            print(f"  {aid:<14} role={a.get('role', '-')} backend={a.get('backend', '-')} scope={scope}")
+            model = a.get("model") or "-"
+            session_id = a.get("session_id") or "-"
+            print(
+                f"  {aid:<14} role={a.get('role', '-')} backend={a.get('backend', '-')} "
+                f"model={model} session={session_id} scope={scope}"
+            )
         return 0
     if args.agents_action == "add":
         data.setdefault("agents", {})[args.id] = {
@@ -967,6 +1032,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
             "write_scope": [s.strip() for s in (args.scope or "").split(",") if s.strip()],
             "tools": [t.strip() for t in (args.tools or "").split(",") if t.strip()],
             "model": args.model or "",
+            "session_id": args.session_id or "",
         }
         _save_agents(root, data)
         print(f"agentctl: registered agent {args.id}")
@@ -990,6 +1056,20 @@ def _guidance_packet_paths(root: Path, packet: dict) -> tuple[Path, Path]:
     )
 
 
+def _guidance_matches_worker(pkt: dict, to_agent: str | None = None,
+                             session_id: str | None = None,
+                             model: str | None = None) -> bool:
+    if to_agent and pkt.get("to_agent") != to_agent:
+        return False
+    target_session = pkt.get("to_session") or ""
+    if target_session and target_session != (session_id or ""):
+        return False
+    target_model = pkt.get("to_model") or ""
+    if target_model and model and target_model != model:
+        return False
+    return True
+
+
 def _append_guidance_doc(root: Path, packet: dict) -> None:
     from_agent = _safe_segment(packet.get("from_agent") or "supervisor")
     to_agent = _safe_segment(packet.get("to_agent") or "agent")
@@ -1000,6 +1080,8 @@ def _append_guidance_doc(root: Path, packet: dict) -> None:
         f"\n## {packet['created_at']} - {packet['id']}\n\n"
         f"- From Agent: {packet.get('from_agent') or '-'}\n"
         f"- To Agent: {packet.get('to_agent') or '-'}\n"
+        f"- To Model: {packet.get('to_model') or '-'}\n"
+        f"- To Session: {packet.get('to_session') or '-'}\n"
         f"- Task: {task}\n"
         f"- Summary: {packet.get('summary') or '-'}\n"
         f"- Artifacts: {', '.join(packet.get('artifacts') or []) or '-'}\n"
@@ -1014,7 +1096,9 @@ def _append_guidance_doc(root: Path, packet: dict) -> None:
 
 
 def _open_guidance_packets(root: Path, to_agent: str | None = None, task: str | None = None,
-                           task_specific_only: bool = False) -> list[tuple[Path, dict]]:
+                           task_specific_only: bool = False,
+                           session_id: str | None = None,
+                           model: str | None = None) -> list[tuple[Path, dict]]:
     packets: list[tuple[Path, dict]] = []
     inbox = _bus_dir(root, BUS_INBOX)
     if not inbox.is_dir():
@@ -1023,7 +1107,7 @@ def _open_guidance_packets(root: Path, to_agent: str | None = None, task: str | 
         pkt = _load_json(path, {})
         if pkt.get("kind") != GUIDANCE_KIND or pkt.get("status") != "ready":
             continue
-        if to_agent and pkt.get("to_agent") != to_agent:
+        if not _guidance_matches_worker(pkt, to_agent=to_agent, session_id=session_id, model=model):
             continue
         pkt_task = pkt.get("task") or ""
         pkt_to_task = pkt.get("to_task") or ""
@@ -1038,7 +1122,9 @@ def _open_guidance_packets(root: Path, to_agent: str | None = None, task: str | 
 
 
 def _guidance_packets(root: Path, agent: str | None = None, task: str | None = None,
-                      status: str | None = None) -> list[tuple[Path, dict]]:
+                      status: str | None = None,
+                      session_id: str | None = None,
+                      model: str | None = None) -> list[tuple[Path, dict]]:
     packets: list[tuple[Path, dict]] = []
     seen: set[str] = set()
     for kind in (BUS_INBOX, BUS_DONE, BUS_FAILED):
@@ -1054,6 +1140,10 @@ def _guidance_packets(root: Path, agent: str | None = None, task: str | None = N
             if status and pkt.get("status") != status:
                 continue
             if agent and agent not in {pkt.get("from_agent"), pkt.get("to_agent")}:
+                continue
+            if session_id and session_id not in {pkt.get("from_session"), pkt.get("to_session")}:
+                continue
+            if model and model not in {pkt.get("from_model"), pkt.get("to_model")}:
                 continue
             if task and task not in {pkt.get("task"), pkt.get("to_task")}:
                 continue
@@ -1079,8 +1169,10 @@ def _guidance_plan_from_args(root: Path, args: argparse.Namespace) -> str:
     return plan.strip()
 
 
-def _print_guidance_focus(root: Path, agent: str, task: str) -> None:
-    packets = _open_guidance_packets(root, to_agent=agent, task=task)
+def _print_guidance_focus(root: Path, agent: str, task: str,
+                          session_id: str = "", model: str = "") -> None:
+    packets = _open_guidance_packets(root, to_agent=agent, task=task,
+                                     session_id=session_id, model=model)
     if not packets:
         return
     print("[Supervisor Guidance]\n")
@@ -1090,6 +1182,8 @@ def _print_guidance_focus(root: Path, agent: str, task: str) -> None:
             f"- {pkt.get('id')} from {pkt.get('from_agent') or pkt.get('by')} "
             f"to {pkt.get('to_agent')} task={task_label}"
         )
+        if pkt.get("to_model") or pkt.get("to_session"):
+            print(f"  Target: model={pkt.get('to_model') or '-'} session={pkt.get('to_session') or '-'}")
         print(f"  Summary: {pkt.get('summary') or '-'}")
         plan_lines = [ln for ln in (pkt.get("plan") or "").strip().splitlines() if ln.strip()]
         if plan_lines:
@@ -1107,7 +1201,9 @@ def _print_guidance_focus(root: Path, agent: str, task: str) -> None:
 
 def _guidance_create(root: Path, args: argparse.Namespace) -> int:
     from_agent = args.from_agent or _load_session(root).get("agent") or "supervisor"
+    from_profile = _agent_profile(root, from_agent)
     to_agent = args.to_agent
+    to_profile = _agent_profile(root, to_agent)
     if not to_agent:
         print("agentctl: guidance create requires --to-agent", file=sys.stderr)
         return 2
@@ -1126,7 +1222,11 @@ def _guidance_create(root: Path, args: argparse.Namespace) -> int:
         "created_at": _now(),
         "status": "ready",
         "from_agent": from_agent,
+        "from_model": args.from_model or from_profile.get("model", "") or "",
+        "from_session": args.from_session or from_profile.get("session_id", "") or "",
         "to_agent": to_agent,
+        "to_model": args.to_model or to_profile.get("model", "") or "",
+        "to_session": args.to_session or to_profile.get("session_id", "") or "",
         "from_task": f"guidance-{from_agent}",
         "to_task": args.task or f"agent-{to_agent}",
         "task": args.task or "",
@@ -1143,13 +1243,24 @@ def _guidance_create(root: Path, args: argparse.Namespace) -> int:
     print(f"agentctl: guidance packet created: {packet['id']}")
     print(f"  inbox: {inbox.relative_to(root)}")
     print(f"  outbox: {outbox.relative_to(root)}")
+    if packet["to_model"] or packet["to_session"]:
+        print(f"  target: agent={to_agent} model={packet['to_model'] or '-'} session={packet['to_session'] or '-'}")
     if args.task:
         print(f"  finish gate: task {args.task} must ack this guidance before completion")
     return 0
 
 
 def _guidance_list(root: Path, args: argparse.Namespace) -> int:
-    rows = [pkt for _path, pkt in _guidance_packets(root, agent=args.agent, task=args.task, status=args.status)]
+    rows = [
+        pkt for _path, pkt in _guidance_packets(
+            root,
+            agent=args.agent,
+            task=args.task,
+            status=args.status,
+            session_id=args.session_id,
+            model=args.model,
+        )
+    ]
     if args.json:
         print(json.dumps({"guidance": rows}, indent=2, ensure_ascii=False))
         return 0
@@ -1161,7 +1272,8 @@ def _guidance_list(root: Path, args: argparse.Namespace) -> int:
         print(
             f"  {pkt.get('id'):<46} {pkt.get('status', '-'):<8} "
             f"{pkt.get('from_agent', '-')} -> {pkt.get('to_agent', '-')} "
-            f"task={task} box={pkt.get('_box')}"
+            f"task={task} model={pkt.get('to_model') or '-'} session={pkt.get('to_session') or '-'} "
+            f"box={pkt.get('_box')}"
         )
     return 0
 
@@ -1181,6 +1293,8 @@ def _guidance_show(root: Path, args: argparse.Namespace) -> int:
         print(f"Guidance: {pkt.get('id')}")
         print(f"Status: {pkt.get('status')}")
         print(f"Route: {pkt.get('from_agent')} -> {pkt.get('to_agent')}")
+        print(f"Target Model: {pkt.get('to_model') or '-'}")
+        print(f"Target Session: {pkt.get('to_session') or '-'}")
         print(f"Task: {pkt.get('task') or '-'}")
         print(f"Created: {pkt.get('created_at')}")
         print(f"Summary: {pkt.get('summary')}")
@@ -1238,7 +1352,7 @@ def cmd_guidance(args: argparse.Namespace) -> int:
 
 
 def _packet_id(from_task: str, to_task: str) -> str:
-    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+    ts = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     return f"{ts}-{from_task}-to-{to_task}"
 
 
@@ -2324,7 +2438,14 @@ def _check_pending_guidance(root: Path) -> list:
     return [
         f"pending supervisor guidance {pkt.get('id')} for active task {task}; "
         f"run 'agentctl guidance ack {pkt.get('id')}' after incorporating it"
-        for _path, pkt in _open_guidance_packets(root, task=task, task_specific_only=True)
+        for _path, pkt in _open_guidance_packets(
+            root,
+            to_agent=st.get("agent"),
+            task=task,
+            task_specific_only=True,
+            session_id=st.get("session_id") or "",
+            model=st.get("model") or "",
+        )
     ]
 
 
@@ -2623,6 +2744,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--new-id")
     sp.add_argument("--prefix", default="T")
     sp.add_argument("--deps", default="")
+    sp.add_argument("--session-id")
+    sp.add_argument("--model")
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_work)
 
@@ -2630,12 +2753,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--task", required=True)
     sp.add_argument("--agent")
     sp.add_argument("--scope")
+    sp.add_argument("--session-id")
+    sp.add_argument("--model")
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_start)
 
     sp = sub.add_parser("focus")
     sp.add_argument("--task")
     sp.add_argument("--agent")
+    sp.add_argument("--session-id")
+    sp.add_argument("--model")
     sp.set_defaults(func=cmd_focus)
 
     sp = sub.add_parser("progress")
@@ -2694,6 +2821,7 @@ def build_parser() -> argparse.ArgumentParser:
     aa.add_argument("--scope")
     aa.add_argument("--tools")
     aa.add_argument("--model")
+    aa.add_argument("--session-id")
     al = asub.add_parser("list")
     al.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_agents)
@@ -2724,7 +2852,11 @@ def build_parser() -> argparse.ArgumentParser:
     gsub = sp.add_subparsers(dest="guidance_action", required=True)
     gc = gsub.add_parser("create")
     gc.add_argument("--from-agent", default="supervisor")
+    gc.add_argument("--from-model")
+    gc.add_argument("--from-session")
     gc.add_argument("--to-agent", required=True)
+    gc.add_argument("--to-model")
+    gc.add_argument("--to-session")
     gc.add_argument("--task")
     gc.add_argument("--summary", required=True)
     gc.add_argument("--plan")
@@ -2733,6 +2865,8 @@ def build_parser() -> argparse.ArgumentParser:
     gc.add_argument("--note")
     gl = gsub.add_parser("list")
     gl.add_argument("--agent")
+    gl.add_argument("--model")
+    gl.add_argument("--session-id")
     gl.add_argument("--task")
     gl.add_argument("--status")
     gl.add_argument("--json", action="store_true")
