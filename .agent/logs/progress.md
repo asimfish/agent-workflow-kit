@@ -62,3 +62,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-06 19:23:55 [T-016] Opened draft PR #1 from feature/T-013-supervisor-guidance to main for supervisor guidance workflow, hook fix, and regression tests.
 - 2026-07-07 00:44:48 [T-017] Implemented session-scoped supervisor guidance routing for Codex workers and verified profile/default session behavior.
 - 2026-07-07 02:14:00 [T-018] Marked PR #1 ready for review after confirming mergeable state and successful agent-workflow-check CI runs.
+- 2026-07-07 16:54:24 [T-019] Post-merge validation passed: doctor OK, unittest discovery passed with 9 tests, manual check OK, diff check OK, and fresh-install guidance smoke passed.
