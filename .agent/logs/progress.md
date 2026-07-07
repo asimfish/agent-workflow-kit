@@ -63,3 +63,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-07 00:44:48 [T-017] Implemented session-scoped supervisor guidance routing for Codex workers and verified profile/default session behavior.
 - 2026-07-07 02:14:00 [T-018] Marked PR #1 ready for review after confirming mergeable state and successful agent-workflow-check CI runs.
 - 2026-07-07 16:54:24 [T-019] Post-merge validation passed: doctor OK, unittest discovery passed with 9 tests, manual check OK, diff check OK, and fresh-install guidance smoke passed.
+- 2026-07-07 18:48:29 [T-020] GitHub clone/install smoke passed from https://github.com/asimfish/super_project.git main: init, doctor, work, guidance focus, pending check block, ack, and manual check after ack all behaved correctly.

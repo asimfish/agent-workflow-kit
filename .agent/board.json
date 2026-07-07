@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-07 16:54:49",
+  "updated_at": "2026-07-07 18:48:58",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -394,6 +394,17 @@
       "deps": [],
       "created_at": "2026-07-07 16:53:33",
       "updated_at": "2026-07-07 16:54:49"
+    },
+    "T-020": {
+      "title": "validate github install link",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-07 18:47:46",
+      "updated_at": "2026-07-07 18:48:58"
     }
   }
 }

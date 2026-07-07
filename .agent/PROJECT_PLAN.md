@@ -30,6 +30,7 @@ instead of relying on chat memory or repeated human prompts.
 | M1 | Define project workflow | done | Plan, rules, hooks, loop contracts, task docs, and dogfood evidence exist |
 
 ## Task Board
+- [x] T-020 - validate github install link (owner: codex)
 - [x] T-019 - post-merge validate guidance workflow (owner: codex)
 - [x] T-018 - mark supervisor guidance PR ready (owner: codex)
 - [x] T-017 - route supervisor guidance to specific codex sessions (owner: codex)
