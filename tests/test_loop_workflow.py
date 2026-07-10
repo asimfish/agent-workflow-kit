@@ -92,6 +92,7 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
             "escalate_after": escalate_after,
         }
         policy_path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+        self.agentctl("refresh", expect=0)
 
     def inbox_packets(self):
         return sorted((self.root / ".agent" / "bus" / "inbox").rglob("*.json"))

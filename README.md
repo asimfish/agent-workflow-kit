@@ -136,28 +136,46 @@ Fable should translate that into durable project state:
      --id codex-gpt55xhigh \
      --role "implementation worker" \
      --backend codex \
-     --model gpt5.5xhigh \
+     --model gpt-5.5 \
+     --reasoning-effort xhigh \
      --session-id xxx
    ```
 
-3. Send the plan to that specific worker session:
+3. Send the plan and immediately run one bounded worker turn in that specific
+   Codex session:
 
 ```bash
 python3 tools/agentctl.py guidance create \
   --from-agent fable \
   --to-agent codex-gpt55xhigh \
-  --to-model gpt5.5xhigh \
+  --to-model gpt-5.5 \
+  --to-reasoning-effort xhigh \
   --to-session xxx \
   --task T-101 \
   --summary "Implement the benchmark runner in three phases" \
-  --plan-file .agent/plans/T-101-fable-plan.md
+  --plan-file .agent/plans/T-101-fable-plan.md \
+  --dispatch
 ```
 
 The plan is stored as a durable packet under `.agent/bus/` and mirrored into
-`.agent/handoffs/`. When the matching Codex/GPT-5.5 worker later runs:
+`.agent/handoffs/`. `--dispatch` then runs the supported non-interactive Codex
+continuation command for the target session:
+
+```text
+codex exec resume <SESSION_ID> <guidance-prompt>
+```
+
+The call is synchronous and bounded (default timeout: 7200 seconds). It inherits
+the target Codex session's configured trust, approval, and sandbox policy; the
+kit never adds a dangerous bypass flag. The worker's final message and raw
+receipt stay under the gitignored `.agent/state/dispatch/`, while the guidance
+packet records transport status, attempt count, timestamps, and exit code.
+
+When the matching Codex/GPT-5.5 worker starts or resumes, it still runs:
 
 ```bash
-python3 tools/agentctl.py work --agent codex-gpt55xhigh --model gpt5.5xhigh --session-id xxx
+python3 tools/agentctl.py work --agent codex-gpt55xhigh \
+  --model gpt-5.5 --reasoning-effort xhigh --session-id xxx
 ```
 
 the focus output automatically includes any unacknowledged guidance addressed to
@@ -172,9 +190,19 @@ python3 tools/agentctl.py guidance ack <packet-id> --by codex-gpt55xhigh
 
 This keeps the model hierarchy file-based: the stronger model does planning and
 review direction; Codex still owns the task doc, implementation, verification,
-and final commit. If there is only one Codex worker, `--to-agent codex` without
-`--to-session` still works. Use session-scoped guidance when multiple Codex
-sessions may run in parallel.
+and final commit. After the dispatched turn returns, Fable inspects the task
+document, diff, and verification evidence, then either sends another bounded
+guidance packet or gates the task. It must not acknowledge guidance or approve a
+task on the worker's behalf.
+
+Use `guidance dispatch <packet-id> --dry-run` to inspect the exact resume command
+without starting Codex. Omit `--dispatch` for the original asynchronous,
+file-only mode. File-only guidance can target an agent without a session ID;
+active dispatch requires a registered or explicit target session.
+
+The human-facing phrase `gpt5.5xhigh` is intentionally translated into two
+runtime settings: model `gpt-5.5` and reasoning effort `xhigh`. Do not pass the
+combined phrase as a Codex model ID.
 
 ## Loop Design
 
@@ -367,7 +395,8 @@ agentctl note "..."                                 record progress
 agentctl finish --summary "..." --tests "..."       move task to review
 agentctl gate approve|reject --task --by            review gate
 agentctl guidance create --from-agent --to-agent    send supervisor plan to an agent/session
-agentctl guidance list|show|ack                     inspect or acknowledge guidance
+agentctl guidance create ... --dispatch             send plan and resume the target Codex session
+agentctl guidance list|show|ack|dispatch             inspect, acknowledge, or retry guidance
 agentctl loop list|show|run <id> --once             inspect or run one loop
 agentctl loop auto --checkpoint <name> --once       run checkpoint policy
 agentctl board [--json]                             show board

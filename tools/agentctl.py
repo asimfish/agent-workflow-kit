@@ -13,7 +13,7 @@ Commands:
   finish     shorthand complete command for the active task
   complete   move the active task to review (write completion record, free lock)
   gate       approve/reject a task in review (-> done / blocked)
-  guidance   create/list/show/ack supervisor guidance packets
+  guidance   create/list/show/ack/dispatch supervisor guidance packets
   handoff    create/list/show/close cross-agent task packets
   loop       list/show/run/cycle project loops; auto-run checkpoint loops
   refresh    re-record doc hashes after plan/rules/task docs changed
@@ -33,6 +33,8 @@ import hashlib
 import json
 import os
 import re
+import shlex
+import shutil
 import string
 import subprocess
 import sys
@@ -71,6 +73,11 @@ LOOP_COMMAND_TIMEOUT_DEFAULT = 120
 LOOP_COMMAND_TIMEOUT_MAX = 3600
 LOOP_COMMAND_OUTPUT_CAP_DEFAULT = 2000
 LOOP_ESCALATE_AFTER_DEFAULT = 3
+GUIDANCE_DISPATCH_TIMEOUT_DEFAULT = 7200
+GUIDANCE_DISPATCH_TIMEOUT_MAX = 86400
+GUIDANCE_DISPATCH_PROMPT_MAX = 24000
+GUIDANCE_DISPATCH_OUTPUT_CAP = 4000
+REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 
 LOOP_REQUIRED_SECTIONS = ("Trigger", "Execute", "Check", "Feedback", "Memory", "Next")
 DEFAULT_LOOP_CHECKPOINTS = {
@@ -246,12 +253,20 @@ def _resolve_worker_metadata(root: Path, agent: str | None, args: argparse.Names
     profile = _agent_profile(root, agent)
     session_id = ""
     model = ""
+    reasoning_effort = ""
     if args is not None:
         session_id = getattr(args, "session_id", "") or ""
         model = getattr(args, "model", "") or ""
+        reasoning_effort = getattr(args, "reasoning_effort", "") or ""
     return {
         "session_id": session_id or os.environ.get("AGENT_SESSION_ID", "") or profile.get("session_id", "") or "",
         "model": model or os.environ.get("AGENT_MODEL", "") or profile.get("model", "") or "",
+        "reasoning_effort": (
+            reasoning_effort
+            or os.environ.get("AGENT_REASONING_EFFORT", "")
+            or profile.get("reasoning_effort", "")
+            or ""
+        ),
     }
 
 
@@ -322,9 +337,13 @@ def _scopes_overlap(a, b) -> bool:
 def _doc_hash_targets(root: Path, task: str | None):
     targets = [
         root / "AGENTS.md",
+        root / WORKFLOW_DIR / "WORKFLOW_ENTRY.md",
         root / WORKFLOW_DIR / PLAN_FILE,
         root / WORKFLOW_DIR / TASKS_FILE,
+        root / WORKFLOW_DIR / AGENTS_FILE,
         root / WORKFLOW_DIR / RULES_DIR / "agent-operating-rules.md",
+        root / WORKFLOW_DIR / RULES_DIR / "github-standards.md",
+        root / WORKFLOW_DIR / LOOPS_DIR / LOOP_CHECKPOINTS_FILE,
     ]
     if task:
         targets.append(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md")
@@ -542,15 +561,15 @@ def cmd_init(args: argparse.Namespace) -> int:
         _save_agents(root, {"version": 1, "agents": {
             "supervisor": {"role": "planning, task split, final review",
                            "backend": "any", "write_scope": [".agent/", "docs/"],
-                           "tools": [], "model": ""},
+                           "tools": [], "model": "", "reasoning_effort": ""},
             "fable": {"role": "advanced planning supervisor; writes guidance packets for codex",
                       "backend": "claude", "write_scope": [".agent/", "docs/"],
                       "tools": ["agentctl guidance create", "agentctl task create"],
-                      "model": "fable"},
+                      "model": "fable", "reasoning_effort": ""},
             "codex": {"role": "implementation worker; reads guidance packets and executes tasks",
                       "backend": "codex", "write_scope": [],
                       "tools": ["agentctl work", "agentctl guidance ack", "agentctl finish"],
-                      "model": ""}}})
+                      "model": "", "reasoning_effort": ""}}})
     _record_adoption_baseline(root)
     _ensure_gitignore(root)
     for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
@@ -594,7 +613,8 @@ def cmd_work(args: argparse.Namespace) -> int:
     meta = _resolve_worker_metadata(root, agent, args)
     if args.task:
         start_args = argparse.Namespace(task=args.task, agent=agent, scope=args.scope, force=args.force,
-                                        session_id=meta["session_id"], model=meta["model"])
+                                        session_id=meta["session_id"], model=meta["model"],
+                                        reasoning_effort=meta["reasoning_effort"])
         return cmd_start(start_args)
     st = _load_session(root)
     active = st.get("task")
@@ -628,7 +648,8 @@ def cmd_work(args: argparse.Namespace) -> int:
                 return rc
             print(f"agentctl: auto-created {task} for {agent}")
             start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force,
-                                            session_id=meta["session_id"], model=meta["model"])
+                                            session_id=meta["session_id"], model=meta["model"],
+                                            reasoning_effort=meta["reasoning_effort"])
             return cmd_start(start_args)
         print(f"agentctl: no ready/todo task assigned to {agent}.")
         print("agentctl: if this is a new user request, create and start a task in one command:")
@@ -636,7 +657,8 @@ def cmd_work(args: argparse.Namespace) -> int:
         return 1
     print(f"agentctl: auto-selected {task} for {agent}")
     start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force,
-                                    session_id=meta["session_id"], model=meta["model"])
+                                    session_id=meta["session_id"], model=meta["model"],
+                                    reasoning_effort=meta["reasoning_effort"])
     return cmd_start(start_args)
 
 
@@ -675,6 +697,7 @@ def cmd_start(args: argparse.Namespace) -> int:
             return 1
     _save_json(lp, {"task": task, "agent": agent, "pid": os.getpid(),
                     "scope": scope, "session_id": meta["session_id"], "model": meta["model"],
+                    "reasoning_effort": meta["reasoning_effort"],
                     "acquired_at": _now()})
     # board -> in_progress
     now = _now()
@@ -691,6 +714,7 @@ def cmd_start(args: argparse.Namespace) -> int:
     # Save the read receipt after all start-side document/status writes.
     session = {"task": task, "agent": agent, "started_at": now,
                "scope": scope, "session_id": meta["session_id"], "model": meta["model"],
+               "reasoning_effort": meta["reasoning_effort"],
                "notes": [], "doc_hashes": {}}
     _save_session(root, session)
     session["doc_hashes"] = _hash_docs(root, task)
@@ -698,6 +722,8 @@ def cmd_start(args: argparse.Namespace) -> int:
     label = f"agent={agent}"
     if meta["model"]:
         label += f" model={meta['model']}"
+    if meta["reasoning_effort"]:
+        label += f" reasoning={meta['reasoning_effort']}"
     if meta["session_id"]:
         label += f" session={meta['session_id']}"
     print(f"agentctl: started {task} ({label}) -> in_progress")
@@ -724,6 +750,12 @@ def cmd_focus(args: argparse.Namespace) -> int:
 def cmd_progress(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
+    changed = _check_receipt(root)
+    if changed:
+        print("agentctl: progress blocked because required workflow documents changed:", file=sys.stderr)
+        for problem in changed:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
     note = args.note or ""
     if not note:
         print("agentctl: --note is required", file=sys.stderr)
@@ -762,6 +794,12 @@ def cmd_complete(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
     task = st["task"]
+    changed = _check_receipt(root)
+    if changed:
+        print("agentctl: finish blocked because required workflow documents changed:", file=sys.stderr)
+        for problem in changed:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
     summary = args.summary or ""
     if not summary:
         print("agentctl: --summary is required", file=sys.stderr)
@@ -1019,10 +1057,11 @@ def cmd_agents(args: argparse.Namespace) -> int:
             a = ags[aid]
             scope = ",".join(a.get("write_scope") or []) or "-"
             model = a.get("model") or "-"
+            effort = a.get("reasoning_effort") or "-"
             session_id = a.get("session_id") or "-"
             print(
                 f"  {aid:<14} role={a.get('role', '-')} backend={a.get('backend', '-')} "
-                f"model={model} session={session_id} scope={scope}"
+                f"model={model} reasoning={effort} session={session_id} scope={scope}"
             )
         return 0
     if args.agents_action == "add":
@@ -1032,6 +1071,7 @@ def cmd_agents(args: argparse.Namespace) -> int:
             "write_scope": [s.strip() for s in (args.scope or "").split(",") if s.strip()],
             "tools": [t.strip() for t in (args.tools or "").split(",") if t.strip()],
             "model": args.model or "",
+            "reasoning_effort": args.reasoning_effort or "",
             "session_id": args.session_id or "",
         }
         _save_agents(root, data)
@@ -1081,6 +1121,7 @@ def _append_guidance_doc(root: Path, packet: dict) -> None:
         f"- From Agent: {packet.get('from_agent') or '-'}\n"
         f"- To Agent: {packet.get('to_agent') or '-'}\n"
         f"- To Model: {packet.get('to_model') or '-'}\n"
+        f"- To Reasoning Effort: {packet.get('to_reasoning_effort') or '-'}\n"
         f"- To Session: {packet.get('to_session') or '-'}\n"
         f"- Task: {task}\n"
         f"- Summary: {packet.get('summary') or '-'}\n"
@@ -1169,6 +1210,249 @@ def _guidance_plan_from_args(root: Path, args: argparse.Namespace) -> str:
     return plan.strip()
 
 
+def _guidance_dispatch_state_dir(root: Path) -> Path:
+    return _state_dir(root) / "dispatch"
+
+
+def _guidance_dispatch_prompt(packet: dict) -> str:
+    packet_id = packet.get("id") or "unknown"
+    to_agent = packet.get("to_agent") or "codex"
+    task = packet.get("task") or packet.get("to_task") or "unassigned"
+    model = packet.get("to_model") or "configured session model"
+    effort = packet.get("to_reasoning_effort") or "configured session effort"
+    session_id = packet.get("to_session") or "configured session"
+    plan = (packet.get("plan") or "").strip()
+    if len(plan) > GUIDANCE_DISPATCH_PROMPT_MAX:
+        plan = plan[:GUIDANCE_DISPATCH_PROMPT_MAX].rstrip() + "\n[plan truncated; read the packet for the remainder]"
+    return (
+        "按 .agent 规范开始工作。\n\n"
+        f"You are the implementation worker `{to_agent}` (model `{model}`, reasoning `{effort}`, "
+        f"session `{session_id}`).\n"
+        f"A supervisor dispatched guidance packet `{packet_id}` for task `{task}`.\n"
+        "Before editing, follow `.agent/WORKFLOW_ENTRY.md`. Confirm this worktree has the matching "
+        "task session; if it does not, enter that task with `agentctl work` using your agent, model, "
+        "and session identity. Do not steal another live task lock.\n"
+        f"Read the local packet with `python3 tools/agentctl.py guidance show {packet_id}` when it is "
+        "present. The full supervisor plan is also included below so direction still arrives when "
+        "packet visibility across worktrees lags; a missing local packet is not an acknowledgement.\n\n"
+        f"Supervisor summary: {packet.get('summary') or '-'}\n\n"
+        "Supervisor plan:\n"
+        f"{plan or '-'}\n\n"
+        "Execute the bounded task, run its verification, and record meaningful progress with "
+        "`agentctl note`. Acknowledge the guidance only after incorporating it, then use "
+        "`agentctl finish` when the task is genuinely ready for review. Obey the repository Git "
+        "standards; do not merge or bypass hooks automatically."
+    )
+
+
+def _update_guidance_dispatch(root: Path, packet_id: str, dispatch: dict) -> dict:
+    updated: dict = {}
+    for path in _matching_packet_paths(root, packet_id):
+        packet = _load_json(path, {})
+        if packet.get("kind") != GUIDANCE_KIND:
+            continue
+        packet["dispatch"] = dict(dispatch)
+        _save_json(path, packet)
+        updated = packet
+    return updated
+
+
+def _update_guidance_route(root: Path, packet_id: str, *, session_id: str,
+                           model: str, reasoning_effort: str) -> dict:
+    updated: dict = {}
+    for path in _matching_packet_paths(root, packet_id):
+        packet = _load_json(path, {})
+        if packet.get("kind") != GUIDANCE_KIND:
+            continue
+        packet["to_session"] = session_id
+        if model:
+            packet["to_model"] = model
+        if reasoning_effort:
+            packet["to_reasoning_effort"] = reasoning_effort
+        _save_json(path, packet)
+        updated = packet
+    return updated
+
+
+def _dispatch_output_tail(text: str) -> str:
+    text = (text or "").strip()
+    if len(text) <= GUIDANCE_DISPATCH_OUTPUT_CAP:
+        return text
+    return "[truncated]\n" + text[-GUIDANCE_DISPATCH_OUTPUT_CAP:]
+
+
+def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
+    path = _find_packet(root, args.packet)
+    if not path:
+        print(f"agentctl: guidance packet not found: {args.packet}", file=sys.stderr)
+        return 2
+    packet = _load_json(path, {})
+    if packet.get("kind") != GUIDANCE_KIND:
+        print(f"agentctl: packet is not supervisor guidance: {args.packet}", file=sys.stderr)
+        return 2
+    if packet.get("status") != "ready":
+        print(
+            f"agentctl: guidance {packet.get('id')} is '{packet.get('status')}', must be 'ready' to dispatch",
+            file=sys.stderr,
+        )
+        return 1
+
+    transport = args.transport or "codex-cli"
+    if transport != "codex-cli":
+        print(f"agentctl: unsupported guidance transport '{transport}'", file=sys.stderr)
+        return 2
+    session_id = args.session_id or packet.get("to_session") or ""
+    model = args.model or packet.get("to_model") or ""
+    reasoning_effort = (
+        getattr(args, "reasoning_effort", "")
+        or packet.get("to_reasoning_effort")
+        or ""
+    )
+    if not session_id:
+        print(
+            "agentctl: codex-cli dispatch requires a target session; set --to-session when creating "
+            "guidance or pass --session-id to guidance dispatch.",
+            file=sys.stderr,
+        )
+        return 2
+    if packet.get("from_session") and packet.get("from_session") == session_id:
+        print("agentctl: refusing to dispatch guidance back into its source session", file=sys.stderr)
+        return 1
+    if reasoning_effort and not REASONING_EFFORT_RE.fullmatch(reasoning_effort):
+        print(
+            "agentctl: reasoning effort must be a lowercase identifier such as low, high, or xhigh",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        timeout = int(args.timeout or GUIDANCE_DISPATCH_TIMEOUT_DEFAULT)
+    except (TypeError, ValueError):
+        print("agentctl: dispatch timeout must be an integer number of seconds", file=sys.stderr)
+        return 2
+    if timeout < 1 or timeout > GUIDANCE_DISPATCH_TIMEOUT_MAX:
+        print(
+            f"agentctl: dispatch timeout must be between 1 and {GUIDANCE_DISPATCH_TIMEOUT_MAX} seconds",
+            file=sys.stderr,
+        )
+        return 2
+
+    prior = packet.get("dispatch") if isinstance(packet.get("dispatch"), dict) else {}
+    attempts = int(prior.get("attempts") or 0) + 1
+    prompt_packet = dict(packet)
+    prompt_packet["to_session"] = session_id
+    if model:
+        prompt_packet["to_model"] = model
+    if reasoning_effort:
+        prompt_packet["to_reasoning_effort"] = reasoning_effort
+    prompt = _guidance_dispatch_prompt(prompt_packet)
+    state_dir = _guidance_dispatch_state_dir(root)
+    last_message = state_dir / (
+        f"{_safe_segment(packet['id'])}-attempt-{attempts}-last-message.txt"
+    )
+    codex_bin = shutil.which("codex") or "codex"
+    command = [codex_bin, "exec", "resume"]
+    if model:
+        command.extend(["--model", model])
+    if reasoning_effort:
+        command.extend(["--config", f'model_reasoning_effort="{reasoning_effort}"'])
+    command.extend(["--output-last-message", str(last_message), session_id, prompt])
+
+    print(f"agentctl: dispatch command: {shlex.join(command[:-1] + ['<guidance-prompt>'])}")
+    if args.dry_run:
+        print("agentctl: guidance dispatch dry-run; no Codex process started")
+        return 0
+    if args.session_id or args.model or getattr(args, "reasoning_effort", ""):
+        packet = _update_guidance_route(
+            root,
+            packet["id"],
+            session_id=session_id,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        ) or packet
+
+    started_at = _now()
+    running = {
+        "transport": transport,
+        "status": "running",
+        "attempts": attempts,
+        "started_at": started_at,
+        "finished_at": "",
+        "exit_code": None,
+        "session_id": session_id,
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "last_message": str(last_message.relative_to(root)),
+    }
+    _update_guidance_dispatch(root, packet["id"], running)
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    stdout = ""
+    stderr = ""
+    exit_code = 1
+    failure = ""
+    try:
+        proc = subprocess.run(
+            command,
+            cwd=str(root),
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+        stdout = proc.stdout or ""
+        stderr = proc.stderr or ""
+        exit_code = proc.returncode
+        if exit_code:
+            failure = f"codex exited with status {exit_code}"
+    except subprocess.TimeoutExpired as exc:
+        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+        failure = f"codex dispatch timed out after {timeout}s"
+        exit_code = 124
+    except OSError as exc:
+        failure = f"failed to start codex: {exc}"
+        stderr = str(exc)
+        exit_code = 1
+
+    finished_at = _now()
+    receipt = {
+        "version": 1,
+        "packet": packet["id"],
+        "transport": transport,
+        "status": "succeeded" if exit_code == 0 else "failed",
+        "attempts": attempts,
+        "started_at": started_at,
+        "finished_at": finished_at,
+        "exit_code": exit_code,
+        "session_id": session_id,
+        "model": model,
+        "reasoning_effort": reasoning_effort,
+        "last_message": str(last_message.relative_to(root)),
+        "failure": failure,
+        "stdout_tail": _dispatch_output_tail(stdout),
+        "stderr_tail": _dispatch_output_tail(stderr),
+    }
+    _save_json(state_dir / f"{_safe_segment(packet['id'])}.json", receipt)
+    persistent = {key: receipt[key] for key in (
+        "transport", "status", "attempts", "started_at", "finished_at", "exit_code",
+        "session_id", "model", "reasoning_effort", "last_message", "failure",
+    )}
+    _update_guidance_dispatch(root, packet["id"], persistent)
+
+    if exit_code == 0:
+        print(f"agentctl: guidance {packet['id']} dispatched successfully to Codex session {session_id}")
+        if last_message.is_file():
+            final_text = _dispatch_output_tail(_read(last_message))
+            if final_text:
+                print("\n[Codex final message]\n" + final_text)
+        return 0
+    print(f"agentctl: guidance dispatch failed: {failure}", file=sys.stderr)
+    detail = _dispatch_output_tail(stderr or stdout)
+    if detail:
+        print(detail, file=sys.stderr)
+    return 1
+
+
 def _print_guidance_focus(root: Path, agent: str, task: str,
                           session_id: str = "", model: str = "") -> None:
     packets = _open_guidance_packets(root, to_agent=agent, task=task,
@@ -1182,8 +1466,12 @@ def _print_guidance_focus(root: Path, agent: str, task: str,
             f"- {pkt.get('id')} from {pkt.get('from_agent') or pkt.get('by')} "
             f"to {pkt.get('to_agent')} task={task_label}"
         )
-        if pkt.get("to_model") or pkt.get("to_session"):
-            print(f"  Target: model={pkt.get('to_model') or '-'} session={pkt.get('to_session') or '-'}")
+        if pkt.get("to_model") or pkt.get("to_reasoning_effort") or pkt.get("to_session"):
+            print(
+                f"  Target: model={pkt.get('to_model') or '-'} "
+                f"reasoning={pkt.get('to_reasoning_effort') or '-'} "
+                f"session={pkt.get('to_session') or '-'}"
+            )
         print(f"  Summary: {pkt.get('summary') or '-'}")
         plan_lines = [ln for ln in (pkt.get("plan") or "").strip().splitlines() if ln.strip()]
         if plan_lines:
@@ -1223,9 +1511,15 @@ def _guidance_create(root: Path, args: argparse.Namespace) -> int:
         "status": "ready",
         "from_agent": from_agent,
         "from_model": args.from_model or from_profile.get("model", "") or "",
+        "from_reasoning_effort": (
+            args.from_reasoning_effort or from_profile.get("reasoning_effort", "") or ""
+        ),
         "from_session": args.from_session or from_profile.get("session_id", "") or "",
         "to_agent": to_agent,
         "to_model": args.to_model or to_profile.get("model", "") or "",
+        "to_reasoning_effort": (
+            args.to_reasoning_effort or to_profile.get("reasoning_effort", "") or ""
+        ),
         "to_session": args.to_session or to_profile.get("session_id", "") or "",
         "from_task": f"guidance-{from_agent}",
         "to_task": args.task or f"agent-{to_agent}",
@@ -1236,6 +1530,13 @@ def _guidance_create(root: Path, args: argparse.Namespace) -> int:
         "artifacts": artifacts,
         "notes": args.note or "",
     }
+    if args.dispatch and not packet["to_session"]:
+        print(
+            "agentctl: guidance create --dispatch requires --to-session or a target agent profile "
+            "with session_id",
+            file=sys.stderr,
+        )
+        return 2
     outbox, inbox = _guidance_packet_paths(root, packet)
     _save_json(outbox, packet)
     _save_json(inbox, packet)
@@ -1244,9 +1545,26 @@ def _guidance_create(root: Path, args: argparse.Namespace) -> int:
     print(f"  inbox: {inbox.relative_to(root)}")
     print(f"  outbox: {outbox.relative_to(root)}")
     if packet["to_model"] or packet["to_session"]:
-        print(f"  target: agent={to_agent} model={packet['to_model'] or '-'} session={packet['to_session'] or '-'}")
+        print(
+            f"  target: agent={to_agent} model={packet['to_model'] or '-'} "
+            f"reasoning={packet['to_reasoning_effort'] or '-'} "
+            f"session={packet['to_session'] or '-'}"
+        )
     if args.task:
         print(f"  finish gate: task {args.task} must ack this guidance before completion")
+    if args.dispatch:
+        return _guidance_dispatch(
+            root,
+            argparse.Namespace(
+                packet=packet["id"],
+                transport=args.transport,
+                session_id="",
+                model="",
+                reasoning_effort="",
+                timeout=args.timeout,
+                dry_run=args.dry_run,
+            ),
+        )
     return 0
 
 
@@ -1269,11 +1587,14 @@ def _guidance_list(root: Path, args: argparse.Namespace) -> int:
         return 0
     for pkt in rows:
         task = pkt.get("task") or "-"
+        dispatch = pkt.get("dispatch") if isinstance(pkt.get("dispatch"), dict) else {}
         print(
             f"  {pkt.get('id'):<46} {pkt.get('status', '-'):<8} "
             f"{pkt.get('from_agent', '-')} -> {pkt.get('to_agent', '-')} "
-            f"task={task} model={pkt.get('to_model') or '-'} session={pkt.get('to_session') or '-'} "
-            f"box={pkt.get('_box')}"
+            f"task={task} model={pkt.get('to_model') or '-'} "
+            f"reasoning={pkt.get('to_reasoning_effort') or '-'} "
+            f"session={pkt.get('to_session') or '-'} "
+            f"dispatch={dispatch.get('status') or '-'} box={pkt.get('_box')}"
         )
     return 0
 
@@ -1294,11 +1615,18 @@ def _guidance_show(root: Path, args: argparse.Namespace) -> int:
         print(f"Status: {pkt.get('status')}")
         print(f"Route: {pkt.get('from_agent')} -> {pkt.get('to_agent')}")
         print(f"Target Model: {pkt.get('to_model') or '-'}")
+        print(f"Target Reasoning Effort: {pkt.get('to_reasoning_effort') or '-'}")
         print(f"Target Session: {pkt.get('to_session') or '-'}")
         print(f"Task: {pkt.get('task') or '-'}")
         print(f"Created: {pkt.get('created_at')}")
         print(f"Summary: {pkt.get('summary')}")
         print(f"Artifacts: {', '.join(pkt.get('artifacts') or []) or '-'}")
+        dispatch = pkt.get("dispatch") if isinstance(pkt.get("dispatch"), dict) else {}
+        if dispatch:
+            print(
+                f"Dispatch: {dispatch.get('status') or '-'} via {dispatch.get('transport') or '-'} "
+                f"(attempts={dispatch.get('attempts') or 0}, exit={dispatch.get('exit_code')})"
+            )
         print(f"Path: {path.relative_to(root)}")
         print("\nPlan:\n" + ((pkt.get("plan") or "").strip() or "-"))
     return 0
@@ -1347,6 +1675,8 @@ def cmd_guidance(args: argparse.Namespace) -> int:
         return _guidance_show(root, args)
     if args.guidance_action == "ack":
         return _guidance_ack(root, args)
+    if args.guidance_action == "dispatch":
+        return _guidance_dispatch(root, args)
     print("agentctl: unknown guidance action", file=sys.stderr)
     return 2
 
@@ -2746,6 +3076,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--deps", default="")
     sp.add_argument("--session-id")
     sp.add_argument("--model")
+    sp.add_argument("--reasoning-effort")
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_work)
 
@@ -2755,6 +3086,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--scope")
     sp.add_argument("--session-id")
     sp.add_argument("--model")
+    sp.add_argument("--reasoning-effort")
     sp.add_argument("--force", action="store_true")
     sp.set_defaults(func=cmd_start)
 
@@ -2763,6 +3095,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--agent")
     sp.add_argument("--session-id")
     sp.add_argument("--model")
+    sp.add_argument("--reasoning-effort")
     sp.set_defaults(func=cmd_focus)
 
     sp = sub.add_parser("progress")
@@ -2821,6 +3154,7 @@ def build_parser() -> argparse.ArgumentParser:
     aa.add_argument("--scope")
     aa.add_argument("--tools")
     aa.add_argument("--model")
+    aa.add_argument("--reasoning-effort")
     aa.add_argument("--session-id")
     al = asub.add_parser("list")
     al.add_argument("--json", action="store_true")
@@ -2853,9 +3187,11 @@ def build_parser() -> argparse.ArgumentParser:
     gc = gsub.add_parser("create")
     gc.add_argument("--from-agent", default="supervisor")
     gc.add_argument("--from-model")
+    gc.add_argument("--from-reasoning-effort")
     gc.add_argument("--from-session")
     gc.add_argument("--to-agent", required=True)
     gc.add_argument("--to-model")
+    gc.add_argument("--to-reasoning-effort")
     gc.add_argument("--to-session")
     gc.add_argument("--task")
     gc.add_argument("--summary", required=True)
@@ -2863,6 +3199,12 @@ def build_parser() -> argparse.ArgumentParser:
     gc.add_argument("--plan-file")
     gc.add_argument("--artifact", help="Comma-separated artifact paths")
     gc.add_argument("--note")
+    gc.add_argument("--dispatch", action="store_true",
+                    help="Immediately dispatch the packet to the target Codex session")
+    gc.add_argument("--transport", choices=["codex-cli"], default="codex-cli")
+    gc.add_argument("--timeout", type=int, default=GUIDANCE_DISPATCH_TIMEOUT_DEFAULT)
+    gc.add_argument("--dry-run", action="store_true",
+                    help="Print the dispatch command without starting Codex")
     gl = gsub.add_parser("list")
     gl.add_argument("--agent")
     gl.add_argument("--model")
@@ -2878,6 +3220,15 @@ def build_parser() -> argparse.ArgumentParser:
     ga.add_argument("--by")
     ga.add_argument("--task")
     ga.add_argument("--note")
+    gd = gsub.add_parser("dispatch")
+    gd.add_argument("packet")
+    gd.add_argument("--transport", choices=["codex-cli"], default="codex-cli")
+    gd.add_argument("--session-id", help="Override the packet target session")
+    gd.add_argument("--model", help="Override the packet target model")
+    gd.add_argument("--reasoning-effort", help="Override the target model reasoning effort")
+    gd.add_argument("--timeout", type=int, default=GUIDANCE_DISPATCH_TIMEOUT_DEFAULT)
+    gd.add_argument("--dry-run", action="store_true",
+                    help="Print the dispatch command without starting Codex")
     sp.set_defaults(func=cmd_guidance)
 
     sp = sub.add_parser("loop")

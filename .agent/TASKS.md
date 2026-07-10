@@ -31,3 +31,5 @@
 | T-018 | done | codex | `.agent/` | [.agent/tasks/T-018.md](tasks/T-018.md) | mark supervisor guidance PR ready |
 | T-019 | done | codex | `.agent/` | [.agent/tasks/T-019.md](tasks/T-019.md) | post-merge validate guidance workflow |
 | T-020 | done | codex | `.agent/` | [.agent/tasks/T-020.md](tasks/T-020.md) | validate github install link |
+| T-021 | done | codex | `tools/, tests/, templates/project/, README.md, docs/, .agent/` | [.agent/tasks/T-021.md](tasks/T-021.md) | add codex session dispatch transport |
+| T-022 | done | codex | `.agent/` | [.agent/tasks/T-022.md](tasks/T-022.md) | finalize dispatch release metadata |

@@ -64,3 +64,8 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-07 02:14:00 [T-018] Marked PR #1 ready for review after confirming mergeable state and successful agent-workflow-check CI runs.
 - 2026-07-07 16:54:24 [T-019] Post-merge validation passed: doctor OK, unittest discovery passed with 9 tests, manual check OK, diff check OK, and fresh-install guidance smoke passed.
 - 2026-07-07 18:48:29 [T-020] GitHub clone/install smoke passed from https://github.com/asimfish/super_project.git main: init, doctor, work, guidance focus, pending check block, ack, and manual check after ack all behaved correctly.
+- 2026-07-10 13:19:09 [T-021] Implemented bounded codex-cli guidance dispatch with dry-run, persisted receipts, retry handling, and six regression tests; synchronized supervisor workflow documentation.
+- 2026-07-10 13:32:53 [T-021] Resolved review rejection by separating Codex model and reasoning effort across profiles, guidance packets, dispatch commands, docs, and regression tests.
+- 2026-07-10 13:36:51 [T-021] Added timeout receipts, source-session recursion protection, safe reasoning identifier validation, and two dispatch regression tests after self-review.
+- 2026-07-10 13:40:45 [T-021] Hardened read receipts so workflow entry, plans, agent registry, rules, and checkpoint policy changes block note and finish until explicit refresh; added fresh-install regression coverage.
+- 2026-07-10 13:43:13 [T-022] Cleared completed T-021 from Agent Allocation and recorded that M2 still requires real-session dogfood before maturity is complete.

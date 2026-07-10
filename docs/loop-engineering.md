@@ -46,18 +46,22 @@ python3 tools/agentctl.py loop list
 python3 tools/agentctl.py loop show daily-plan-triage
 python3 tools/agentctl.py loop run daily-plan-triage --once
 python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
+python3 tools/agentctl.py loop cycle --checkpoint experiment-check --cycles 3 --interval 300
 ```
 
-Only one-shot runs are supported in this phase. Continuous behavior comes from
-workflow checkpoints, not from a daemon:
+One-shot runs and explicitly bounded cycles are supported. `loop cycle` requires
+a finite `--cycles` count (maximum 100), honors the checkpoint policy, and stops
+on failure unless `--continue-on-failure` is explicit. There is still no
+background daemon; normal continuation comes from workflow checkpoints:
 
 - `work-start`: runs `daily-plan-triage` after `agentctl work` starts or resumes a task.
 - `pre-finish`: runs strict `doc-hygiene` before a task can move to review.
 - `post-finish`: writes a final non-strict `doc-hygiene` memory report after review.
 - `experiment-check`: runs `experiment-monitor` when an experiment task asks for it.
 
-Cron, worktree pools, connector loops, and automatic experiment launches are
-intentionally out of scope until checkpoint loops are proven in real projects.
+Built-in cron management, worktree pools, connector loops, and automatic
+experiment launches are intentionally out of scope until checkpoint loops are
+proven in real projects.
 
 Each run writes:
 

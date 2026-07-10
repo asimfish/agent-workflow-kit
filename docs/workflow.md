@@ -62,6 +62,43 @@ T-199 supervisor scope=data/manifest + validation report
 
 Each worker writes only its scope. The supervisor owns manifest merge and final validation.
 
+## Supervisor To Codex Dispatch
+
+When the supervisor has a Codex session ID, one bounded producer-reviewer turn
+can be started directly:
+
+```bash
+agentctl guidance create \
+  --from-agent fable \
+  --to-agent codex-gpt55xhigh \
+  --to-model gpt-5.5 \
+  --to-reasoning-effort xhigh \
+  --to-session <session-id> \
+  --task T-101 \
+  --summary "implement the next verified phase" \
+  --plan-file .agent/plans/T-101.md \
+  --dispatch
+```
+
+This closes the loop links as follows:
+
+- Trigger: the supervisor creates a task-scoped guidance packet with
+  `--dispatch`.
+- Execute: `codex exec resume <SESSION_ID>` sends the plan to the named worker
+  session without invoking a shell.
+- Check: the worker runs task verification and `agentctl finish`; the dispatch
+  process also records its exit code.
+- Feedback: the worker acknowledges incorporated guidance, or a failed transport
+  leaves the packet ready for `guidance dispatch <packet-id>` retry.
+- Memory: task docs and packet metadata are tracked; raw dispatch output stays in
+  `.agent/state/dispatch/`.
+- Next: the supervisor reviews evidence and either sends one more bounded packet,
+  gates the task, or stops for a human decision.
+
+The transport does not weaken target-session permissions and does not create a
+background daemon. A worker session should use an isolated worktree when another
+agent is actively changing the same repository checkout.
+
 ## Low-Friction Agent Loop
 
 Humans do not need to send the loop. They can say:
