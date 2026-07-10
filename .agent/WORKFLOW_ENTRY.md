@@ -76,6 +76,24 @@ assigned, for example `codex`, `claude`, `cursor`, or `agent`.
   python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
   ```
 
+- Before starting a multi-cycle checkpoint, inspect durable runtime state. Resume
+  only an interruption marked safe; stop it explicitly when the plan changed:
+
+  ```bash
+  python3 tools/agentctl.py loop status
+  python3 tools/agentctl.py loop cycle --checkpoint <name> --cycles <n>
+  python3 tools/agentctl.py loop resume
+  python3 tools/agentctl.py loop stop --reason "<why this runtime is abandoned>"
+  ```
+
+  If status says an in-flight cycle or one-shot execution has an unknown result,
+  do not resume or replay it.
+  Wait for the recorded command to exit, inspect its side effects, then reconcile
+  it with `loop stop --ack-inflight --reason "<what was verified>"`.
+
+  The runner is bounded and cooperative. Never bypass an escalated follow-up or
+  start a competing runtime to hide an interrupted one.
+
 ## Supervisor Dispatch
 
 When the human names this agent as a supervisor and provides a Codex session ID:

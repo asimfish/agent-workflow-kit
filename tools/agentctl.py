@@ -15,7 +15,7 @@ Commands:
   gate       approve/reject a task in review (-> done / blocked)
   guidance   create/list/show/ack/dispatch supervisor guidance packets
   handoff    create/list/show/close cross-agent task packets
-  loop       list/show/run/cycle project loops; auto-run checkpoint loops
+  loop       run/status/resume/stop bounded project loops and checkpoints
   refresh    re-record doc hashes after plan/rules/task docs changed
   board      print the task board (human or --json)
   task       create / show task documents and board entries
@@ -31,8 +31,11 @@ import argparse
 import datetime as _dt
 import hashlib
 import json
+import math
 import os
+import platform
 import re
+import signal
 import shlex
 import shutil
 import string
@@ -73,6 +76,11 @@ LOOP_COMMAND_TIMEOUT_DEFAULT = 120
 LOOP_COMMAND_TIMEOUT_MAX = 3600
 LOOP_COMMAND_OUTPUT_CAP_DEFAULT = 2000
 LOOP_ESCALATE_AFTER_DEFAULT = 3
+LOOP_CYCLE_MAX = 100
+LOOP_CYCLE_HISTORY_LIMIT = 20
+LOOP_CYCLE_EVENT_LIMIT = 100
+LOOP_COMMAND_LAUNCH_TIMEOUT = 15.0
+_CYCLE_ANY_OWNER = object()
 GUIDANCE_DISPATCH_TIMEOUT_DEFAULT = 7200
 GUIDANCE_DISPATCH_TIMEOUT_MAX = 86400
 GUIDANCE_DISPATCH_PROMPT_MAX = 24000
@@ -164,7 +172,20 @@ def _load_json(path: Path, default):
 
 
 def _save_json(path: Path, data) -> None:
-    _write(path, json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    """Replace a JSON snapshot atomically so concurrent readers never see a partial file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.parent / f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    try:
+        with temp.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _git(root: Path, *args: str) -> str:
@@ -316,9 +337,41 @@ def _lock_path(root: Path, task: str) -> Path:
 
 def _pid_alive(pid) -> bool:
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            try:
+                kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                kernel32.OpenProcess.restype = wintypes.HANDLE
+                kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+                kernel32.WaitForSingleObject.restype = wintypes.DWORD
+                kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+                kernel32.CloseHandle.restype = wintypes.BOOL
+            except (AttributeError, TypeError):
+                pass
+            synchronize = 0x00100000
+            wait_timeout = 0x00000102
+            handle = kernel32.OpenProcess(synchronize, False, pid)
+            if not handle:
+                return False
+            try:
+                return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+            finally:
+                kernel32.CloseHandle(handle)
+        except (AttributeError, OSError):
+            return False
+    try:
+        os.kill(pid, 0)
         return True
-    except (OSError, ValueError, TypeError):
+    except OSError:
         return False
 
 
@@ -2119,34 +2172,67 @@ def _checkpoint_recent(state: dict, checkpoint: str, debounce_minutes: int) -> b
 
 
 def _acquire_lock_file(path: Path, timeout_seconds: float = 10.0, stale_seconds: float = 300.0) -> int:
+    """Acquire a process-scoped advisory lock; the OS releases it after crashes."""
+    del stale_seconds
     path.parent.mkdir(parents=True, exist_ok=True)
     deadline = time.monotonic() + timeout_seconds
-    payload = f"pid={os.getpid()} acquired_at={_now()}\n".encode("utf-8")
-    while True:
-        try:
-            fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.write(fd, payload)
-            return fd
-        except FileExistsError:
-            try:
-                if time.time() - path.stat().st_mtime > stale_seconds:
-                    path.unlink()
-                    continue
-            except FileNotFoundError:
-                continue
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"timed out waiting for lock {path}")
-            time.sleep(0.05)
+    payload = (
+        f"pid={os.getpid()} host={_cycle_host_id()} acquired_at={_now()}\n"
+    ).encode("utf-8")
+    fd = os.open(str(path), os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        if os.name == "posix":
+            import fcntl
+
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"timed out waiting for lock {path}")
+                    time.sleep(0.05)
+        else:
+            import msvcrt
+
+            if path.stat().st_size == 0:
+                os.write(fd, b"\0")
+            while True:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError:
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError(f"timed out waiting for lock {path}")
+                    time.sleep(0.05)
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, payload)
+        os.fsync(fd)
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise
 
 
 def _release_lock_file(path: Path, fd: int) -> None:
+    del path
     try:
-        os.close(fd)
+        if os.name == "posix":
+            import fcntl
+
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        else:
+            import msvcrt
+
+            os.lseek(fd, 0, os.SEEK_SET)
+            try:
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            except OSError:
+                pass
     finally:
-        try:
-            path.unlink()
-        except FileNotFoundError:
-            pass
+        os.close(fd)
 
 
 def _update_loop_state(root: Path, updater) -> dict:
@@ -2239,6 +2325,32 @@ def _loop_daily_plan_triage(root: Path) -> dict:
         next_steps.append(
             f"Resolve follow-up {pkt.get('id')}: fix the reported checks, then re-run "
             f"'agentctl loop auto --checkpoint {pkt.get('checkpoint')} --once --force' to auto-close it."
+        )
+    runtime = _cycle_runtime(root)
+    if runtime and runtime.get("status") == "interrupted":
+        feedback.append(
+            f"loop runtime {runtime.get('id')} was interrupted at "
+            f"{runtime.get('completed_cycles', 0)}/{runtime.get('requested_cycles', 0)} cycles"
+        )
+        if runtime.get("resume_safe") is False:
+            next_steps.append(
+                "Inspect the in-flight command and its side effects; after it exits, reconcile with "
+                "'agentctl loop stop --ack-inflight --reason <what-was-verified>'."
+            )
+        else:
+            next_steps.append(
+                "Inspect 'agentctl loop status', then use 'agentctl loop resume' or "
+                "'agentctl loop stop --reason <reason>' before starting a replacement cycle."
+            )
+    elif runtime and runtime.get("status") in {"running", "stop_requested"}:
+        feedback.append(
+            f"loop runtime {runtime.get('id')} is {runtime.get('status')} at "
+            f"{runtime.get('completed_cycles', 0)}/{runtime.get('requested_cycles', 0)} cycles"
+        )
+    elif runtime and runtime.get("status") in {"failed", "blocked"}:
+        feedback.append(
+            f"loop runtime {runtime.get('id')} ended {runtime.get('status')}: "
+            f"{runtime.get('stop_reason') or 'inspect its reports'}"
         )
     if checks:
         next_steps.append("Resolve plan/task/board inconsistencies before relying on automation.")
@@ -2365,21 +2477,243 @@ def _cap_output(text: str, limit: int) -> str:
     return text[:limit] + f"... (output capped at {limit} chars)"
 
 
+_LOOP_COMMAND_GATE_WRAPPER = r"""
+import pathlib
+import subprocess
+import sys
+import time
+
+gate = pathlib.Path(sys.argv[1])
+token = sys.argv[2]
+command = sys.argv[3]
+deadline = time.monotonic() + float(sys.argv[4])
+while time.monotonic() < deadline:
+    try:
+        released = gate.read_text(encoding="utf-8") == token
+    except (FileNotFoundError, OSError, UnicodeError):
+        released = False
+    if released:
+        try:
+            gate.unlink()
+        except FileNotFoundError:
+            pass
+        completed = subprocess.run(
+            command,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        sys.stdout.buffer.write(completed.stdout or b"")
+        sys.stderr.buffer.write(completed.stderr or b"")
+        raise SystemExit(completed.returncode)
+    time.sleep(0.02)
+raise SystemExit(125)
+"""
+
+
+def _terminate_loop_process(proc: subprocess.Popen) -> None:
+    if os.name == "posix":
+        try:
+            # The session leader may have exited while descendants still hold pipes.
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            if proc.poll() is None:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+        return
+    try:
+        if proc.poll() is None:
+            subprocess.run(
+                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+        if proc.poll() is None:
+            proc.kill()
+    except (OSError, subprocess.SubprocessError):
+        try:
+            if proc.poll() is None:
+                proc.kill()
+        except OSError:
+            pass
+
+
 def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
     """Execute the commands a custom loop contract declares; exit codes decide status."""
     checks = []
     feedback = []
     failed = 0
+    stopped_early = False
     for cmd in spec["commands"]:
+        runtime = _cycle_runtime(root, normalize=False)
+        execution_lease = _loop_execution_lease(root, normalize=False)
+        execution_token = (
+            str(execution_lease.get("token"))
+            if execution_lease
+            and execution_lease.get("status") == "running"
+            and execution_lease.get("owner_pid") == os.getpid()
+            else ""
+        )
+        if not execution_token:
+            return {
+                "status": "failed",
+                "read": [str(_loop_path(root, loop_id).relative_to(root))],
+                "actions": ["Refused to start a declared command without an execution lease."],
+                "checks": ["missing current-process loop execution lease"],
+                "feedback": ["Re-enter through agentctl loop run, auto, or cycle."],
+                "memory": ["No command was launched."],
+                "next": ["Stop; repair loop runtime ownership before retrying."],
+            }
+        tracking = bool(
+            runtime
+            and runtime.get("status") in {"running", "stop_requested"}
+            and runtime.get("owner_pid") == os.getpid()
+            and runtime.get("inflight_cycle")
+        )
+        runtime_id = str(runtime.get("id")) if tracking else ""
+        token = hashlib.sha256(
+            f"{os.getpid()}:{time.time_ns()}:{loop_id}:{cmd}".encode("utf-8")
+        ).hexdigest()[:20]
+        launch_deadline = time.time() + LOOP_COMMAND_LAUNCH_TIMEOUT
+        if tracking and runtime.get("status") == "stop_requested":
+            checks.append(f"$ {cmd} -> skipped because a cooperative stop was requested")
+            stopped_early = True
+            break
+        command_record = {
+            "token": token,
+            "loop": loop_id,
+            "command_sha256": hashlib.sha256(cmd.encode("utf-8")).hexdigest()[:16],
+            "pid": None,
+            "process_group": None,
+            "host": _cycle_host_id(),
+            "started_at": _now(),
+            "launch_state": "pending",
+            "launch_deadline_epoch": launch_deadline,
+        }
+
+        def mark_execution_pending(lease: dict) -> None:
+            lease["active_command"] = dict(command_record)
+
+        if not _loop_execution_command_update(root, execution_token, mark_execution_pending):
+            raise RuntimeError("loop execution lease changed before command launch")
+
+        if tracking:
+            def mark_pending(current: dict) -> None:
+                current["active_command"] = dict(command_record)
+
+            claimed = _cycle_runtime_update(
+                root,
+                runtime_id,
+                mark_pending,
+                expected_statuses={"running"},
+                expected_owner_pid=os.getpid(),
+            )
+            if not claimed:
+                checks.append(f"$ {cmd} -> skipped because runtime ownership changed")
+                stopped_early = True
+                break
+
+        proc = None
+        gate_path = root / WORKFLOW_DIR / "tmp" / "loop-launch" / f"{token}.gate"
         try:
-            proc = subprocess.run(cmd, shell=True, cwd=root, capture_output=True,
-                                  text=True, timeout=spec["timeout"])
+            popen_args = {
+                "cwd": root,
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.PIPE,
+                "text": True,
+            }
+            if os.name == "posix":
+                popen_args["start_new_session"] = True
+            elif os.name == "nt":
+                popen_args["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            proc = subprocess.Popen(
+                [
+                    sys.executable,
+                    "-c",
+                    _LOOP_COMMAND_GATE_WRAPPER,
+                    str(gate_path),
+                    token,
+                    cmd,
+                    str(LOOP_COMMAND_LAUNCH_TIMEOUT),
+                ],
+                **popen_args,
+            )
+            if tracking:
+                def mark_pid(current: dict) -> None:
+                    active = current.get("active_command") or {}
+                    if active.get("token") == token:
+                        active["pid"] = proc.pid
+                        active["process_group"] = proc.pid if os.name == "posix" else None
+                        active["launch_state"] = "armed"
+
+                recorded = _cycle_runtime_update(
+                    root,
+                    runtime_id,
+                    mark_pid,
+                    expected_statuses={"running", "stop_requested"},
+                    expected_owner_pid=os.getpid(),
+                )
+                if not recorded:
+                    raise RuntimeError("runtime ownership changed before command launch was recorded")
+
+            def mark_execution_pid(lease: dict) -> None:
+                active = lease.get("active_command") or {}
+                if active.get("token") == token:
+                    active["pid"] = proc.pid
+                    active["process_group"] = proc.pid if os.name == "posix" else None
+                    active["launch_state"] = "armed"
+
+            if not _loop_execution_command_update(root, execution_token, mark_execution_pid):
+                raise RuntimeError("loop execution lease changed before child identity was recorded")
+            _write(gate_path, token)
+            stdout, stderr = proc.communicate(timeout=spec["timeout"])
             code = proc.returncode
-            output = (proc.stdout or "") + (proc.stderr or "")
+            output = (stdout or "") + (stderr or "")
         except subprocess.TimeoutExpired as exc:
+            _terminate_loop_process(proc)
+            stdout, stderr = proc.communicate()
             code = None
             output = ((exc.stdout or "") if isinstance(exc.stdout, str) else "") + \
-                     ((exc.stderr or "") if isinstance(exc.stderr, str) else "")
+                     ((exc.stderr or "") if isinstance(exc.stderr, str) else "") + \
+                     (stdout or "") + (stderr or "")
+        except BaseException:
+            if proc is not None:
+                _terminate_loop_process(proc)
+                try:
+                    proc.communicate(timeout=5)
+                except Exception:
+                    pass
+            raise
+        finally:
+            try:
+                gate_path.unlink()
+            except FileNotFoundError:
+                pass
+
+        def clear_execution_active(lease: dict) -> None:
+            active = lease.get("active_command") or {}
+            if active.get("token") == token:
+                lease["active_command"] = None
+
+        if not _loop_execution_command_update(root, execution_token, clear_execution_active):
+            raise RuntimeError("loop execution lease changed before command result was recorded")
+        if tracking:
+            def clear_active(current: dict) -> None:
+                active = current.get("active_command") or {}
+                if active.get("token") == token:
+                    current["active_command"] = None
+
+            _cycle_runtime_update(
+                root,
+                runtime_id,
+                clear_active,
+                expected_statuses={"running", "stop_requested"},
+                expected_owner_pid=os.getpid(),
+            )
         if code == 0:
             checks.append(f"$ {cmd} -> exit 0")
             continue
@@ -2391,7 +2725,7 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
         capped = _cap_output(output, spec["max_output"])
         if capped:
             feedback.append(f"output of failing '$ {cmd}': {capped}")
-    status = "failed" if failed else "success"
+    status = "failed" if failed else ("no-op" if stopped_early else "success")
     loop_rel = str(_loop_path(root, loop_id).relative_to(root))
     return {
         "status": status,
@@ -2399,7 +2733,8 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
         "actions": [f"Executed {len(spec['commands'])} declared check command(s) from the loop contract "
                     f"(timeout {spec['timeout']}s, output cap {spec['max_output']} chars)."],
         "checks": checks,
-        "feedback": feedback or ["All declared commands passed."],
+        "feedback": feedback or (["Execution stopped before the next command."] if stopped_early
+                                  else ["All declared commands passed."]),
         "memory": ["Wrote this loop run report.", "Updated .agent/loops/state.json."],
         "next": ["No action needed before the next cycle." if not failed else
                  f"Fix the {failed} failing command(s), then re-run 'agentctl loop run {loop_id} --once'."],
@@ -2542,7 +2877,7 @@ def _loop_show(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
-def _loop_run(root: Path, args: argparse.Namespace) -> int:
+def _loop_run_unlocked(root: Path, args: argparse.Namespace) -> int:
     if not args.once:
         print("agentctl: loop run currently requires --once; scheduled loops are intentionally not enabled yet.", file=sys.stderr)
         return 2
@@ -2559,6 +2894,16 @@ def _loop_run(root: Path, args: argparse.Namespace) -> int:
     return 0 if result.get("status") not in {"failed", "blocked"} else 1
 
 
+def _loop_run(root: Path, args: argparse.Namespace) -> int:
+    token, error = _loop_execution_claim(root, f"loop run {args.id}")
+    if error:
+        print(f"agentctl: {error}", file=sys.stderr)
+        return 2
+    result = _loop_run_unlocked(root, args)
+    _loop_execution_release(root, token)
+    return result
+
+
 def _checkpoint_status(statuses: list[str]) -> str:
     if not statuses:
         return "no-op"
@@ -2571,9 +2916,9 @@ def _checkpoint_status(statuses: list[str]) -> str:
     return "success"
 
 
-def _run_loop_checkpoint(root: Path, checkpoint: str, *, once: bool, trigger: str,
-                         strict: bool | None = None, force: bool = False,
-                         quiet: bool = False) -> int:
+def _run_loop_checkpoint_unlocked(root: Path, checkpoint: str, *, once: bool, trigger: str,
+                                  strict: bool | None = None, force: bool = False,
+                                  quiet: bool = False) -> int:
     if not once:
         print("agentctl: loop auto currently requires --once; scheduled loops are not enabled.", file=sys.stderr)
         return 2
@@ -2653,6 +2998,29 @@ def _run_loop_checkpoint(root: Path, checkpoint: str, *, once: bool, trigger: st
     return 0
 
 
+def _run_loop_checkpoint(root: Path, checkpoint: str, *, once: bool, trigger: str,
+                         strict: bool | None = None, force: bool = False,
+                         quiet: bool = False,
+                         cycle_runtime_id: str | None = None) -> int:
+    token, error = _loop_execution_claim(
+        root, f"checkpoint {checkpoint}", cycle_runtime_id=cycle_runtime_id)
+    if error:
+        if not quiet:
+            print(f"agentctl: {error}", file=sys.stderr)
+        return 2
+    result = _run_loop_checkpoint_unlocked(
+        root,
+        checkpoint,
+        once=once,
+        trigger=trigger,
+        strict=strict,
+        force=force,
+        quiet=quiet,
+    )
+    _loop_execution_release(root, token)
+    return result
+
+
 def _loop_auto(root: Path, args: argparse.Namespace) -> int:
     return _run_loop_checkpoint(
         root,
@@ -2665,56 +3033,844 @@ def _loop_auto(root: Path, args: argparse.Namespace) -> int:
     )
 
 
-def _loop_cycle(root: Path, args: argparse.Namespace) -> int:
-    try:
-        cycles = int(args.cycles)
-    except (TypeError, ValueError):
-        print("agentctl: loop cycle requires --cycles to be a positive integer", file=sys.stderr)
-        return 2
-    if cycles < 1:
-        print("agentctl: loop cycle requires --cycles >= 1", file=sys.stderr)
-        return 2
-    if cycles > 100:
-        print("agentctl: loop cycle refuses more than 100 cycles in one command", file=sys.stderr)
-        return 2
-    try:
-        interval = float(args.interval or 0)
-    except (TypeError, ValueError):
-        print("agentctl: --interval must be a non-negative number of seconds", file=sys.stderr)
-        return 2
-    if interval < 0:
-        print("agentctl: --interval must be a non-negative number of seconds", file=sys.stderr)
-        return 2
-    failures = 0
-    first_rc = 0
-    for i in range(1, cycles + 1):
-        trigger = f"{args.trigger or 'cycle'}:{i}/{cycles}"
-        print(f"agentctl: loop cycle {i}/{cycles} checkpoint={args.checkpoint}")
-        rc = _run_loop_checkpoint(
-            root,
-            args.checkpoint,
-            once=True,
-            trigger=trigger,
-            strict=True if args.strict else None,
-            force=args.force,
-            quiet=False,
+def _cycle_event(runtime: dict, event: str, **details) -> None:
+    item = {"at": _now(), "event": event}
+    item.update({key: value for key, value in details.items() if value is not None})
+    events = runtime.setdefault("events", [])
+    events.append(item)
+    if len(events) > LOOP_CYCLE_EVENT_LIMIT:
+        del events[:-LOOP_CYCLE_EVENT_LIMIT]
+
+
+def _cycle_runtime_update(root: Path, runtime_id: str, updater, *,
+                          expected_statuses: set[str] | None = None,
+                          expected_owner_pid=_CYCLE_ANY_OWNER) -> dict | None:
+    """Compare and update one runtime under the state lock."""
+    found = {"runtime": None}
+
+    def update(state: dict) -> None:
+        runtime = state.get("cycle_runtime")
+        if not isinstance(runtime, dict) or runtime.get("id") != runtime_id:
+            return
+        if expected_statuses is not None and runtime.get("status") not in expected_statuses:
+            return
+        if expected_owner_pid is not _CYCLE_ANY_OWNER and runtime.get("owner_pid") != expected_owner_pid:
+            return
+        updater(runtime)
+        runtime["updated_at"] = _now()
+        found["runtime"] = dict(runtime)
+
+    _update_loop_state(root, update)
+    return found["runtime"]
+
+
+def _cycle_host_id() -> str:
+    node = platform.node()
+    return hashlib.sha256(node.encode("utf-8")).hexdigest()[:16] if node else ""
+
+
+def _cycle_owner_alive(runtime: dict) -> bool:
+    owner_host = runtime.get("owner_host") or ""
+    if owner_host and owner_host != _cycle_host_id():
+        return True
+    return _pid_alive(runtime.get("owner_pid"))
+
+
+def _active_command_alive(active) -> bool:
+    """Conservatively report whether a persisted command may still be running."""
+    if not isinstance(active, dict):
+        return False
+    command_host = active.get("host") or ""
+    if command_host and command_host != _cycle_host_id():
+        return True
+    if active.get("launch_state") == "pending" and not active.get("pid"):
+        try:
+            deadline = float(active.get("launch_deadline_epoch"))
+        except (TypeError, ValueError):
+            return True
+        return not math.isfinite(deadline) or time.time() <= deadline + 1.0
+    process_group = active.get("process_group")
+    if os.name == "posix" and process_group:
+        try:
+            os.killpg(int(process_group), 0)
+            return True
+        except (OSError, ValueError, TypeError):
+            pass
+    return _pid_alive(active.get("pid"))
+
+
+def _cycle_active_command_alive(runtime: dict) -> bool:
+    return _active_command_alive(runtime.get("active_command"))
+
+
+def _cycle_terminal_status(runtime: dict) -> tuple[str | None, str | None]:
+    failures = int(runtime.get("failures") or 0)
+    max_failures = int(runtime.get("max_failures") or 1)
+    completed = int(runtime.get("completed_cycles") or 0)
+    requested = int(runtime.get("requested_cycles") or 0)
+    if failures and failures >= max_failures:
+        return "failed", f"failure budget exhausted ({failures}/{max_failures})"
+    if requested > 0 and completed >= requested:
+        return ("completed_with_failures" if failures else "completed"), None
+    return None, None
+
+
+def _cycle_set_terminal(runtime: dict, status: str, reason: str | None = None) -> None:
+    runtime["status"] = status
+    runtime["stop_reason"] = reason
+    runtime["owner_pid"] = None
+    runtime["finished_at"] = _now()
+    _cycle_event(runtime, status, reason=reason)
+
+
+def _cycle_recover_orphan(runtime: dict) -> None:
+    """Recover a dead owner's persisted terminal predicates before declaring interruption."""
+    if runtime.get("status") not in {"running", "stop_requested"} or _cycle_owner_alive(runtime):
+        return
+    inflight = runtime.get("inflight_cycle")
+    if inflight or runtime.get("active_command"):
+        cycle = inflight.get("cycle") if isinstance(inflight, dict) else None
+        _cycle_set_terminal(
+            runtime,
+            "interrupted",
+            f"owner process exited while cycle {cycle or 'unknown'} was in flight; "
+            "command completion is unknown",
         )
-        if rc:
-            failures += 1
-            if not first_rc:
-                first_rc = rc
-            if not args.continue_on_failure:
-                print(
-                    "agentctl: loop cycle stopped after failure; "
-                    "use --continue-on-failure to keep cycling and accumulate feedback."
+        runtime["resume_safe"] = False
+        return
+    terminal, reason = _cycle_terminal_status(runtime)
+    if terminal == "failed":
+        _cycle_set_terminal(runtime, terminal, reason)
+    elif runtime.get("status") == "stop_requested":
+        _cycle_set_terminal(
+            runtime, "stopped", runtime.get("stop_reason") or "stop requested; owner process exited")
+    elif terminal:
+        _cycle_set_terminal(runtime, terminal, reason)
+    else:
+        _cycle_set_terminal(runtime, "interrupted", "owner process is no longer running")
+        runtime["resume_safe"] = True
+
+
+def _cycle_runtime(root: Path, *, normalize: bool = True) -> dict | None:
+    state = _load_json(_loop_state_path(root), {})
+    runtime = state.get("cycle_runtime") if isinstance(state, dict) else None
+    if not isinstance(runtime, dict):
+        return None
+    if not normalize or runtime.get("status") not in {"running", "stop_requested"}:
+        return runtime
+    if _cycle_owner_alive(runtime):
+        return runtime
+
+    def mark_orphaned(current: dict) -> None:
+        _cycle_recover_orphan(current)
+
+    updated = _cycle_runtime_update(
+        root,
+        str(runtime.get("id")),
+        mark_orphaned,
+        expected_statuses={str(runtime.get("status"))},
+        expected_owner_pid=runtime.get("owner_pid"),
+    )
+    return updated or _cycle_runtime(root, normalize=False)
+
+
+def _execution_owner_alive(record: dict) -> bool:
+    owner_host = record.get("owner_host") or ""
+    if owner_host and owner_host != _cycle_host_id():
+        return True
+    return _pid_alive(record.get("owner_pid"))
+
+
+def _recover_execution_lease(lease: dict) -> None:
+    lease.setdefault("status", "running")
+    if lease.get("status") == "running" and not _execution_owner_alive(lease):
+        lease["status"] = "interrupted"
+        lease["owner_pid"] = None
+        lease["finished_at"] = _now()
+        lease["stop_reason"] = "one-shot loop owner exited before its result was committed"
+
+
+def _loop_execution_lease(root: Path, *, normalize: bool = True) -> dict | None:
+    state = _load_json(_loop_state_path(root), {})
+    lease = state.get("execution_lease") if isinstance(state, dict) else None
+    if not isinstance(lease, dict):
+        return None
+    if not normalize or lease.get("status", "running") != "running" or _execution_owner_alive(lease):
+        return lease
+    token = lease.get("token")
+    found = {"lease": None}
+
+    def recover(state: dict) -> None:
+        current = state.get("execution_lease")
+        if not isinstance(current, dict) or current.get("token") != token:
+            return
+        _recover_execution_lease(current)
+        found["lease"] = dict(current)
+
+    _update_loop_state(root, recover)
+    return found["lease"] or _loop_execution_lease(root, normalize=False)
+
+
+def _loop_execution_claim(root: Path, operation: str, *,
+                          cycle_runtime_id: str | None = None) -> tuple[str | None, str | None]:
+    """Serialize one-shot loop execution with durable cycle ownership."""
+    token = hashlib.sha256(
+        f"{os.getpid()}:{time.time_ns()}:{operation}".encode("utf-8")
+    ).hexdigest()[:20]
+    blocked = {"message": None}
+
+    def claim(state: dict) -> None:
+        runtime = state.get("cycle_runtime")
+        if isinstance(runtime, dict) and runtime.get("status") in {"running", "stop_requested"}:
+            _cycle_recover_orphan(runtime)
+        if isinstance(runtime, dict) and runtime.get("status") in {
+            "running", "stop_requested", "interrupted"
+        }:
+            same_owner = (
+                cycle_runtime_id
+                and runtime.get("id") == cycle_runtime_id
+                and runtime.get("owner_pid") == os.getpid()
+                and (not runtime.get("owner_host") or runtime.get("owner_host") == _cycle_host_id())
+            )
+            if not same_owner:
+                blocked["message"] = (
+                    f"loop runtime {runtime.get('id')} is {runtime.get('status')}; "
+                    "non-owner loop execution is blocked until it is completed, resumed, or stopped"
                 )
-                return rc
-        if i < cycles and interval:
-            time.sleep(interval)
-    if failures:
+                return
+
+        lease = state.get("execution_lease")
+        if isinstance(lease, dict):
+            _recover_execution_lease(lease)
+        if isinstance(lease, dict) and lease.get("status") in {"running", "interrupted"}:
+            blocked["message"] = (
+                f"loop execution lease for {lease.get('operation') or 'another command'} is "
+                f"{lease.get('status')} (pid={lease.get('owner_pid')}); inspect 'loop status' "
+                "and reconcile unknown results with 'loop stop --ack-inflight --reason <reason>'"
+            )
+            return
+        state["execution_lease"] = {
+            "token": token,
+            "operation": operation,
+            "status": "running",
+            "owner_pid": os.getpid(),
+            "owner_host": _cycle_host_id(),
+            "cycle_runtime_id": cycle_runtime_id,
+            "active_command": None,
+            "started_at": _now(),
+            "finished_at": None,
+            "stop_reason": None,
+        }
+
+    _update_loop_state(root, claim)
+    if blocked["message"]:
+        return None, blocked["message"]
+    return token, None
+
+
+def _loop_execution_release(root: Path, token: str | None) -> None:
+    if not token:
+        return
+
+    def release(state: dict) -> None:
+        lease = state.get("execution_lease")
+        if isinstance(lease, dict) and lease.get("token") == token:
+            state.pop("execution_lease", None)
+
+    _update_loop_state(root, release)
+
+
+def _loop_execution_command_update(root: Path, token: str, updater) -> dict | None:
+    found = {"lease": None}
+
+    def update(state: dict) -> None:
+        lease = state.get("execution_lease")
+        if not isinstance(lease, dict) or lease.get("token") != token:
+            return
+        if lease.get("status") != "running" or lease.get("owner_pid") != os.getpid():
+            return
+        updater(lease)
+        found["lease"] = dict(lease)
+
+    _update_loop_state(root, update)
+    return found["lease"]
+
+
+def _loop_execution_reconcile(root: Path, token: str, reason: str) -> bool:
+    cleared = {"value": False}
+
+    def reconcile(state: dict) -> None:
+        lease = state.get("execution_lease")
+        if not isinstance(lease, dict) or lease.get("token") != token:
+            return
+        history = state.setdefault("execution_history", [])
+        history.append({
+            "token": token,
+            "operation": lease.get("operation"),
+            "status": "reconciled",
+            "started_at": lease.get("started_at"),
+            "finished_at": _now(),
+            "reason": reason,
+        })
+        if len(history) > LOOP_CYCLE_HISTORY_LIMIT:
+            del history[:-LOOP_CYCLE_HISTORY_LIMIT]
+        state.pop("execution_lease", None)
+        cleared["value"] = True
+
+    _update_loop_state(root, reconcile)
+    return cleared["value"]
+
+
+def _cycle_begin(root: Path, args: argparse.Namespace) -> tuple[dict | None, str | None]:
+    cycles = int(args.cycles)
+    interval = float(args.interval or 0)
+    max_failures = int(args.max_failures or 0)
+    if cycles < 1:
+        return None, "loop cycle requires --cycles >= 1"
+    if cycles > LOOP_CYCLE_MAX:
+        return None, f"loop cycle refuses more than {LOOP_CYCLE_MAX} cycles in one command"
+    if not math.isfinite(interval):
+        return None, "--interval must be finite"
+    if interval < 0:
+        return None, "--interval must be a non-negative number of seconds"
+    if max_failures < 0:
+        return None, "--max-failures must be zero or a positive integer"
+    if max_failures > cycles:
+        return None, "--max-failures cannot exceed --cycles"
+    if max_failures > 1 and not args.continue_on_failure:
+        return None, "--max-failures greater than 1 requires --continue-on-failure"
+    policy = _load_loop_checkpoints(root)
+    if args.checkpoint not in (policy.get("checkpoints") or {}):
+        return None, f"unknown loop checkpoint: {args.checkpoint}"
+
+    runtime_id = f"cycle-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    effective_max_failures = max_failures or (cycles if args.continue_on_failure else 1)
+    runtime = {
+        "version": 1,
+        "id": runtime_id,
+        "checkpoint": args.checkpoint,
+        "status": "running",
+        "requested_cycles": cycles,
+        "completed_cycles": 0,
+        "failures": 0,
+        "first_failure_code": 0,
+        "max_failures": effective_max_failures,
+        "interval_seconds": interval,
+        "trigger": args.trigger or "cycle",
+        "strict": bool(args.strict),
+        "force": bool(args.force),
+        "continue_on_failure": bool(args.continue_on_failure),
+        "owner_pid": os.getpid(),
+        "owner_host": _cycle_host_id(),
+        "started_at": _now(),
+        "updated_at": _now(),
+        "finished_at": None,
+        "last_cycle_at": None,
+        "last_return_code": None,
+        "last_reports": [],
+        "stop_reason": None,
+        "inflight_cycle": None,
+        "active_command": None,
+        "resume_safe": True,
+        "events": [],
+    }
+    _cycle_event(runtime, "started", checkpoint=args.checkpoint, cycles=cycles)
+
+    blocked = {"message": None}
+
+    def save(state: dict) -> None:
+        lease = state.get("execution_lease")
+        if isinstance(lease, dict):
+            _recover_execution_lease(lease)
+        if isinstance(lease, dict) and lease.get("status") in {"running", "interrupted"}:
+            blocked["message"] = (
+                f"loop execution lease for {lease.get('operation') or 'another command'} is "
+                f"{lease.get('status')}; reconcile it before starting a cycle"
+            )
+            return
+        previous = state.get("cycle_runtime")
+        if isinstance(previous, dict):
+            previous_status = previous.get("status")
+            if previous_status in {"running", "stop_requested"}:
+                _cycle_recover_orphan(previous)
+                previous_status = previous["status"]
+            if previous_status in {"running", "stop_requested", "interrupted"}:
+                blocked["message"] = (
+                    f"unfinished loop runtime {previous.get('id')} is {previous_status}; "
+                    "use 'agentctl loop status', 'loop resume', or 'loop stop' before starting another"
+                )
+                return
+            history = state.setdefault("cycle_history", [])
+            history.append({
+                key: previous.get(key) for key in (
+                    "id", "checkpoint", "status", "requested_cycles", "completed_cycles",
+                    "failures", "started_at", "finished_at", "stop_reason")
+            })
+            if len(history) > LOOP_CYCLE_HISTORY_LIMIT:
+                del history[:-LOOP_CYCLE_HISTORY_LIMIT]
+        state["cycle_runtime"] = runtime
+
+    state = _update_loop_state(root, save)
+    if blocked["message"]:
+        return None, blocked["message"]
+    return state.get("cycle_runtime"), None
+
+
+def _cycle_finish(root: Path, runtime_id: str, status: str, reason: str | None = None, *,
+                  expected_statuses: set[str] | None = None,
+                  expected_owner_pid=_CYCLE_ANY_OWNER) -> dict | None:
+    def finish(runtime: dict) -> None:
+        _cycle_set_terminal(runtime, status, reason)
+
+    return _cycle_runtime_update(
+        root,
+        runtime_id,
+        finish,
+        expected_statuses=expected_statuses,
+        expected_owner_pid=expected_owner_pid,
+    )
+
+
+def _cycle_escalated(root: Path, checkpoint: str) -> list[str]:
+    return [
+        str(pkt.get("id")) for _path, pkt in _loop_follow_up_packets(root, checkpoint)
+        if pkt.get("escalated")
+    ]
+
+
+def _cycle_sleep(root: Path, runtime_id: str, seconds: float) -> bool:
+    """Sleep cooperatively; return True when a stop was requested."""
+    deadline = time.monotonic() + seconds
+    while time.monotonic() < deadline:
+        runtime = _cycle_runtime(root, normalize=False)
+        if not runtime or runtime.get("id") != runtime_id:
+            return True
+        if runtime.get("status") != "running":
+            return True
+        time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+    return False
+
+
+def _cycle_terminal_exit(runtime: dict) -> int:
+    status = runtime.get("status")
+    cycles = int(runtime.get("requested_cycles") or 0)
+    completed = int(runtime.get("completed_cycles") or 0)
+    failures = int(runtime.get("failures") or 0)
+    failure_code = int(runtime.get("first_failure_code") or 1)
+    if status == "completed":
+        print(f"agentctl: loop cycle finished successfully ({completed}/{cycles})")
+        return 0
+    if status == "completed_with_failures":
         print(f"agentctl: loop cycle finished with {failures}/{cycles} failing cycle(s)")
-        return first_rc or 1
-    print(f"agentctl: loop cycle finished successfully ({cycles}/{cycles})")
+        return failure_code
+    if status == "failed":
+        if runtime.get("continue_on_failure"):
+            print(f"agentctl: loop cycle stopped; {runtime.get('stop_reason')}")
+        else:
+            print(
+                "agentctl: loop cycle stopped after failure; "
+                "use --continue-on-failure to keep cycling and accumulate feedback."
+            )
+        return failure_code
+    if status == "blocked":
+        print(f"agentctl: loop cycle blocked; {runtime.get('stop_reason')}", file=sys.stderr)
+        return failure_code
+    if status == "stopped":
+        print(f"agentctl: loop runtime {runtime.get('id')} stopped at {completed}/{cycles}")
+        return failure_code if failures else 0
+    print(f"agentctl: loop runtime {runtime.get('id')} is no longer runnable ({status})", file=sys.stderr)
+    return 2
+
+
+def _cycle_execute(root: Path, runtime_id: str) -> int:
+    try:
+        while True:
+            runtime = _cycle_runtime(root, normalize=False)
+            if not runtime or runtime.get("id") != runtime_id:
+                print(f"agentctl: loop runtime disappeared or changed: {runtime_id}", file=sys.stderr)
+                return 2
+            if runtime.get("status") == "stop_requested":
+                stopped = _cycle_finish(
+                    root,
+                    runtime_id,
+                    "stopped",
+                    runtime.get("stop_reason") or "cooperative stop requested",
+                    expected_statuses={"stop_requested"},
+                    expected_owner_pid=os.getpid(),
+                )
+                if not stopped:
+                    continue
+                return _cycle_terminal_exit(stopped)
+            if runtime.get("status") != "running":
+                return _cycle_terminal_exit(runtime)
+
+            cycles = int(runtime.get("requested_cycles") or 0)
+            completed = int(runtime.get("completed_cycles") or 0)
+            if completed >= cycles:
+                status, reason = _cycle_terminal_status(runtime)
+                finished = _cycle_finish(
+                    root,
+                    runtime_id,
+                    status or "completed",
+                    reason,
+                    expected_statuses={"running"},
+                    expected_owner_pid=os.getpid(),
+                )
+                if not finished:
+                    continue
+                return _cycle_terminal_exit(finished)
+
+            index = completed + 1
+
+            def mark_cycle_start(current: dict) -> None:
+                current["owner_host"] = _cycle_host_id()
+                current["inflight_cycle"] = {"cycle": index, "started_at": _now()}
+                current["active_command"] = None
+                current["resume_safe"] = False
+                _cycle_event(current, "cycle_started", cycle=index)
+
+            claimed = _cycle_runtime_update(
+                root,
+                runtime_id,
+                mark_cycle_start,
+                expected_statuses={"running"},
+                expected_owner_pid=os.getpid(),
+            )
+            if not claimed:
+                continue
+            runtime = claimed
+            trigger = f"{runtime.get('trigger') or 'cycle'}:{index}/{cycles}"
+            print(f"agentctl: loop cycle {index}/{cycles} checkpoint={runtime.get('checkpoint')}")
+            rc = _run_loop_checkpoint(
+                root,
+                str(runtime.get("checkpoint")),
+                once=True,
+                trigger=trigger,
+                strict=True if runtime.get("strict") else None,
+                force=bool(runtime.get("force")),
+                quiet=False,
+                cycle_runtime_id=runtime_id,
+            )
+            checkpoint_state = (
+                (_load_json(_loop_state_path(root), {}).get("checkpoints") or {})
+                .get(runtime.get("checkpoint"), {})
+            )
+            escalated = _cycle_escalated(root, str(runtime.get("checkpoint")))
+
+            def record_result(current: dict) -> None:
+                stop_requested = current.get("status") == "stop_requested"
+                current["inflight_cycle"] = None
+                current["active_command"] = None
+                current["resume_safe"] = True
+                current["completed_cycles"] = int(current.get("completed_cycles") or 0) + 1
+                current["last_cycle_at"] = _now()
+                current["last_return_code"] = rc
+                current["last_reports"] = checkpoint_state.get("last_reports") or []
+                if rc:
+                    current["failures"] = int(current.get("failures") or 0) + 1
+                    if not current.get("first_failure_code"):
+                        current["first_failure_code"] = rc
+                _cycle_event(current, "cycle_finished", cycle=index, return_code=rc)
+                if escalated:
+                    _cycle_set_terminal(
+                        current,
+                        "blocked",
+                        "escalated follow-up requires a decision: " + ", ".join(escalated),
+                    )
+                    return
+                terminal, reason = _cycle_terminal_status(current)
+                if terminal == "failed":
+                    _cycle_set_terminal(current, terminal, reason)
+                elif stop_requested:
+                    _cycle_set_terminal(
+                        current, "stopped", current.get("stop_reason") or "cooperative stop requested")
+                elif terminal:
+                    _cycle_set_terminal(current, terminal, reason)
+
+            runtime = _cycle_runtime_update(
+                root,
+                runtime_id,
+                record_result,
+                expected_statuses={"running", "stop_requested"},
+                expected_owner_pid=os.getpid(),
+            )
+            if not runtime:
+                current = _cycle_runtime(root, normalize=False)
+                if current and current.get("id") == runtime_id:
+                    return _cycle_terminal_exit(current)
+                print(f"agentctl: loop runtime changed before result persistence: {runtime_id}", file=sys.stderr)
+                return 2
+            if runtime.get("status") != "running":
+                return _cycle_terminal_exit(runtime)
+            interval = float(runtime.get("interval_seconds") or 0)
+            if interval and _cycle_sleep(root, runtime_id, interval):
+                continue
+    except KeyboardInterrupt:
+        interrupted = _cycle_finish(
+            root,
+            runtime_id,
+            "interrupted",
+            "runner interrupted by keyboard signal",
+            expected_statuses={"running", "stop_requested"},
+            expected_owner_pid=os.getpid(),
+        )
+        hint = (
+            "inspect and reconcile its in-flight result"
+            if interrupted and interrupted.get("resume_safe") is False
+            else "use 'agentctl loop resume'"
+        )
+        print(f"agentctl: loop runtime {runtime_id} interrupted; {hint}", file=sys.stderr)
+        return 130
+    except Exception as exc:
+        interrupted = _cycle_finish(
+            root,
+            runtime_id,
+            "interrupted",
+            f"runner exception: {type(exc).__name__}: {exc}",
+            expected_statuses={"running", "stop_requested"},
+            expected_owner_pid=os.getpid(),
+        )
+        hint = (
+            "inspect and reconcile its in-flight result"
+            if interrupted and interrupted.get("resume_safe") is False
+            else "it can be resumed after inspection"
+        )
+        print(f"agentctl: loop runtime {runtime_id} interrupted: {exc}; {hint}", file=sys.stderr)
+        return 2
+
+
+def _loop_cycle(root: Path, args: argparse.Namespace) -> int:
+    runtime, error = _cycle_begin(root, args)
+    if error:
+        print(f"agentctl: {error}", file=sys.stderr)
+        return 2
+    print(f"agentctl: loop runtime started: {runtime.get('id')}")
+    return _cycle_execute(root, str(runtime.get("id")))
+
+
+def _loop_status(root: Path, args: argparse.Namespace) -> int:
+    runtime = _cycle_runtime(root)
+    execution_lease = _loop_execution_lease(root)
+    runtime_status = runtime.get("status") if runtime else None
+    runtime_active = runtime_status in {"running", "stop_requested", "interrupted"}
+    status = (
+        runtime_status
+        if runtime_active or not execution_lease
+        else f"execution_{execution_lease.get('status')}"
+    ) or "idle"
+    payload = {
+        "status": status,
+        "runtime": runtime,
+        "execution_lease": execution_lease,
+    }
+    if args.json:
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        return 0
+    if not runtime and not execution_lease:
+        print("agentctl: no loop cycle runtime recorded")
+        return 0
+    if not runtime:
+        print(
+            f"agentctl: one-shot loop execution {execution_lease.get('operation')} "
+            f"status={execution_lease.get('status')} pid={execution_lease.get('owner_pid')}"
+        )
+        if execution_lease.get("stop_reason"):
+            print(f"agentctl: stop reason: {execution_lease.get('stop_reason')}")
+        return 0
+    print(
+        f"agentctl: loop runtime {runtime.get('id')} status={runtime.get('status')} "
+        f"checkpoint={runtime.get('checkpoint')} progress="
+        f"{runtime.get('completed_cycles', 0)}/{runtime.get('requested_cycles', 0)} "
+        f"failures={runtime.get('failures', 0)}"
+    )
+    if runtime.get("stop_reason"):
+        print(f"agentctl: stop reason: {runtime.get('stop_reason')}")
+    if runtime.get("status") == "interrupted" and runtime.get("resume_safe") is False:
+        active = runtime.get("active_command") or {}
+        print(
+            "agentctl: resume blocked because an in-flight cycle has an unknown result; "
+            f"active command pid={active.get('pid') or 'unknown'}"
+        )
+    if execution_lease:
+        print(
+            f"agentctl: one-shot execution {execution_lease.get('operation')} "
+            f"status={execution_lease.get('status')} pid={execution_lease.get('owner_pid')}"
+        )
+    return 0
+
+
+def _loop_resume(root: Path, _args: argparse.Namespace) -> int:
+    runtime = _cycle_runtime(root)
+    if not runtime:
+        print("agentctl: no loop runtime to resume", file=sys.stderr)
+        return 2
+    status = runtime.get("status")
+    if status in {"running", "stop_requested"}:
+        print(f"agentctl: loop runtime {runtime.get('id')} is still {status}", file=sys.stderr)
+        return 2
+    if status != "interrupted":
+        print(f"agentctl: loop runtime {runtime.get('id')} is terminal ({status}); start a new cycle", file=sys.stderr)
+        return 2
+    if runtime.get("resume_safe") is False:
+        print(
+            f"agentctl: loop runtime {runtime.get('id')} cannot be resumed because its in-flight "
+            "cycle has an unknown result; inspect the active command, wait for it to exit, then "
+            "run 'agentctl loop stop --ack-inflight --reason <reconciliation>'",
+            file=sys.stderr,
+        )
+        return 2
+    execution_lease = _loop_execution_lease(root)
+    if execution_lease:
+        print(
+            f"agentctl: loop runtime cannot resume while execution lease "
+            f"{execution_lease.get('operation')} is {execution_lease.get('status')}; "
+            "reconcile it first",
+            file=sys.stderr,
+        )
+        return 2
+    if int(runtime.get("completed_cycles") or 0) >= int(runtime.get("requested_cycles") or 0):
+        print(f"agentctl: loop runtime {runtime.get('id')} has no remaining cycles", file=sys.stderr)
+        return 2
+
+    def resume(current: dict) -> None:
+        current["status"] = "running"
+        current["owner_pid"] = os.getpid()
+        current["owner_host"] = _cycle_host_id()
+        current["finished_at"] = None
+        current["stop_reason"] = None
+        current["inflight_cycle"] = None
+        current["active_command"] = None
+        current["resume_safe"] = True
+        _cycle_event(current, "resumed", next_cycle=int(current.get("completed_cycles") or 0) + 1)
+
+    runtime_id = str(runtime.get("id"))
+    runtime = _cycle_runtime_update(
+        root,
+        runtime_id,
+        resume,
+        expected_statuses={"interrupted"},
+        expected_owner_pid=None,
+    )
+    if not runtime:
+        current = _cycle_runtime(root)
+        print(
+            f"agentctl: loop runtime {runtime_id} could not be claimed; "
+            f"current status is {(current or {}).get('status', 'missing')}",
+            file=sys.stderr,
+        )
+        return 2
+    print(f"agentctl: loop runtime resumed: {runtime.get('id')} at cycle "
+          f"{int(runtime.get('completed_cycles') or 0) + 1}/{runtime.get('requested_cycles')}")
+    return _cycle_execute(root, runtime_id)
+
+
+def _reconcile_execution_lease(root: Path, lease: dict, args: argparse.Namespace) -> int:
+    if lease.get("status") == "running":
+        print(
+            f"agentctl: one-shot loop execution {lease.get('operation')} is still running; "
+            "wait for its owner or command to exit",
+            file=sys.stderr,
+        )
+        return 2
+    if lease.get("status") != "interrupted":
+        return 0
+    if _active_command_alive(lease.get("active_command")):
+        print(
+            f"agentctl: one-shot loop execution {lease.get('operation')} still has a live or "
+            "unverifiable command; wait for it to exit before reconciling",
+            file=sys.stderr,
+        )
+        return 2
+    if not args.ack_inflight or not args.reason:
+        print(
+            "agentctl: one-shot loop result is unknown; after inspecting its side effects, run "
+            "'agentctl loop stop --ack-inflight --reason <reconciliation>'",
+            file=sys.stderr,
+        )
+        return 2
+    if not _loop_execution_reconcile(root, str(lease.get("token")), args.reason):
+        print("agentctl: one-shot execution lease changed before reconciliation", file=sys.stderr)
+        return 2
+    print(f"agentctl: reconciled interrupted one-shot execution {lease.get('operation')}")
+    return 0
+
+
+def _loop_stop(root: Path, args: argparse.Namespace) -> int:
+    runtime = _cycle_runtime(root)
+    execution_lease = _loop_execution_lease(root)
+    if not runtime:
+        if execution_lease:
+            return _reconcile_execution_lease(root, execution_lease, args)
+        print("agentctl: no loop runtime to stop")
+        return 0
+    status = runtime.get("status")
+    if status not in {"running", "stop_requested", "interrupted"}:
+        if execution_lease:
+            return _reconcile_execution_lease(root, execution_lease, args)
+        print(f"agentctl: loop runtime {runtime.get('id')} already terminal ({status})")
+        return 0
+    unsafe_inflight = status == "interrupted" and runtime.get("resume_safe") is False
+    if unsafe_inflight:
+        if (_cycle_active_command_alive(runtime)
+                or (execution_lease and _active_command_alive(execution_lease.get("active_command")))):
+            print(
+                f"agentctl: loop runtime {runtime.get('id')} still has a live or unverifiable "
+                "in-flight command; wait for it to exit on its recorded host before reconciling",
+                file=sys.stderr,
+            )
+            return 2
+        if not args.ack_inflight or not args.reason:
+            print(
+                "agentctl: interrupted cycle result is unknown; after inspecting its side effects, "
+                "run 'agentctl loop stop --ack-inflight --reason <reconciliation>'",
+                file=sys.stderr,
+            )
+            return 2
+    reason = args.reason or "cooperative stop requested"
+    if status in {"running", "stop_requested"} and _cycle_owner_alive(runtime):
+        def request_stop(current: dict) -> None:
+            current["status"] = "stop_requested"
+            current["stop_reason"] = reason
+            _cycle_event(current, "stop_requested", reason=reason)
+
+        updated = _cycle_runtime_update(
+            root,
+            str(runtime.get("id")),
+            request_stop,
+            expected_statuses={"running", "stop_requested"},
+            expected_owner_pid=runtime.get("owner_pid"),
+        )
+        if not updated:
+            current = _cycle_runtime(root)
+            print(
+                f"agentctl: loop runtime changed before stop could be recorded; "
+                f"current status is {(current or {}).get('status', 'missing')}",
+                file=sys.stderr,
+            )
+            return 2
+        print(f"agentctl: stop requested for loop runtime {runtime.get('id')}; "
+              "the runner will stop after the current check or sleep poll")
+        return 0
+    stopped = _cycle_finish(
+        root,
+        str(runtime.get("id")),
+        "stopped",
+        reason,
+        expected_statuses={"interrupted"},
+        expected_owner_pid=None,
+    )
+    if not stopped:
+        print(f"agentctl: loop runtime changed before it could be marked stopped", file=sys.stderr)
+        return 2
+    if execution_lease and execution_lease.get("status") == "interrupted":
+        if not _loop_execution_reconcile(
+                root, str(execution_lease.get("token")), args.reason or reason):
+            print(
+                "agentctl: cycle stopped, but its one-shot execution lease still needs reconciliation",
+                file=sys.stderr,
+            )
+            return 2
+    print(f"agentctl: loop runtime {runtime.get('id')} marked stopped")
     return 0
 
 
@@ -2730,6 +3886,12 @@ def cmd_loop(args: argparse.Namespace) -> int:
         return _loop_auto(root, args)
     if args.loop_action == "cycle":
         return _loop_cycle(root, args)
+    if args.loop_action == "status":
+        return _loop_status(root, args)
+    if args.loop_action == "resume":
+        return _loop_resume(root, args)
+    if args.loop_action == "stop":
+        return _loop_stop(root, args)
     print("agentctl: unknown loop action", file=sys.stderr)
     return 2
 
@@ -2984,6 +4146,40 @@ def _doctor_report(root: Path) -> dict:
         "name": "checkpoint memory",
         "status": "ok",
         "detail": f"{len(checkpoints)} checkpoint state entr{'y' if len(checkpoints) == 1 else 'ies'}",
+    })
+
+    runtime = _cycle_runtime(root)
+    runtime_status = runtime.get("status") if runtime else "idle"
+    if runtime_status == "interrupted":
+        if runtime.get("resume_safe") is False:
+            warnings.append(
+                f"loop runtime {runtime.get('id')} has an unknown in-flight result; "
+                "inspect and reconcile it before starting another cycle"
+            )
+        else:
+            warnings.append(
+                f"loop runtime {runtime.get('id')} is interrupted; resume or stop it before starting another cycle"
+            )
+    checks.append({
+        "name": "cycle runtime",
+        "status": "warn" if runtime_status in {"running", "stop_requested", "interrupted"} else "ok",
+        "detail": (
+            f"{runtime_status}, progress={runtime.get('completed_cycles', 0)}/"
+            f"{runtime.get('requested_cycles', 0)}" if runtime else "idle"
+        ),
+    })
+
+    execution_lease = _loop_execution_lease(root)
+    lease_status = execution_lease.get("status") if execution_lease else "idle"
+    if execution_lease:
+        warnings.append(
+            f"loop execution {execution_lease.get('operation')} is {lease_status}; "
+            "inspect loop status before starting another execution"
+        )
+    checks.append({
+        "name": "loop execution lease",
+        "status": "warn" if execution_lease else "ok",
+        "detail": lease_status,
     })
 
     return {
@@ -3259,6 +4455,18 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Bypass checkpoint debounce on every cycle")
     lc.add_argument("--continue-on-failure", action="store_true",
                     help="Run remaining cycles after a failing checkpoint")
+    lc.add_argument("--max-failures", type=int, default=0,
+                    help="Stop after this many failures; default: 1, or all cycles with --continue-on-failure")
+    lstatus = lsub.add_parser("status")
+    lstatus.add_argument("--json", action="store_true")
+    lsub.add_parser("resume")
+    lstop = lsub.add_parser("stop")
+    lstop.add_argument("--reason", help="Durable reason recorded with the cooperative stop")
+    lstop.add_argument(
+        "--ack-inflight",
+        action="store_true",
+        help="Acknowledge an inspected, no-longer-running command whose result was not recorded",
+    )
     sp.set_defaults(func=cmd_loop)
 
     sp = sub.add_parser("check")

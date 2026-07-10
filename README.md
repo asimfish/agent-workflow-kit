@@ -305,7 +305,10 @@ python3 tools/agentctl.py loop list
 python3 tools/agentctl.py loop show daily-plan-triage
 python3 tools/agentctl.py loop run daily-plan-triage --once
 python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
-python3 tools/agentctl.py loop cycle --checkpoint experiment-check --cycles 3 --interval 300
+python3 tools/agentctl.py loop cycle --checkpoint experiment-check --cycles 3 --interval 300 --continue-on-failure --max-failures 2
+python3 tools/agentctl.py loop status
+python3 tools/agentctl.py loop resume
+python3 tools/agentctl.py loop stop --reason "owner changed the experiment plan"
 python3 tools/agentctl.py doctor
 ```
 
@@ -326,12 +329,32 @@ This is the safe continuous-loop mode:
 | Execute | The existing checkpoint loops run once per cycle. |
 | Check | Each cycle reuses the checkpoint's loop checks and strictness policy. |
 | Feedback | Failures update one follow-up packet; repeated failures can escalate. |
-| Memory | Every cycle writes a loop report and updates `.agent/loops/state.json`. |
-| Next | It sleeps for `--interval`, starts the next cycle, then stops after the requested count. |
+| Memory | Every cycle writes a loop report; runtime progress and recent events live in `.agent/loops/state.json`. |
+| Next | It sleeps cooperatively for `--interval`, starts the next cycle, then stops at the count, failure budget, escalation, or stop request. |
 
 Failures stop the cycle by default. Use `--continue-on-failure` only when you
 want repeated failures to accumulate into escalation evidence. Use `--force` when
-you deliberately want every cycle to bypass checkpoint debounce.
+you deliberately want every cycle to bypass checkpoint debounce. An escalated
+follow-up always blocks the runtime even with `--continue-on-failure`.
+Setting `--max-failures` above 1 also requires `--continue-on-failure`.
+
+Cycle execution is resumable but not a daemon:
+
+- `loop status` reports the latest runtime ID, owner, progress, failures, and stop reason;
+- a second `loop cycle` is rejected while a live or interrupted runtime is unfinished;
+- `loop run`, `loop auto`, and `loop cycle` share one durable execution lease, so a one-shot command cannot bypass an active cycle; a killed one-shot retains an `interrupted` lease until its result is explicitly reconciled;
+- if the runner disappears between cycles, `loop status` marks it safely `interrupted` and `loop resume` continues at the next unfinished cycle;
+- each child waits behind a launch gate until its PID is persisted; if the runner disappears during a check, the runtime retains the in-flight cycle and command identity, blocks `resume`, and requires side-effect inspection followed by `loop stop --ack-inflight --reason "<reconciliation>"` after the command exits;
+- runtime claims and control transitions use OS-released advisory locks and compare-and-set, while JSON snapshots use atomic file replacement;
+- a `loop stop` request is cooperative and does not kill the command currently being checked;
+- `--max-failures` adds a hard failure budget, while `--cycles` remains mandatory and capped at 100.
+
+Commands used in repeatable loops should be idempotent. The runtime prevents an
+unknown in-flight command from being started twice automatically, but it cannot
+roll back side effects written before a process was interrupted.
+
+An external scheduler may invoke these bounded commands, but the kit does not
+install cron jobs or keep a background process alive.
 
 ## System Modules
 
@@ -399,6 +422,8 @@ agentctl guidance create ... --dispatch             send plan and resume the tar
 agentctl guidance list|show|ack|dispatch             inspect, acknowledge, or retry guidance
 agentctl loop list|show|run <id> --once             inspect or run one loop
 agentctl loop auto --checkpoint <name> --once       run checkpoint policy
+agentctl loop cycle --checkpoint <name> --cycles N  run a durable bounded cycle
+agentctl loop status|resume|stop                    inspect or control the latest cycle
 agentctl board [--json]                             show board
 agentctl check --mode manual|pre-commit|commit-msg|pre-push|ci
 agentctl doctor [--json]                            diagnose installed workflow health
@@ -413,9 +438,9 @@ python3 tools/agentctl.py doctor
 ```
 
 `doctor` checks core files, Git hook wiring, loop contract validity, open or
-escalated follow-up packets, task-board status counts, checkpoint memory, and
-the same base conditions as `agentctl check --mode manual`. It exits nonzero
-when a real workflow problem needs attention.
+escalated follow-up packets, task-board status counts, checkpoint memory, cycle
+runtime state, and the same base conditions as `agentctl check --mode manual`.
+It exits nonzero when a real workflow problem needs attention.
 
 ## Regression Tests
 
@@ -424,10 +449,13 @@ python3 -m unittest discover -s tests
 ```
 
 The regression tests install the kit into fresh temporary Git projects. They
-replay the full loop feedback chain, bounded cycle behavior, and supervisor
-guidance flow: Fable-style plan creation, Codex work-start surfacing, finish
-blocking until acknowledgement, and successful completion after `guidance ack`.
-CI runs the same tests on every push and pull request.
+replay feedback escalation, failure budgets, cooperative stop, safe and
+unknown-result orphan recovery, launch handshakes, one-shot/cycle mutual
+exclusion, descendant cleanup, non-destructive Windows PID checks, and supervisor
+guidance: Fable-style plan creation,
+Codex work-start surfacing, finish blocking until acknowledgement, and successful
+completion after `guidance ack`. CI runs the same tests on every push and pull
+request.
 
 ## Current Boundaries
 
