@@ -1,6 +1,8 @@
 """Fresh-install regression tests for managed Git worktree leases."""
 
 import json
+import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -55,12 +57,13 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
         self.git("add", "-A")
         self.git("commit", "--no-verify", "-q", "-m", message)
 
-    def agentctl(self, *args, cwd=None, expect=None):
+    def agentctl(self, *args, cwd=None, expect=None, env=None):
         proc = subprocess.run(
             [sys.executable, "tools/agentctl.py", *args],
             cwd=str(cwd or self.root),
             text=True,
             capture_output=True,
+            env=env,
             timeout=120,
         )
         if expect is not None:
@@ -70,6 +73,35 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
                 f"agentctl {' '.join(args)} rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}",
             )
         return proc
+
+    def failing_worktree_list_env(self):
+        if os.name == "nt":
+            self.skipTest("POSIX Git shim")
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git)
+        fake_bin = self.temp / "fake-bin"
+        fake_bin.mkdir(exist_ok=True)
+        shim = fake_bin / "git"
+        shim.write_text(
+            "#!/bin/sh\n"
+            "if [ \"$1\" = -C ]; then\n"
+            "  command_name=$3\n"
+            "  subcommand=$4\n"
+            "else\n"
+            "  command_name=$1\n"
+            "  subcommand=$2\n"
+            "fi\n"
+            "if [ \"$command_name\" = worktree ] && [ \"$subcommand\" = list ]; then\n"
+            "  echo 'simulated worktree enumeration failure' >&2\n"
+            "  exit 86\n"
+            "fi\n"
+            f"exec {shlex.quote(real_git)} \"$@\"\n",
+            encoding="utf-8",
+        )
+        shim.chmod(0o755)
+        env = os.environ.copy()
+        env["PATH"] = str(fake_bin) + os.pathsep + env.get("PATH", "")
+        return env
 
     def create_committed_task(self, task="T-101", agent="worker"):
         self.agentctl(
@@ -169,6 +201,59 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
         refused = self.agentctl("worktree", "release", lease["id"], expect=1)
         self.assertIn("is moved", refused.stdout + refused.stderr)
         self.assertTrue(moved.is_dir())
+
+    def test_moved_managed_worktree_cannot_start_another_task(self):
+        self.create_committed_task(task="T-101", agent="worker")
+        self.agentctl(
+            "task", "create", "--id", "T-102", "--title", "unrelated task",
+            "--owner", "worker", "--scope", "other/", expect=0,
+        )
+        self.commit("chore(agent): plan unrelated worker\n\nRefs: T-102")
+        self.create_lease(self.worktree)
+        moved = self.temp / "moved-worker"
+        self.git("worktree", "move", str(self.worktree), str(moved))
+
+        refused = self.agentctl(
+            "start", "--task", "T-102", "--agent", "worker", cwd=moved, expect=1,
+        )
+        self.assertIn("managed worktree lease is moved", refused.stdout + refused.stderr)
+        board = json.loads((moved / ".agent" / "board.json").read_text(encoding="utf-8"))
+        self.assertEqual(board["tasks"]["T-102"]["status"], "todo")
+
+    def test_git_worktree_enumeration_failure_is_fail_closed(self):
+        self.create_committed_task()
+        lease = self.create_lease(self.worktree)
+        common = Path(self.git("rev-parse", "--git-common-dir"))
+        if not common.is_absolute():
+            common = self.root / common
+        registry = common.resolve() / "agent-workflow" / "worktree-leases.json"
+        before = registry.read_bytes()
+        env = self.failing_worktree_list_env()
+
+        listed = self.agentctl("worktree", "list", "--json", expect=2, env=env)
+        self.assertIn("unable to inspect Git worktrees", listed.stdout + listed.stderr)
+        started = self.agentctl(
+            "start", "--task", "T-101", "--agent", "worker",
+            cwd=self.worktree, expect=2, env=env,
+        )
+        self.assertIn("unable to inspect Git worktrees", started.stdout + started.stderr)
+        diagnosed = self.agentctl("doctor", expect=1, env=env)
+        self.assertIn("worktree leases", diagnosed.stdout + diagnosed.stderr)
+        self.assertIn("unable to inspect Git worktrees", diagnosed.stdout + diagnosed.stderr)
+        self.assertNotIn("Traceback", diagnosed.stdout + diagnosed.stderr)
+        released = self.agentctl(
+            "worktree", "release", lease["id"], "--ack-missing", expect=2, env=env,
+        )
+        self.assertIn("unable to inspect Git worktrees", released.stdout + released.stderr)
+        duplicate = self.agentctl(
+            "worktree", "create", "--task", "T-101", "--agent", "worker",
+            "--path", str(self.temp / "duplicate"), expect=2, env=env,
+        )
+        self.assertIn("unable to inspect Git worktrees", duplicate.stdout + duplicate.stderr)
+        self.assertEqual(registry.read_bytes(), before)
+        self.assertTrue(self.worktree.is_dir())
+        board = json.loads((self.worktree / ".agent" / "board.json").read_text(encoding="utf-8"))
+        self.assertEqual(board["tasks"]["T-101"]["status"], "todo")
 
     def test_release_cleans_prunable_git_metadata(self):
         self.create_committed_task()

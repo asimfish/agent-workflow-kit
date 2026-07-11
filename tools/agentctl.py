@@ -895,8 +895,20 @@ def cmd_start(args: argparse.Namespace) -> int:
     scope = entry.get("scope") or []
     if args.scope:
         scope = [s.strip() for s in args.scope.split(",") if s.strip()]
-    managed_lease = _managed_worktree_lease(root)
+    try:
+        managed_lease = _managed_worktree_lease(root)
+    except RuntimeError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
     if managed_lease:
+        observed = managed_lease.get("observed_status")
+        if observed != "active":
+            print(
+                f"agentctl: this managed worktree lease is {observed}; "
+                "inspect or release it from the primary checkout before starting work",
+                file=sys.stderr,
+            )
+            return 1
         lease_scope = managed_lease.get("scope") or []
         if task != managed_lease.get("task") or agent != managed_lease.get("agent"):
             print(
@@ -2120,7 +2132,8 @@ def _save_worktree_leases(root: Path, data: dict) -> None:
 def _git_worktrees(root: Path) -> dict[str, dict]:
     proc = _git_process(root, "worktree", "list", "--porcelain")
     if proc.returncode:
-        return {}
+        detail = proc.stderr.strip() or proc.stdout.strip() or f"exit {proc.returncode}"
+        raise RuntimeError(f"unable to inspect Git worktrees: {detail}")
     rows: dict[str, dict] = {}
     current: dict = {}
     for raw in [*proc.stdout.splitlines(), ""]:
@@ -2252,8 +2265,18 @@ def _reconcile_worktree_leases(root: Path, data: dict,
 
 def _managed_worktree_lease(root: Path) -> dict | None:
     current = str(root.resolve())
+    current_git_dir = _git_process(root, "rev-parse", "--git-dir")
+    git_dir = ""
+    if current_git_dir.returncode == 0 and current_git_dir.stdout.strip():
+        git_dir_path = Path(current_git_dir.stdout.strip())
+        if not git_dir_path.is_absolute():
+            git_dir_path = root / git_dir_path
+        git_dir = str(git_dir_path.resolve())
     for lease in _worktree_rows(root):
-        if lease.get("status") != "released" and str(Path(lease.get("path") or "").resolve()) == current:
+        if lease.get("status") == "released":
+            continue
+        leased_path = str(Path(lease.get("path") or "").resolve())
+        if leased_path == current or (git_dir and lease.get("git_dir") == git_dir):
             return lease
     return None
 
@@ -2347,7 +2370,11 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
     fd = _acquire_lock_file(lock)
     try:
         data = _load_worktree_leases(root)
-        worktrees = _git_worktrees(root)
+        try:
+            worktrees = _git_worktrees(root)
+        except RuntimeError as exc:
+            print(f"agentctl: {exc}", file=sys.stderr)
+            return 2
         if _reconcile_worktree_leases(root, data, worktrees):
             _save_worktree_leases(root, data)
         for existing in data.get("leases") or []:
@@ -2420,7 +2447,17 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
             _save_worktree_leases(root, data)
             print(f"agentctl: git worktree add failed: {lease['last_error']}", file=sys.stderr)
             return 2
-        created = _git_worktrees(root).get(str(path)) or {}
+        try:
+            created = _git_worktrees(root).get(str(path)) or {}
+        except RuntimeError as exc:
+            lease["last_error"] = str(exc)
+            lease["updated_at"] = _now()
+            _save_worktree_leases(root, data)
+            print(
+                f"agentctl: worktree was added but its lease could not be verified: {exc}",
+                file=sys.stderr,
+            )
+            return 2
         lease["git_dir"] = created.get("git_dir")
         lease["status"] = "active"
         _save_worktree_leases(root, data)
@@ -2434,7 +2471,11 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
 
 
 def _worktree_list(root: Path, args: argparse.Namespace) -> int:
-    rows = _worktree_rows(root)
+    try:
+        rows = _worktree_rows(root)
+    except RuntimeError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
     if args.json:
         print(json.dumps({"worktrees": rows}, indent=2, ensure_ascii=False))
         return 0
@@ -2458,7 +2499,11 @@ def _worktree_release(root: Path, args: argparse.Namespace) -> int:
     fd = _acquire_lock_file(lock)
     try:
         data = _load_worktree_leases(root)
-        worktrees = _git_worktrees(root)
+        try:
+            worktrees = _git_worktrees(root)
+        except RuntimeError as exc:
+            print(f"agentctl: {exc}", file=sys.stderr)
+            return 2
         if _reconcile_worktree_leases(root, data, worktrees):
             _save_worktree_leases(root, data)
         lease = next(
@@ -4871,22 +4916,31 @@ def _doctor_report(root: Path) -> dict:
         "detail": lease_status,
     })
 
-    worktree_rows = _worktree_rows(root)
-    active_worktrees = [row for row in worktree_rows if row.get("observed_status") == "active"]
-    stale_worktrees = [
-        row for row in worktree_rows
-        if row.get("status") != "released" and row.get("observed_status") != "active"
-    ]
-    if stale_worktrees:
-        warnings.append(
-            "stale or conflicting worktree lease(s): "
-            + ", ".join(str(row.get("id")) for row in stale_worktrees)
-        )
-    checks.append({
-        "name": "worktree leases",
-        "status": "warn" if stale_worktrees else "ok",
-        "detail": f"active={len(active_worktrees)}, stale={len(stale_worktrees)}",
-    })
+    try:
+        worktree_rows = _worktree_rows(root)
+    except RuntimeError as exc:
+        problems.append(str(exc))
+        checks.append({
+            "name": "worktree leases",
+            "status": "fail",
+            "detail": str(exc),
+        })
+    else:
+        active_worktrees = [row for row in worktree_rows if row.get("observed_status") == "active"]
+        stale_worktrees = [
+            row for row in worktree_rows
+            if row.get("status") != "released" and row.get("observed_status") != "active"
+        ]
+        if stale_worktrees:
+            warnings.append(
+                "stale or conflicting worktree lease(s): "
+                + ", ".join(str(row.get("id")) for row in stale_worktrees)
+            )
+        checks.append({
+            "name": "worktree leases",
+            "status": "warn" if stale_worktrees else "ok",
+            "detail": f"active={len(active_worktrees)}, stale={len(stale_worktrees)}",
+        })
 
     return {
         "root": str(root),
