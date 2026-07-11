@@ -346,6 +346,8 @@ Cycle execution is resumable but not a daemon:
 - if the runner disappears between cycles, `loop status` marks it safely `interrupted` and `loop resume` continues at the next unfinished cycle;
 - each child waits behind a launch gate until its PID is persisted; if the runner disappears during a check, the runtime retains the in-flight cycle and command identity, blocks `resume`, and requires side-effect inspection followed by `loop stop --ack-inflight --reason "<reconciliation>"` after the command exits;
 - runtime claims and control transitions use OS-released advisory locks and compare-and-set, while JSON snapshots use atomic file replacement;
+- on Linux, macOS, and Windows, persisted owners and child commands pair their PID with a native process-birth marker, so a reused PID cannot keep a crashed runtime or lease alive;
+- a POSIX process group whose recorded leader has exited is treated as unverifiable rather than trusted by numeric ID alone: automatic replay stays blocked, while inspected state can be closed explicitly with `loop stop --ack-inflight --reason "<reason>"`;
 - a `loop stop` request is cooperative and does not kill the command currently being checked;
 - `--max-failures` adds a hard failure budget, while `--cycles` remains mandatory and capped at 100.
 

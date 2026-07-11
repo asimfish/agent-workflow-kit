@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as _dt
+import errno
 import hashlib
 import json
 import math
@@ -338,7 +339,7 @@ def _lock_path(root: Path, task: str) -> Path:
 def _pid_alive(pid) -> bool:
     try:
         pid = int(pid)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
         return False
     if pid <= 0:
         return False
@@ -355,24 +356,166 @@ def _pid_alive(pid) -> bool:
                 kernel32.WaitForSingleObject.restype = wintypes.DWORD
                 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
                 kernel32.CloseHandle.restype = wintypes.BOOL
+                kernel32.GetLastError.argtypes = []
+                kernel32.GetLastError.restype = wintypes.DWORD
             except (AttributeError, TypeError):
                 pass
             synchronize = 0x00100000
-            wait_timeout = 0x00000102
+            wait_object_0 = 0x00000000
+            error_invalid_parameter = 87
             handle = kernel32.OpenProcess(synchronize, False, pid)
             if not handle:
-                return False
+                try:
+                    return int(kernel32.GetLastError()) != error_invalid_parameter
+                except Exception:
+                    return True
             try:
-                return kernel32.WaitForSingleObject(handle, 0) == wait_timeout
+                wait_result = kernel32.WaitForSingleObject(handle, 0)
+                if wait_result == wait_object_0:
+                    return False
+                return True
             finally:
                 kernel32.CloseHandle(handle)
-        except (AttributeError, OSError):
-            return False
+        except Exception:
+            return True
     try:
         os.kill(pid, 0)
         return True
-    except OSError:
+    except PermissionError:
+        return True
+    except ProcessLookupError:
         return False
+    except OSError as exc:
+        return exc.errno == errno.EPERM
+    except (OverflowError, ValueError, TypeError):
+        return False
+
+
+def _darwin_process_birth_marker(pid: int) -> str | None:
+    """Read Darwin's microsecond-resolution process start time via libproc."""
+    try:
+        import ctypes
+
+        class ProcBsdInfo(ctypes.Structure):
+            _fields_ = [
+                ("pbi_flags", ctypes.c_uint32),
+                ("pbi_status", ctypes.c_uint32),
+                ("pbi_xstatus", ctypes.c_uint32),
+                ("pbi_pid", ctypes.c_uint32),
+                ("pbi_ppid", ctypes.c_uint32),
+                ("pbi_uid", ctypes.c_uint32),
+                ("pbi_gid", ctypes.c_uint32),
+                ("pbi_ruid", ctypes.c_uint32),
+                ("pbi_rgid", ctypes.c_uint32),
+                ("pbi_svuid", ctypes.c_uint32),
+                ("pbi_svgid", ctypes.c_uint32),
+                ("rfu_1", ctypes.c_uint32),
+                ("pbi_comm", ctypes.c_char * 16),
+                ("pbi_name", ctypes.c_char * 32),
+                ("pbi_nfiles", ctypes.c_uint32),
+                ("pbi_pgid", ctypes.c_uint32),
+                ("pbi_pjobc", ctypes.c_uint32),
+                ("e_tdev", ctypes.c_uint32),
+                ("e_tpgid", ctypes.c_uint32),
+                ("pbi_nice", ctypes.c_int32),
+                ("pbi_start_tvsec", ctypes.c_uint64),
+                ("pbi_start_tvusec", ctypes.c_uint64),
+            ]
+
+        libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+        libproc.proc_pidinfo.argtypes = [
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_uint64,
+            ctypes.c_void_p,
+            ctypes.c_int,
+        ]
+        libproc.proc_pidinfo.restype = ctypes.c_int
+        info = ProcBsdInfo()
+        size = ctypes.sizeof(info)
+        used = libproc.proc_pidinfo(pid, 3, 0, ctypes.byref(info), size)
+        if used != size or int(info.pbi_pid) != pid:
+            return None
+        return f"darwin:{int(info.pbi_start_tvsec)}:{int(info.pbi_start_tvusec)}"
+    except Exception:
+        return None
+
+
+def _process_birth_marker(pid) -> str | None:
+    """Return a stable marker that distinguishes reused process IDs."""
+    try:
+        pid = int(pid)
+    except (OverflowError, TypeError, ValueError):
+        return None
+    if pid <= 0:
+        return None
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class FILETIME(ctypes.Structure):
+                _fields_ = [("low", wintypes.DWORD), ("high", wintypes.DWORD)]
+
+            kernel32 = ctypes.windll.kernel32
+            try:
+                kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+                kernel32.OpenProcess.restype = wintypes.HANDLE
+                kernel32.GetProcessTimes.argtypes = [
+                    wintypes.HANDLE,
+                    ctypes.POINTER(FILETIME),
+                    ctypes.POINTER(FILETIME),
+                    ctypes.POINTER(FILETIME),
+                    ctypes.POINTER(FILETIME),
+                ]
+                kernel32.GetProcessTimes.restype = wintypes.BOOL
+                kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+                kernel32.CloseHandle.restype = wintypes.BOOL
+            except (AttributeError, TypeError):
+                pass
+            query_limited_information = 0x00001000
+            handle = kernel32.OpenProcess(query_limited_information, False, pid)
+            if not handle:
+                return None
+            try:
+                created = FILETIME()
+                exited = FILETIME()
+                kernel = FILETIME()
+                user = FILETIME()
+                if not kernel32.GetProcessTimes(
+                        handle, ctypes.byref(created), ctypes.byref(exited),
+                        ctypes.byref(kernel), ctypes.byref(user)):
+                    return None
+                ticks = (int(created.high) << 32) | int(created.low)
+                return f"windows:{ticks}"
+            finally:
+                kernel32.CloseHandle(handle)
+        except Exception:
+            return None
+    if sys.platform == "darwin":
+        return _darwin_process_birth_marker(pid)
+    proc_stat = Path(f"/proc/{pid}/stat")
+    boot_id_path = Path("/proc/sys/kernel/random/boot_id")
+    try:
+        if proc_stat.is_file() and boot_id_path.is_file():
+            _head, separator, tail = proc_stat.read_bytes().rpartition(b")")
+            fields = tail.strip().split()
+            boot_id = boot_id_path.read_bytes().strip()
+            if separator and len(fields) > 19 and boot_id:
+                return f"linux:{boot_id.decode('ascii')}:{fields[19].decode('ascii')}"
+    except Exception:
+        return None
+    return None
+
+
+def _same_process(pid, expected_birth_marker) -> bool:
+    """Match a live PID to its persisted birth marker, conservatively on probe failure."""
+    if not _pid_alive(pid):
+        return False
+    if not expected_birth_marker:
+        return True
+    current = _process_birth_marker(pid)
+    return current is None or current == expected_birth_marker
 
 
 def _scopes_overlap(a, b) -> bool:
@@ -2556,6 +2699,8 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
             if execution_lease
             and execution_lease.get("status") == "running"
             and execution_lease.get("owner_pid") == os.getpid()
+            and _same_process(
+                execution_lease.get("owner_pid"), execution_lease.get("owner_birth_marker"))
             else ""
         )
         if not execution_token:
@@ -2572,6 +2717,7 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
             runtime
             and runtime.get("status") in {"running", "stop_requested"}
             and runtime.get("owner_pid") == os.getpid()
+            and _same_process(runtime.get("owner_pid"), runtime.get("owner_birth_marker"))
             and runtime.get("inflight_cycle")
         )
         runtime_id = str(runtime.get("id")) if tracking else ""
@@ -2588,6 +2734,7 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
             "loop": loop_id,
             "command_sha256": hashlib.sha256(cmd.encode("utf-8")).hexdigest()[:16],
             "pid": None,
+            "birth_marker": None,
             "process_group": None,
             "host": _cycle_host_id(),
             "started_at": _now(),
@@ -2642,11 +2789,13 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
                 ],
                 **popen_args,
             )
+            child_birth_marker = _process_birth_marker(proc.pid)
             if tracking:
                 def mark_pid(current: dict) -> None:
                     active = current.get("active_command") or {}
                     if active.get("token") == token:
                         active["pid"] = proc.pid
+                        active["birth_marker"] = child_birth_marker
                         active["process_group"] = proc.pid if os.name == "posix" else None
                         active["launch_state"] = "armed"
 
@@ -2664,6 +2813,7 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
                 active = lease.get("active_command") or {}
                 if active.get("token") == token:
                     active["pid"] = proc.pid
+                    active["birth_marker"] = child_birth_marker
                     active["process_group"] = proc.pid if os.name == "posix" else None
                     active["launch_state"] = "armed"
 
@@ -3073,30 +3223,65 @@ def _cycle_owner_alive(runtime: dict) -> bool:
     owner_host = runtime.get("owner_host") or ""
     if owner_host and owner_host != _cycle_host_id():
         return True
-    return _pid_alive(runtime.get("owner_pid"))
+    return _same_process(runtime.get("owner_pid"), runtime.get("owner_birth_marker"))
 
 
-def _active_command_alive(active) -> bool:
-    """Conservatively report whether a persisted command may still be running."""
-    if not isinstance(active, dict):
+def _posix_process_group_exists(process_group) -> bool:
+    if os.name != "posix":
         return False
+    try:
+        process_group = int(process_group)
+        if process_group <= 0:
+            return False
+        os.killpg(process_group, 0)
+        return True
+    except PermissionError:
+        return True
+    except ProcessLookupError:
+        return False
+    except OSError as exc:
+        return exc.errno == errno.EPERM
+    except (OverflowError, ValueError, TypeError):
+        return False
+
+
+def _active_command_state(active) -> str:
+    """Return dead, live, or unverifiable for a persisted command identity."""
+    if not isinstance(active, dict):
+        return "dead"
     command_host = active.get("host") or ""
     if command_host and command_host != _cycle_host_id():
-        return True
+        return "live"
     if active.get("launch_state") == "pending" and not active.get("pid"):
         try:
             deadline = float(active.get("launch_deadline_epoch"))
         except (TypeError, ValueError):
-            return True
-        return not math.isfinite(deadline) or time.time() <= deadline + 1.0
+            return "live"
+        return "live" if not math.isfinite(deadline) or time.time() <= deadline + 1.0 else "dead"
+    pid = active.get("pid")
+    pid_alive = _pid_alive(pid)
+    expected_birth = active.get("birth_marker")
+    if pid_alive and expected_birth:
+        current_birth = _process_birth_marker(pid)
+        if current_birth is None:
+            return "live"
+        if current_birth != expected_birth:
+            return ("unverifiable" if _posix_process_group_exists(
+                active.get("process_group")) else "dead")
+        return "live"
+    if pid_alive:
+        return "live"
     process_group = active.get("process_group")
-    if os.name == "posix" and process_group:
-        try:
-            os.killpg(int(process_group), 0)
-            return True
-        except (OSError, ValueError, TypeError):
-            pass
-    return _pid_alive(active.get("pid"))
+    if _posix_process_group_exists(process_group):
+        # Once the recorded leader is gone, a bare PGID cannot distinguish its
+        # descendants from an unrelated group that reused the same numeric ID.
+        return "unverifiable" if expected_birth else "live"
+    return "dead"
+
+
+def _active_command_alive(active) -> bool:
+    """Conservatively block automatic replay unless a command is known dead."""
+    return _active_command_state(active) != "dead"
 
 
 def _cycle_active_command_alive(runtime: dict) -> bool:
@@ -3119,6 +3304,7 @@ def _cycle_set_terminal(runtime: dict, status: str, reason: str | None = None) -
     runtime["status"] = status
     runtime["stop_reason"] = reason
     runtime["owner_pid"] = None
+    runtime["owner_birth_marker"] = None
     runtime["finished_at"] = _now()
     _cycle_event(runtime, status, reason=reason)
 
@@ -3178,7 +3364,7 @@ def _execution_owner_alive(record: dict) -> bool:
     owner_host = record.get("owner_host") or ""
     if owner_host and owner_host != _cycle_host_id():
         return True
-    return _pid_alive(record.get("owner_pid"))
+    return _same_process(record.get("owner_pid"), record.get("owner_birth_marker"))
 
 
 def _recover_execution_lease(lease: dict) -> None:
@@ -3186,6 +3372,7 @@ def _recover_execution_lease(lease: dict) -> None:
     if lease.get("status") == "running" and not _execution_owner_alive(lease):
         lease["status"] = "interrupted"
         lease["owner_pid"] = None
+        lease["owner_birth_marker"] = None
         lease["finished_at"] = _now()
         lease["stop_reason"] = "one-shot loop owner exited before its result was committed"
 
@@ -3230,6 +3417,7 @@ def _loop_execution_claim(root: Path, operation: str, *,
                 cycle_runtime_id
                 and runtime.get("id") == cycle_runtime_id
                 and runtime.get("owner_pid") == os.getpid()
+                and _same_process(runtime.get("owner_pid"), runtime.get("owner_birth_marker"))
                 and (not runtime.get("owner_host") or runtime.get("owner_host") == _cycle_host_id())
             )
             if not same_owner:
@@ -3254,6 +3442,7 @@ def _loop_execution_claim(root: Path, operation: str, *,
             "operation": operation,
             "status": "running",
             "owner_pid": os.getpid(),
+            "owner_birth_marker": _process_birth_marker(os.getpid()),
             "owner_host": _cycle_host_id(),
             "cycle_runtime_id": cycle_runtime_id,
             "active_command": None,
@@ -3287,7 +3476,9 @@ def _loop_execution_command_update(root: Path, token: str, updater) -> dict | No
         lease = state.get("execution_lease")
         if not isinstance(lease, dict) or lease.get("token") != token:
             return
-        if lease.get("status") != "running" or lease.get("owner_pid") != os.getpid():
+        if (lease.get("status") != "running"
+                or lease.get("owner_pid") != os.getpid()
+                or not _same_process(lease.get("owner_pid"), lease.get("owner_birth_marker"))):
             return
         updater(lease)
         found["lease"] = dict(lease)
@@ -3361,6 +3552,7 @@ def _cycle_begin(root: Path, args: argparse.Namespace) -> tuple[dict | None, str
         "force": bool(args.force),
         "continue_on_failure": bool(args.continue_on_failure),
         "owner_pid": os.getpid(),
+        "owner_birth_marker": _process_birth_marker(os.getpid()),
         "owner_host": _cycle_host_id(),
         "started_at": _now(),
         "updated_at": _now(),
@@ -3735,6 +3927,7 @@ def _loop_resume(root: Path, _args: argparse.Namespace) -> int:
     def resume(current: dict) -> None:
         current["status"] = "running"
         current["owner_pid"] = os.getpid()
+        current["owner_birth_marker"] = _process_birth_marker(os.getpid())
         current["owner_host"] = _cycle_host_id()
         current["finished_at"] = None
         current["stop_reason"] = None
@@ -3774,10 +3967,11 @@ def _reconcile_execution_lease(root: Path, lease: dict, args: argparse.Namespace
         return 2
     if lease.get("status") != "interrupted":
         return 0
-    if _active_command_alive(lease.get("active_command")):
+    command_state = _active_command_state(lease.get("active_command"))
+    if command_state == "live":
         print(
-            f"agentctl: one-shot loop execution {lease.get('operation')} still has a live or "
-            "unverifiable command; wait for it to exit before reconciling",
+            f"agentctl: one-shot loop execution {lease.get('operation')} still has a live "
+            "command; wait for it to exit before reconciling",
             file=sys.stderr,
         )
         return 2
@@ -3811,10 +4005,12 @@ def _loop_stop(root: Path, args: argparse.Namespace) -> int:
         return 0
     unsafe_inflight = status == "interrupted" and runtime.get("resume_safe") is False
     if unsafe_inflight:
-        if (_cycle_active_command_alive(runtime)
-                or (execution_lease and _active_command_alive(execution_lease.get("active_command")))):
+        command_states = [_active_command_state(runtime.get("active_command"))]
+        if execution_lease:
+            command_states.append(_active_command_state(execution_lease.get("active_command")))
+        if "live" in command_states:
             print(
-                f"agentctl: loop runtime {runtime.get('id')} still has a live or unverifiable "
+                f"agentctl: loop runtime {runtime.get('id')} still has a live "
                 "in-flight command; wait for it to exit on its recorded host before reconciling",
                 file=sys.stderr,
             )

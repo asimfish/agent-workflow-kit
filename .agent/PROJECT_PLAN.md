@@ -33,7 +33,7 @@ instead of relying on chat memory or repeated human prompts.
 | M3 | Operational autonomy | in_progress | Resumable bounded cycles, worktree leases, scheduler adapters, budgets, stop conditions, and recovery tests are proven incrementally |
 
 ## Task Board
-- [ ] T-023 - add resumable autonomous loop runtime (owner: codex)
+- [x] T-023 - add resumable autonomous loop runtime (owner: codex)
 - [x] T-022 - finalize dispatch release metadata (owner: codex)
 - [x] T-021 - add codex session dispatch transport (owner: codex)
 - [x] T-020 - validate github install link (owner: codex)

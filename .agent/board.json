@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-11 00:09:34",
+  "updated_at": "2026-07-11 11:56:09",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -435,7 +435,7 @@
     },
     "T-023": {
       "title": "add resumable autonomous loop runtime",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/agentctl.py",
@@ -447,7 +447,7 @@
       ],
       "deps": [],
       "created_at": "2026-07-10 22:11:14",
-      "updated_at": "2026-07-11 00:09:34"
+      "updated_at": "2026-07-11 11:56:09"
     }
   }
 }

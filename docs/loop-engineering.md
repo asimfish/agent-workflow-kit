@@ -114,6 +114,17 @@ Rules:
 - `loop status` detects a missing owner process on the same host. If no cycle was
   in flight, it records `interrupted` with `resume_safe=true`, and `loop resume`
   continues with the next unfinished cycle.
+- On Linux, macOS, and Windows, owner and child identities persist both PID and
+  a native process-birth marker (boot/start ticks, microsecond libproc start
+  time, or `GetProcessTimes`). Recovery treats a live but reused PID as a
+  different process instead of preserving a stale runtime or execution lease.
+- Linux process records are parsed as bytes because task names are not required
+  to be UTF-8. On POSIX, if the recorded leader has exited while its numeric
+  process-group ID still exists, recovery treats that group as unverifiable:
+  automatic replay remains blocked, but an operator can inspect side effects and
+  reconcile it explicitly with `loop stop --ack-inflight --reason "<reason>"`.
+  Permission-denied PID or process-group probes are treated as existing rather
+  than dead, preserving that conservative replay block.
 - A cycle starts with `resume_safe=false` and becomes safe only when its result is
   persisted in the same locked update as progress and terminal state. During a
   declared shell check, the runtime also stores a command hash, child PID,

@@ -7,6 +7,7 @@ auto-closes the packet, and --ack-escalations records a deliberate override.
 """
 
 import importlib.util
+import errno
 import json
 import os
 import shutil
@@ -505,7 +506,7 @@ raise SystemExit(module.main([
 
         still_arming = self.agentctl(
             "loop", "stop", "--ack-inflight", "--reason", "launch not reconciled", expect=2)
-        self.assertIn("live or unverifiable", still_arming.stdout + still_arming.stderr)
+        self.assertIn("still has a live", still_arming.stdout + still_arming.stderr)
         time.sleep(2)
         self.assertFalse((self.root / "runs.txt").exists())
         self.agentctl(
@@ -648,16 +649,24 @@ raise SystemExit(module.main([
         class Kernel32:
             def __init__(self):
                 self.wait_result = 0x00000102
+                self.open_handle = 42
+                self.last_error = 0
+                self.raise_probe_error = False
                 self.closed = []
 
             def OpenProcess(self, _access, _inherit, _pid):
-                return 42
+                if self.raise_probe_error:
+                    raise RuntimeError("simulated ctypes failure")
+                return self.open_handle
 
             def WaitForSingleObject(self, _handle, _timeout):
                 return self.wait_result
 
             def CloseHandle(self, handle):
                 self.closed.append(handle)
+
+            def GetLastError(self):
+                return self.last_error
 
         kernel32 = Kernel32()
         fake_ctypes = types.SimpleNamespace(
@@ -670,8 +679,221 @@ raise SystemExit(module.main([
             self.assertTrue(module._pid_alive(1234))
             kernel32.wait_result = 0
             self.assertFalse(module._pid_alive(1234))
+            kernel32.open_handle = 0
+            kernel32.last_error = 87
+            self.assertFalse(module._pid_alive(1234))
+            kernel32.last_error = 5
+            self.assertTrue(module._pid_alive(1234))
+            kernel32.raise_probe_error = True
+            self.assertTrue(module._pid_alive(1234))
         destructive_probe.assert_not_called()
         self.assertEqual(kernel32.closed, [42, 42])
+
+    @unittest.skipUnless(os.name == "posix", "permission probe regression requires POSIX")
+    def test_posix_pid_probe_treats_permission_denied_as_alive(self):
+        module = self.load_agentctl_module("agentctl_posix_permission_test")
+        denied = PermissionError(errno.EPERM, "operation not permitted")
+        with mock.patch.object(module.os, "kill", side_effect=denied):
+            self.assertTrue(module._pid_alive(1234))
+        with mock.patch.object(module.os, "kill", side_effect=OverflowError("pid out of range")):
+            self.assertFalse(module._pid_alive(2 ** 62))
+
+    @unittest.skipUnless(os.name == "posix", "process-group probe regression requires POSIX")
+    def test_posix_process_group_probe_handles_permission_and_range_failures(self):
+        module = self.load_agentctl_module("agentctl_posix_group_permission_test")
+        denied = PermissionError(errno.EPERM, "operation not permitted")
+        with mock.patch.object(module.os, "killpg", side_effect=denied):
+            self.assertTrue(module._posix_process_group_exists(1234))
+        with mock.patch.object(module.os, "killpg", side_effect=OverflowError("pgid out of range")):
+            self.assertFalse(module._posix_process_group_exists(2 ** 62))
+
+    def test_windows_process_birth_marker_uses_creation_time_and_degrades_safely(self):
+        import ctypes
+
+        module = self.load_agentctl_module("agentctl_windows_process_birth_test")
+
+        class FakeFunction:
+            def __init__(self, implementation):
+                self.implementation = implementation
+
+            def __call__(self, *args):
+                return self.implementation(*args)
+
+        class Kernel32:
+            def __init__(self):
+                self.closed = []
+                self.raise_argument_error = False
+                self.OpenProcess = FakeFunction(lambda _access, _inherit, _pid: 42)
+                self.GetProcessTimes = FakeFunction(self.get_process_times)
+                self.CloseHandle = FakeFunction(self.close_handle)
+
+            def get_process_times(self, _handle, created, _exited, _kernel, _user):
+                if self.raise_argument_error:
+                    raise ctypes.ArgumentError("simulated ABI mismatch")
+                created._obj.low = 0x89ABCDEF
+                created._obj.high = 0x12345678
+                return 1
+
+            def close_handle(self, handle):
+                self.closed.append(handle)
+                return 1
+
+        kernel32 = Kernel32()
+        fake_windll = types.SimpleNamespace(kernel32=kernel32)
+        with mock.patch.object(module.os, "name", "nt"), \
+                mock.patch.object(ctypes, "windll", fake_windll, create=True):
+            self.assertEqual(
+                module._process_birth_marker(1234),
+                "windows:1311768467177459183",
+            )
+            kernel32.raise_argument_error = True
+            self.assertIsNone(module._process_birth_marker(1234))
+        self.assertEqual(kernel32.closed, [42, 42])
+
+    def test_process_birth_marker_is_stable_for_current_process(self):
+        module = self.load_agentctl_module("agentctl_process_birth_test")
+        with mock.patch.dict(os.environ, {"TZ": "UTC"}):
+            utc_marker = module._process_birth_marker(os.getpid())
+        with mock.patch.dict(os.environ, {"TZ": "Asia/Seoul"}):
+            local_marker = module._process_birth_marker(os.getpid())
+
+        self.assertIsNotNone(utc_marker)
+        self.assertEqual(local_marker, utc_marker)
+        self.assertEqual(module._process_birth_marker(os.getpid()), utc_marker)
+        self.assertTrue(module._same_process(os.getpid(), utc_marker))
+        if sys.platform == "darwin":
+            kind, seconds, microseconds = utc_marker.split(":")
+            self.assertEqual(kind, "darwin")
+            self.assertGreater(int(seconds), 0)
+            self.assertGreaterEqual(int(microseconds), 0)
+            self.assertLess(int(microseconds), 1_000_000)
+
+    def test_non_finite_pid_values_degrade_without_crashing(self):
+        module = self.load_agentctl_module("agentctl_non_finite_pid_test")
+        for pid in (float("inf"), float("-inf")):
+            self.assertFalse(module._pid_alive(pid))
+            self.assertIsNone(module._process_birth_marker(pid))
+
+    def test_linux_process_birth_marker_parses_non_utf8_comm(self):
+        module = self.load_agentctl_module("agentctl_linux_process_birth_test")
+        fields = [b"S"] + [str(index).encode("ascii") for index in range(1, 19)] + [b"4242"]
+
+        class FakeProcPath:
+            def __init__(self, path):
+                self.path = str(path)
+
+            def is_file(self):
+                return True
+
+            def read_bytes(self):
+                if self.path.endswith("/stat"):
+                    return b"123 (name-\xff-with-) paren) " + b" ".join(fields) + b"\n"
+                return b"boot-id\n"
+
+        with mock.patch.object(module.sys, "platform", "linux"), \
+                mock.patch.object(module, "Path", FakeProcPath):
+            self.assertEqual(
+                module._process_birth_marker(123),
+                "linux:boot-id:4242",
+            )
+
+    def test_linux_process_birth_marker_degrades_when_procfs_is_inaccessible(self):
+        module = self.load_agentctl_module("agentctl_linux_proc_permission_test")
+
+        class InaccessibleProcPath:
+            def __init__(self, _path):
+                pass
+
+            def is_file(self):
+                raise PermissionError(errno.EACCES, "permission denied")
+
+        with mock.patch.object(module.sys, "platform", "linux"), \
+                mock.patch.object(module, "Path", InaccessibleProcPath):
+            self.assertIsNone(module._process_birth_marker(123))
+
+    def test_reused_pid_does_not_preserve_runtime_or_execution_ownership(self):
+        module = self.load_agentctl_module("agentctl_reused_pid_test")
+        state_path = self.root / ".agent" / "loops" / "state.json"
+        runtime = self.set_cycle_runtime(
+            owner_pid=os.getpid(),
+            owner_host=module._cycle_host_id(),
+            owner_birth_marker="old-process-birth",
+        )
+        state = json.loads(state_path.read_text(encoding="utf-8"))
+        state["execution_lease"] = {
+            "token": "reused-pid-lease",
+            "operation": "loop run reused-pid",
+            "status": "running",
+            "owner_pid": os.getpid(),
+            "owner_birth_marker": "old-process-birth",
+            "owner_host": module._cycle_host_id(),
+            "cycle_runtime_id": None,
+            "active_command": None,
+            "started_at": "2026-01-01 00:00:00",
+            "finished_at": None,
+            "stop_reason": None,
+        }
+        state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+
+        with mock.patch.object(module, "_pid_alive", return_value=True), \
+                mock.patch.object(
+                    module, "_process_birth_marker", return_value="new-process-birth"):
+            recovered_runtime = module._cycle_runtime(self.root)
+            recovered_lease = module._loop_execution_lease(self.root)
+            active = dict(runtime.get("active_command") or {})
+            active.update({
+                "pid": os.getpid(),
+                "birth_marker": "old-process-birth",
+                "host": module._cycle_host_id(),
+                "launch_state": "armed",
+            })
+            self.assertFalse(module._active_command_alive(active))
+            active["process_group"] = 1234
+            with mock.patch.object(module, "_posix_process_group_exists", return_value=True):
+                self.assertEqual(module._active_command_state(active), "unverifiable")
+
+        self.assertEqual(recovered_runtime["status"], "interrupted")
+        self.assertTrue(recovered_runtime["resume_safe"])
+        self.assertIsNone(recovered_runtime["owner_pid"])
+        self.assertIsNone(recovered_runtime["owner_birth_marker"])
+        self.assertEqual(recovered_lease["status"], "interrupted")
+        self.assertIsNone(recovered_lease["owner_pid"])
+        self.assertIsNone(recovered_lease["owner_birth_marker"])
+
+    @unittest.skipUnless(os.name == "posix", "process-group recovery requires POSIX")
+    def test_ack_reconciles_an_unverifiable_leaderless_process_group(self):
+        module = self.load_agentctl_module("agentctl_reused_process_group_test")
+        active = {
+            "token": "reused-group-command",
+            "pid": 99999999,
+            "birth_marker": "old-process-birth",
+            "process_group": os.getpgrp(),
+            "host": module._cycle_host_id(),
+            "launch_state": "armed",
+        }
+        self.assertEqual(module._active_command_state(active), "unverifiable")
+        self.assertTrue(module._active_command_alive(active))
+        legacy_active = dict(active)
+        legacy_active.pop("birth_marker")
+        self.assertEqual(module._active_command_state(legacy_active), "live")
+        self.set_cycle_runtime(
+            status="interrupted",
+            owner_pid=None,
+            owner_birth_marker=None,
+            inflight_cycle={"number": 2},
+            active_command=active,
+            resume_safe=False,
+        )
+
+        missing_ack = self.agentctl(
+            "loop", "stop", "--reason", "inspected unrelated reused group", expect=2)
+        self.assertIn("--ack-inflight", missing_ack.stdout + missing_ack.stderr)
+        reconciled = self.agentctl(
+            "loop", "stop", "--ack-inflight",
+            "--reason", "recorded leader exited; process group identity is no longer verifiable",
+            expect=0,
+        )
+        self.assertIn("marked stopped", reconciled.stdout)
 
     def test_cycle_rejects_non_finite_intervals(self):
         self.agentctl("work", "--agent", "codex", "--auto-create",
