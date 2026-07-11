@@ -34,3 +34,4 @@
 | T-021 | done | codex | `tools/, tests/, templates/project/, README.md, docs/, .agent/` | [.agent/tasks/T-021.md](tasks/T-021.md) | add codex session dispatch transport |
 | T-022 | done | codex | `.agent/` | [.agent/tasks/T-022.md](tasks/T-022.md) | finalize dispatch release metadata |
 | T-023 | done | codex | `tools/agentctl.py, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-023.md](tasks/T-023.md) | add resumable autonomous loop runtime |
+| T-024 | in_progress | codex | `tools/agentctl.py, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-024.md](tasks/T-024.md) | add managed worktree leases |

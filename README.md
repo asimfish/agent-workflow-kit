@@ -358,6 +358,46 @@ roll back side effects written before a process was interrupted.
 An external scheduler may invoke these bounded commands, but the kit does not
 install cron jobs or keep a background process alive.
 
+### Managed Worktree Leases
+
+Parallel agents should not share one Git index or working directory. After the
+supervisor commits the task plan and reaches a clean baseline, it can allocate a
+dedicated worktree:
+
+```bash
+python3 tools/agentctl.py worktree create --task T-101 --agent codex-worker
+python3 tools/agentctl.py worktree list
+```
+
+The command creates a task-scoped branch and prints the worker path. Lease state
+lives under the repository's shared Git common directory, so every linked
+worktree sees the same allocation. Creation applies the same owner, dependency,
+write-scope, and `todo`/`ready` claim rules as worker startup. It also refuses
+uncommitted task documents, dirty baselines, duplicate task/agent leases,
+existing branches, paths overlapping another checkout, and any scope overlap
+with a nonreleased lease, including leases using the same agent name. A managed
+worker cannot override its leased task, agent, or scope during startup.
+
+After the worker commits or removes all changes, run release from another
+worktree:
+
+```bash
+python3 tools/agentctl.py worktree release <lease-id>
+```
+
+Release refuses the current or a dirty worktree. It removes only the linked
+working directory and preserves the branch and commits. An externally moved
+checkout is tracked by its stable Git admin directory and stops for inspection.
+Prunable or already-missing metadata is refused by default because Git cannot
+prove the checkout was deleted; after inspecting the path, acknowledge cleanup
+explicitly:
+
+```bash
+python3 tools/agentctl.py worktree release <lease-id> --ack-missing
+```
+
+The kit never force removes a worktree or deletes its branch.
+
 ## System Modules
 
 | Module | Files | Role |
@@ -365,6 +405,7 @@ install cron jobs or keep a background process alive.
 | Entry protocol | `AGENTS.md`, `.agent/WORKFLOW_ENTRY.md` | Tells every agent how to start from the same workflow. |
 | Plan and tasks | `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, `.agent/tasks/*.md`, `.agent/board.json` | Durable plan, task contracts, status, and progress. |
 | Loop runtime | `.agent/loops/*`, `agentctl loop ...` | Bounded Trigger -> Execute -> Check -> Feedback -> Memory -> Next cycles. |
+| Worktree leases | Git common dir, `agentctl worktree ...` | Isolates parallel agents with shared allocation state and non-destructive release. |
 | Controller | `tools/agentctl.py` | Starts tasks, records notes, finishes tasks, runs checks and loops. |
 | Lifecycle hooks | `tools/agent_workflow_hook.py`, `.codex/`, `.claude/`, `.cursor/` | Injects workflow context and blocks mutating actions when no task is active where supported. |
 | Git hooks | `.githooks/` | Enforces commit format, task IDs, staged workflow docs, secret checks, and push gates. |
@@ -441,7 +482,8 @@ python3 tools/agentctl.py doctor
 
 `doctor` checks core files, Git hook wiring, loop contract validity, open or
 escalated follow-up packets, task-board status counts, checkpoint memory, cycle
-runtime state, and the same base conditions as `agentctl check --mode manual`.
+runtime state, managed worktree leases, and the same base conditions as
+`agentctl check --mode manual`.
 It exits nonzero when a real workflow problem needs attention.
 
 ## Regression Tests
@@ -454,7 +496,7 @@ The regression tests install the kit into fresh temporary Git projects. They
 replay feedback escalation, failure budgets, cooperative stop, safe and
 unknown-result orphan recovery, launch handshakes, one-shot/cycle mutual
 exclusion, descendant cleanup, non-destructive Windows PID checks, and supervisor
-guidance: Fable-style plan creation,
+guidance and managed worktree allocation: Fable-style plan creation,
 Codex work-start surfacing, finish blocking until acknowledgement, and successful
 completion after `guidance ack`. CI runs the same tests on every push and pull
 request.
@@ -464,7 +506,7 @@ request.
 The current design intentionally does not include:
 
 - a background daemon or cron scheduler;
-- automatic worktree pools;
+- automatic worktree pools or branch deletion;
 - external connector loops;
 - automatic expensive experiment launches;
 - automatic merge to protected branches.

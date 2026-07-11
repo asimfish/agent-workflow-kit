@@ -100,7 +100,15 @@ When the human names this agent as a supervisor and provides a Codex session ID:
 
 1. Decompose the request into a bounded task with explicit scope and acceptance
    evidence.
-2. Register the worker profile if needed, then create and dispatch one guidance
+2. If another agent is changing the current checkout, commit the task plan and
+   allocate a clean task-scoped worktree. Run the worker or dispatch command from
+   the printed path:
+
+   ```bash
+   python3 tools/agentctl.py worktree create --task <task-id> --agent <codex-worker>
+   ```
+
+3. Register the worker profile if needed, then create and dispatch one guidance
    packet:
 
    ```bash
@@ -111,7 +119,7 @@ When the human names this agent as a supervisor and provides a Codex session ID:
      --summary "<bounded phase>" --plan-file <plan-path> --dispatch
    ```
 
-3. After the bounded Codex turn returns, inspect the task document, diff, and
+4. After the bounded Codex turn returns, inspect the task document, diff, and
    verification evidence. Send another packet only when the evidence requires a
    new implementation turn; otherwise gate or hand off the task.
 

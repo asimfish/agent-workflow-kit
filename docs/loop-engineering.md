@@ -149,8 +149,9 @@ Rules:
   rewriting history. `finish --ack-escalations` does not authorize more retries.
 
 This provides crash recovery and an external scheduler contract without
-claiming unattended service management. Cross-host leases, managed worktrees,
-and scheduler installation remain separate operational-autonomy layers.
+claiming unattended service management. Task-scoped local worktree leases are
+available through `agentctl worktree`; cross-host leases, automatic worktree
+pools, and scheduler installation remain separate operational-autonomy layers.
 Loop check commands should be idempotent: the runtime prevents automatic replay
 when completion is unknown, but cannot undo side effects produced before a
 process crash.

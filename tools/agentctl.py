@@ -15,6 +15,7 @@ Commands:
   gate       approve/reject a task in review (-> done / blocked)
   guidance   create/list/show/ack/dispatch supervisor guidance packets
   handoff    create/list/show/close cross-agent task packets
+  worktree   create/list/release task-scoped worktree leases
   loop       run/status/resume/stop bounded project loops and checkpoints
   refresh    re-record doc hashes after plan/rules/task docs changed
   board      print the task board (human or --json)
@@ -87,6 +88,9 @@ GUIDANCE_DISPATCH_TIMEOUT_MAX = 86400
 GUIDANCE_DISPATCH_PROMPT_MAX = 24000
 GUIDANCE_DISPATCH_OUTPUT_CAP = 4000
 REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
+WORKTREE_LEASES_DIR = "agent-workflow"
+WORKTREE_LEASES_FILE = "worktree-leases.json"
+WORKTREE_LEASES_LOCK = "worktree-leases.lock"
 
 LOOP_REQUIRED_SECTIONS = ("Trigger", "Execute", "Check", "Feedback", "Memory", "Next")
 DEFAULT_LOOP_CHECKPOINTS = {
@@ -195,6 +199,25 @@ def _git(root: Path, *args: str) -> str:
         return out.decode("utf-8", "replace").strip()
     except Exception:
         return ""
+
+
+def _git_common_dir(root: Path) -> Path | None:
+    raw = _git(root, "rev-parse", "--git-common-dir")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+    return path.resolve()
+
+
+def _git_process(root: Path, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(root), *args],
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+    )
 
 
 def _ensure_gitignore(root: Path) -> None:
@@ -872,6 +895,24 @@ def cmd_start(args: argparse.Namespace) -> int:
     scope = entry.get("scope") or []
     if args.scope:
         scope = [s.strip() for s in args.scope.split(",") if s.strip()]
+    managed_lease = _managed_worktree_lease(root)
+    if managed_lease:
+        lease_scope = managed_lease.get("scope") or []
+        if task != managed_lease.get("task") or agent != managed_lease.get("agent"):
+            print(
+                f"agentctl: this managed worktree is leased to task={managed_lease.get('task')} "
+                f"agent={managed_lease.get('agent')}",
+                file=sys.stderr,
+            )
+            return 1
+        if args.scope and sorted(set(scope)) != sorted(set(lease_scope)):
+            print(
+                "agentctl: --scope cannot change a managed worktree lease; "
+                "release it and allocate a new task scope",
+                file=sys.stderr,
+            )
+            return 1
+        scope = lease_scope
     # write-scope conflict vs other in_progress tasks owned by others
     if scope:
         for tid, t in tasks.items():
@@ -2043,6 +2084,458 @@ def cmd_handoff(args: argparse.Namespace) -> int:
     if args.handoff_action == "mark":
         return _handoff_mark(root, args)
     print("agentctl: unknown handoff action", file=sys.stderr)
+    return 2
+
+
+# ---------- worktree leases ----------
+
+def _worktree_lease_paths(root: Path) -> tuple[Path, Path] | tuple[None, None]:
+    common = _git_common_dir(root)
+    if common is None:
+        return None, None
+    directory = common / WORKTREE_LEASES_DIR
+    return directory / WORKTREE_LEASES_FILE, directory / WORKTREE_LEASES_LOCK
+
+
+def _load_worktree_leases(root: Path) -> dict:
+    registry, _lock = _worktree_lease_paths(root)
+    if registry is None:
+        return {"version": 1, "leases": []}
+    data = _load_json(registry, {"version": 1, "leases": []})
+    if not isinstance(data, dict):
+        data = {"version": 1, "leases": []}
+    data.setdefault("version", 1)
+    if not isinstance(data.get("leases"), list):
+        data["leases"] = []
+    return data
+
+
+def _save_worktree_leases(root: Path, data: dict) -> None:
+    registry, _lock = _worktree_lease_paths(root)
+    if registry is None:
+        raise RuntimeError("not inside a Git repository")
+    _save_json(registry, data)
+
+
+def _git_worktrees(root: Path) -> dict[str, dict]:
+    proc = _git_process(root, "worktree", "list", "--porcelain")
+    if proc.returncode:
+        return {}
+    rows: dict[str, dict] = {}
+    current: dict = {}
+    for raw in [*proc.stdout.splitlines(), ""]:
+        line = raw.strip()
+        if not line:
+            path = current.get("path")
+            if path:
+                rows[str(Path(path).resolve())] = current
+            current = {}
+            continue
+        key, _, value = line.partition(" ")
+        if key == "worktree":
+            current["path"] = value
+        elif key == "HEAD":
+            current["head"] = value
+        elif key == "branch":
+            prefix = "refs/heads/"
+            current["branch"] = value[len(prefix):] if value.startswith(prefix) else value
+        elif key in {"bare", "detached", "locked", "prunable"}:
+            current[key] = value or True
+    for resolved_path, row in rows.items():
+        if row.get("prunable"):
+            continue
+        git_dir = _git_process(Path(resolved_path), "rev-parse", "--git-dir")
+        if git_dir.returncode or not git_dir.stdout.strip():
+            continue
+        admin_path = Path(git_dir.stdout.strip())
+        if not admin_path.is_absolute():
+            admin_path = Path(resolved_path) / admin_path
+        row["git_dir"] = str(admin_path.resolve())
+    return rows
+
+
+def _worktree_observed_status(lease: dict, worktrees: dict[str, dict]) -> str:
+    status = lease.get("status") or "unknown"
+    if status == "released":
+        return "released"
+    path = lease.get("path")
+    if not path:
+        return "missing"
+    actual = worktrees.get(str(Path(path).resolve()))
+    if not actual:
+        expected_git_dir = lease.get("git_dir") or ""
+        if expected_git_dir and any(
+            row.get("git_dir") == expected_git_dir for row in worktrees.values()
+        ):
+            return "moved"
+        expected_branch = lease.get("branch") or ""
+        if expected_branch and any(
+            row.get("branch") == expected_branch for row in worktrees.values()
+        ):
+            return "moved"
+        return "missing"
+    if actual.get("prunable"):
+        return "prunable"
+    expected_branch = lease.get("branch") or ""
+    if expected_branch and actual.get("branch") != expected_branch:
+        return "conflict"
+    return "active"
+
+
+def _worktree_rows(root: Path) -> list[dict]:
+    registry, lock = _worktree_lease_paths(root)
+    if registry is None or lock is None:
+        return []
+    fd = _acquire_lock_file(lock)
+    try:
+        data = _load_worktree_leases(root)
+        worktrees = _git_worktrees(root)
+        if _reconcile_worktree_leases(root, data, worktrees):
+            _save_worktree_leases(root, data)
+    finally:
+        _release_lock_file(lock, fd)
+    rows = []
+    for lease in data.get("leases") or []:
+        if not isinstance(lease, dict):
+            continue
+        row = dict(lease)
+        row["observed_status"] = _worktree_observed_status(lease, worktrees)
+        rows.append(row)
+    return rows
+
+
+def _path_contains(parent: Path, child: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _committed_task(root: Path, base_sha: str, task: str) -> tuple[dict, dict] | None:
+    board_text = _git(root, "show", f"{base_sha}:{WORKFLOW_DIR}/{BOARD_FILE}")
+    task_text = _git(root, "show", f"{base_sha}:{WORKFLOW_DIR}/{TASKS_DIR}/{task}.md")
+    if not board_text or not task_text:
+        return None
+    try:
+        board = json.loads(board_text)
+    except json.JSONDecodeError:
+        return None
+    entry = (board.get("tasks") or {}).get(task)
+    return (entry, board) if isinstance(entry, dict) else None
+
+
+def _reconcile_worktree_leases(root: Path, data: dict,
+                               worktrees: dict[str, dict]) -> bool:
+    changed = False
+    for lease in data.get("leases") or []:
+        if not isinstance(lease, dict):
+            continue
+        observed = _worktree_observed_status(lease, worktrees)
+        actual = worktrees.get(str(Path(lease.get("path") or "").resolve())) or {}
+        if observed == "active" and not lease.get("git_dir") and actual.get("git_dir"):
+            lease["git_dir"] = actual["git_dir"]
+            changed = True
+        if not lease.get("scope") and lease.get("task") and lease.get("base_sha"):
+            prior_task = _committed_task(root, lease["base_sha"], lease["task"])
+            if prior_task:
+                lease["scope"] = prior_task[0].get("scope") or []
+                changed = True
+        if lease.get("status") == "creating":
+            lease["status"] = "active" if observed == "active" else "failed"
+            lease["updated_at"] = _now()
+            if observed != "active":
+                lease["last_error"] = "creation was interrupted before Git registered the worktree"
+            changed = True
+    return changed
+
+
+def _managed_worktree_lease(root: Path) -> dict | None:
+    current = str(root.resolve())
+    for lease in _worktree_rows(root):
+        if lease.get("status") != "released" and str(Path(lease.get("path") or "").resolve()) == current:
+            return lease
+    return None
+
+
+def _default_worktree_branch(task: str, agent: str) -> str:
+    agent_segment = _safe_segment(agent).lower()[:32]
+    return f"feature/{task}-{agent_segment}"
+
+
+def _default_worktree_path(root: Path, task: str, agent: str) -> Path:
+    repository_root = root.resolve()
+    pool = repository_root.parent / f"{repository_root.name}-worktrees"
+    return pool / f"{task.lower()}-{_safe_segment(agent).lower()}"
+
+
+def _worktree_create(root: Path, args: argparse.Namespace) -> int:
+    registry, lock = _worktree_lease_paths(root)
+    if registry is None or lock is None:
+        print("agentctl: worktree create requires a Git repository", file=sys.stderr)
+        return 2
+    task = args.task.strip()
+    agent = args.agent.strip()
+    if not task or not agent:
+        print("agentctl: worktree create requires non-empty --task and --agent values", file=sys.stderr)
+        return 2
+    base = args.base or "HEAD"
+    base_sha = _git(root, "rev-parse", f"{base}^{{commit}}")
+    if not base_sha:
+        print(f"agentctl: worktree base is not a commit: {base}", file=sys.stderr)
+        return 2
+    committed_task = _committed_task(root, base_sha, task)
+    if not committed_task:
+        print(
+            f"agentctl: task {task} is not committed at {base}; commit the plan and task document first",
+            file=sys.stderr,
+        )
+        return 1
+    task_entry, committed_board = committed_task
+    if task_entry.get("status") not in {"todo", "ready"}:
+        print(
+            f"agentctl: task {task} is {task_entry.get('status')} at {base}; "
+            "worktree allocation requires a todo or ready task that the worker can claim",
+            file=sys.stderr,
+        )
+        return 1
+    if not _agent_can_take(agent, task_entry):
+        print(
+            f"agentctl: task {task} is assigned to {task_entry.get('owner')}; "
+            f"agent {agent} cannot claim it",
+            file=sys.stderr,
+        )
+        return 1
+    if not _deps_satisfied(committed_board, task_entry):
+        print(f"agentctl: task {task} has unresolved dependencies at {base}", file=sys.stderr)
+        return 1
+    task_scope = task_entry.get("scope") or []
+    if not task_scope:
+        print(f"agentctl: task {task} has no bounded write scope", file=sys.stderr)
+        return 1
+    for other_task, other_entry in (committed_board.get("tasks") or {}).items():
+        if other_task == task or other_entry.get("status") not in ACTIVE_STATUSES:
+            continue
+        if other_entry.get("owner") in (None, "", agent):
+            continue
+        if _scopes_overlap(task_scope, other_entry.get("scope") or []):
+            print(
+                f"agentctl: task {task} has a write-scope conflict with {other_task} "
+                f"(owner={other_entry.get('owner')})",
+                file=sys.stderr,
+            )
+            return 1
+    dirty = _git_process(root, "status", "--porcelain", "--untracked-files=all")
+    if dirty.returncode:
+        print(f"agentctl: unable to inspect current worktree: {dirty.stderr.strip()}", file=sys.stderr)
+        return 2
+    if dirty.stdout.strip():
+        print("agentctl: worktree create requires a clean committed baseline", file=sys.stderr)
+        return 1
+    branch = args.branch or _default_worktree_branch(task, agent)
+    valid_branch = _git_process(root, "check-ref-format", "--branch", branch)
+    if valid_branch.returncode:
+        print(f"agentctl: invalid worktree branch: {branch}", file=sys.stderr)
+        return 2
+    path = Path(args.path).expanduser() if args.path else _default_worktree_path(root, task, agent)
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    lease_id = "wt-" + hashlib.sha256(
+        f"{task}:{agent}:{path}:{time.time_ns()}".encode("utf-8")
+    ).hexdigest()[:16]
+    fd = _acquire_lock_file(lock)
+    try:
+        data = _load_worktree_leases(root)
+        worktrees = _git_worktrees(root)
+        if _reconcile_worktree_leases(root, data, worktrees):
+            _save_worktree_leases(root, data)
+        for existing in data.get("leases") or []:
+            if not isinstance(existing, dict):
+                continue
+            observed = _worktree_observed_status(existing, worktrees)
+            if existing.get("status") == "released":
+                continue
+            if existing.get("status") == "failed" and observed == "missing":
+                continue
+            if existing.get("task") == task and existing.get("agent") == agent:
+                print(
+                    f"agentctl: active worktree lease already exists for {task}/{agent}: "
+                    f"{existing.get('id')} ({observed})",
+                    file=sys.stderr,
+                )
+                return 1
+            if _scopes_overlap(task_scope, existing.get("scope") or []):
+                print(
+                    f"agentctl: task {task} has a write-scope conflict with active lease "
+                    f"{existing.get('id')} (task={existing.get('task')}, "
+                    f"agent={existing.get('agent')})",
+                    file=sys.stderr,
+                )
+                return 1
+            if existing.get("branch") == branch or str(Path(existing.get("path") or "").resolve()) == str(path):
+                print(
+                    f"agentctl: worktree branch or path is already leased by {existing.get('id')}",
+                    file=sys.stderr,
+                )
+                return 1
+        if _git(root, "show-ref", "--verify", f"refs/heads/{branch}"):
+            print(f"agentctl: worktree branch already exists: {branch}", file=sys.stderr)
+            return 1
+        checkout_paths = {str(root.resolve()), *worktrees.keys()}
+        for registered_path in checkout_paths:
+            existing_path = Path(registered_path)
+            if _path_contains(existing_path, path) or _path_contains(path, existing_path):
+                print(
+                    f"agentctl: worktree path overlaps registered checkout {existing_path}: {path}",
+                    file=sys.stderr,
+                )
+                return 1
+        if path.exists() and any(path.iterdir() if path.is_dir() else [path]):
+            print(f"agentctl: worktree path is not empty: {path}", file=sys.stderr)
+            return 1
+        lease = {
+            "id": lease_id,
+            "status": "creating",
+            "task": task,
+            "agent": agent,
+            "scope": task_scope,
+            "branch": branch,
+            "path": str(path),
+            "base": base,
+            "base_sha": base_sha,
+            "created_from": str(root.resolve()),
+            "created_at": _now(),
+            "updated_at": _now(),
+            "released_at": None,
+            "last_error": None,
+        }
+        data.setdefault("leases", []).append(lease)
+        _save_worktree_leases(root, data)
+        proc = _git_process(root, "worktree", "add", "-b", branch, str(path), base_sha)
+        lease["updated_at"] = _now()
+        if proc.returncode:
+            lease["status"] = "failed"
+            lease["last_error"] = (proc.stderr or proc.stdout).strip()[-2000:]
+            _save_worktree_leases(root, data)
+            print(f"agentctl: git worktree add failed: {lease['last_error']}", file=sys.stderr)
+            return 2
+        created = _git_worktrees(root).get(str(path)) or {}
+        lease["git_dir"] = created.get("git_dir")
+        lease["status"] = "active"
+        _save_worktree_leases(root, data)
+    finally:
+        _release_lock_file(lock, fd)
+    print(f"agentctl: worktree lease {lease_id} active")
+    print(f"  task={task} agent={agent}")
+    print(f"  branch={branch}")
+    print(f"  path={path}")
+    return 0
+
+
+def _worktree_list(root: Path, args: argparse.Namespace) -> int:
+    rows = _worktree_rows(root)
+    if args.json:
+        print(json.dumps({"worktrees": rows}, indent=2, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("agentctl: no managed worktree leases")
+        return 0
+    for row in rows:
+        print(
+            f"  {row.get('id', '-'):<20} {row.get('observed_status', '-'):<10} "
+            f"task={row.get('task') or '-'} agent={row.get('agent') or '-'} "
+            f"branch={row.get('branch') or '-'} path={row.get('path') or '-'}"
+        )
+    return 0
+
+
+def _worktree_release(root: Path, args: argparse.Namespace) -> int:
+    registry, lock = _worktree_lease_paths(root)
+    if registry is None or lock is None:
+        print("agentctl: worktree release requires a Git repository", file=sys.stderr)
+        return 2
+    fd = _acquire_lock_file(lock)
+    try:
+        data = _load_worktree_leases(root)
+        worktrees = _git_worktrees(root)
+        if _reconcile_worktree_leases(root, data, worktrees):
+            _save_worktree_leases(root, data)
+        lease = next(
+            (item for item in data.get("leases") or []
+             if isinstance(item, dict) and item.get("id") == args.lease),
+            None,
+        )
+        if not lease:
+            print(f"agentctl: worktree lease not found: {args.lease}", file=sys.stderr)
+            return 2
+        if lease.get("status") == "released":
+            print(f"agentctl: worktree lease {args.lease} already released")
+            return 0
+        path = Path(lease.get("path") or "").resolve()
+        observed = _worktree_observed_status(lease, worktrees)
+        if observed in {"conflict", "moved"}:
+            print(
+                f"agentctl: worktree lease {args.lease} is {observed}; "
+                "inspect it manually",
+                file=sys.stderr,
+            )
+            return 1
+        if observed == "active":
+            if _path_contains(path, Path.cwd()):
+                print(
+                    "agentctl: cannot release the worktree containing the current directory; "
+                    "run release from another worktree",
+                    file=sys.stderr,
+                )
+                return 1
+            status = _git_process(path, "status", "--porcelain", "--untracked-files=all")
+            if status.returncode:
+                print(f"agentctl: unable to inspect leased worktree: {status.stderr.strip()}", file=sys.stderr)
+                return 2
+            if status.stdout.strip():
+                print(
+                    f"agentctl: worktree {path} is dirty; commit or remove its changes before release",
+                    file=sys.stderr,
+                )
+                return 1
+            removed = _git_process(root, "worktree", "remove", str(path))
+            if removed.returncode:
+                print(f"agentctl: git worktree remove failed: {removed.stderr.strip()}", file=sys.stderr)
+                return 2
+        elif observed in {"prunable", "missing"}:
+            if not args.ack_missing:
+                print(
+                    f"agentctl: worktree lease {args.lease} is {observed} and its contents cannot be "
+                    "verified; inspect the path and rerun with --ack-missing",
+                    file=sys.stderr,
+                )
+                return 1
+            if observed == "prunable":
+                removed = _git_process(root, "worktree", "remove", str(path))
+                if removed.returncode:
+                    print(f"agentctl: unable to remove prunable worktree metadata: {removed.stderr.strip()}", file=sys.stderr)
+                    return 2
+        lease["status"] = "released"
+        lease["released_at"] = _now()
+        lease["updated_at"] = lease["released_at"]
+        lease["last_error"] = None
+        _save_worktree_leases(root, data)
+    finally:
+        _release_lock_file(lock, fd)
+    print(f"agentctl: worktree lease {args.lease} released; branch {lease.get('branch')} preserved")
+    return 0
+
+
+def cmd_worktree(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    if args.worktree_action == "create":
+        return _worktree_create(root, args)
+    if args.worktree_action == "list":
+        return _worktree_list(root, args)
+    if args.worktree_action == "release":
+        return _worktree_release(root, args)
+    print("agentctl: unknown worktree action", file=sys.stderr)
     return 2
 
 
@@ -4378,6 +4871,23 @@ def _doctor_report(root: Path) -> dict:
         "detail": lease_status,
     })
 
+    worktree_rows = _worktree_rows(root)
+    active_worktrees = [row for row in worktree_rows if row.get("observed_status") == "active"]
+    stale_worktrees = [
+        row for row in worktree_rows
+        if row.get("status") != "released" and row.get("observed_status") != "active"
+    ]
+    if stale_worktrees:
+        warnings.append(
+            "stale or conflicting worktree lease(s): "
+            + ", ".join(str(row.get("id")) for row in stale_worktrees)
+        )
+    checks.append({
+        "name": "worktree leases",
+        "status": "warn" if stale_worktrees else "ok",
+        "detail": f"active={len(active_worktrees)}, stale={len(stale_worktrees)}",
+    })
+
     return {
         "root": str(root),
         "ok": not problems,
@@ -4573,6 +5083,24 @@ def build_parser() -> argparse.ArgumentParser:
     hm.add_argument("--status", choices=["done", "failed"], required=True)
     hm.add_argument("--note")
     sp.set_defaults(func=cmd_handoff)
+
+    sp = sub.add_parser("worktree")
+    wsub = sp.add_subparsers(dest="worktree_action", required=True)
+    wc = wsub.add_parser("create")
+    wc.add_argument("--task", required=True)
+    wc.add_argument("--agent", required=True)
+    wc.add_argument("--branch")
+    wc.add_argument("--path")
+    wc.add_argument("--base", default="HEAD")
+    wl = wsub.add_parser("list")
+    wl.add_argument("--json", action="store_true")
+    wr = wsub.add_parser("release")
+    wr.add_argument("lease")
+    wr.add_argument(
+        "--ack-missing", "--ack-prunable", dest="ack_missing", action="store_true",
+        help="Acknowledge an inspected missing checkout before releasing its lease",
+    )
+    sp.set_defaults(func=cmd_worktree)
 
     sp = sub.add_parser("guidance")
     gsub = sp.add_subparsers(dest="guidance_action", required=True)

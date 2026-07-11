@@ -99,6 +99,46 @@ The transport does not weaken target-session permissions and does not create a
 background daemon. A worker session should use an isolated worktree when another
 agent is actively changing the same repository checkout.
 
+## Managed Worktree Allocation
+
+The supervisor owns worktree allocation. First commit the task plan and reach a
+clean baseline; a worker must never start from steering that exists only in an
+uncommitted supervisor checkout. Then create one lease:
+
+```bash
+agentctl worktree create --task T-101 --agent codex-worker
+agentctl worktree list --json
+```
+
+Allocation applies the same status, owner, dependency, and active write-scope
+rules as worker startup, so the fresh worker can actually claim the task. Active
+lease scopes are checked in the shared registry, not inferred only from a branch's
+local board, and overlapping leases are rejected even when sessions use the same
+agent ID. A worker starting inside a managed checkout cannot override its leased
+task, agent, or scope. The default branch is `feature/T-101-codex-worker`; the
+default path is a sibling pool derived from the checkout root. Both may be
+overridden explicitly, but a target cannot overlap the real checkout root or
+another registered checkout. The lease registry is stored under the shared Git
+common directory rather than `.agent/`, because `.agent/state/` is worktree-local
+and would give parallel agents different allocation views.
+
+Run the worker or its bounded guidance dispatch from the printed worktree path.
+When the worker phase is committed and the checkout is clean, release it from a
+different worktree:
+
+```bash
+agentctl worktree release <lease-id>
+```
+
+Release removes the clean linked checkout but preserves its branch. Stable Git
+admin-directory identity detects externally moved worktrees even after detach or
+branch changes. Dirty, current, moved, or branch-conflicting worktrees stop for
+inspection. Prunable and already-missing metadata also stop because cleanliness
+cannot be verified; after inspecting the missing path, use `worktree release
+<lease-id> --ack-missing` to release the registry entry and any remaining
+prunable Git metadata. There is no force removal, automatic branch deletion,
+worktree pool, or merge automation.
+
 ## Low-Friction Agent Loop
 
 Humans do not need to send the loop. They can say:

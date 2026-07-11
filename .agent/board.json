@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-11 11:56:09",
+  "updated_at": "2026-07-11 16:42:21",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -448,6 +448,22 @@
       "deps": [],
       "created_at": "2026-07-10 22:11:14",
       "updated_at": "2026-07-11 11:56:09"
+    },
+    "T-024": {
+      "title": "add managed worktree leases",
+      "status": "in_progress",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-11 15:07:49",
+      "updated_at": "2026-07-11 16:42:21"
     }
   }
 }
