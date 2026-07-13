@@ -122,6 +122,18 @@ When the human names this agent as a supervisor and provides a Codex session ID:
 4. After the bounded Codex turn returns, inspect the task document, diff, and
    verification evidence. Send another packet only when the evidence requires a
    new implementation turn; otherwise gate or hand off the task.
+5. For a harness, workflow, rule, or agent-runtime change, run one unchanged eval
+   suite against clean baseline and candidate worktrees before approval:
+
+   ```bash
+   python3 tools/agentctl.py eval run <suite> --target <baseline-path> --json
+   python3 tools/agentctl.py eval run <suite> --target <candidate-path> --json
+   python3 tools/agentctl.py eval gate --baseline <baseline-id> \
+     --candidate <candidate-id> --by <reviewer>
+   ```
+
+   The supervisor owns the suite and decision. A candidate must not edit or
+   replace its verifier policy.
 
 Dispatch uses the target session's existing Codex trust, approvals, and sandbox.
 Never add a dangerous bypass, acknowledge guidance for the worker, or approve

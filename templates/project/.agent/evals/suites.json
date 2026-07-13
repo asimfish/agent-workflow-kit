@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "suites": {
+    "workflow-integrity": {
+      "description": "Deterministic smoke evaluation for the installed project workflow.",
+      "cases": [
+        {
+          "id": "manual-workflow-check",
+          "split": "held_in",
+          "required": true,
+          "argv": [
+            "python3",
+            "tools/agentctl.py",
+            "check",
+            "--mode",
+            "manual"
+          ],
+          "timeout_seconds": 120,
+          "expected_exit_codes": [
+            0
+          ]
+        },
+        {
+          "id": "controller-compiles",
+          "split": "held_out",
+          "required": true,
+          "argv": [
+            "python3",
+            "-m",
+            "py_compile",
+            "tools/agentctl.py",
+            "tools/agent_workflow_hook.py"
+          ],
+          "timeout_seconds": 120,
+          "expected_exit_codes": [
+            0
+          ]
+        }
+      ]
+    }
+  }
+}

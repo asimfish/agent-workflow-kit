@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-12 00:14:10",
+  "updated_at": "2026-07-13 18:21:19",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -464,6 +464,22 @@
       "deps": [],
       "created_at": "2026-07-11 15:07:49",
       "updated_at": "2026-07-12 00:14:10"
+    },
+    "T-025": {
+      "title": "add harness evaluation baseline",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-13 17:52:22",
+      "updated_at": "2026-07-13 18:21:19"
     }
   }
 }

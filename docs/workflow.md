@@ -14,6 +14,11 @@
 8. Worker completes with `agentctl finish`.
 9. Git hooks verify active task context, doc updates, and commit format.
 
+Harness and workflow changes add one supervisor-owned evaluation step before the
+ordinary review gate. The same suite runs against clean baseline and candidate
+worktrees, and both held-in and held-out scores must avoid regression. See
+`docs/harness-evaluation.md`.
+
 ## Loop Contract
 
 Every loop in `.agent/loops/` must close six links:

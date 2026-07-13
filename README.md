@@ -398,6 +398,29 @@ python3 tools/agentctl.py worktree release <lease-id> --ack-missing
 
 The kit never force removes a worktree or deletes its branch.
 
+### Harness Evaluation
+
+Workflow and harness changes use deterministic baseline/candidate evaluation.
+The supervisor keeps the suite policy in its checkout and runs the same argv-only
+verifiers against two clean target worktrees:
+
+```bash
+python3 tools/agentctl.py eval run workflow-integrity --target <baseline-path> --json
+python3 tools/agentctl.py eval run workflow-integrity --target <candidate-path> --json
+python3 tools/agentctl.py eval compare --baseline <baseline-id> --candidate <candidate-id>
+python3 tools/agentctl.py eval gate --baseline <baseline-id> --candidate <candidate-id> \
+  --by <reviewer>
+```
+
+Suites live in `.agent/evals/suites.json` or in a supervisor-only external file.
+Every suite contains `held_in` cases for known weaknesses and `held_out` cases
+for non-regression. Reports include suite and commit identity, dirty state,
+timeouts, bounded output, required artifacts, split scores, and a
+supervisor-local integrity signature. Acceptance
+requires both splits not to regress and every required case to pass. The
+candidate does not control the suite or write the decision. See
+`docs/harness-evaluation.md` for the schema and trust boundary.
+
 ## System Modules
 
 | Module | Files | Role |
@@ -406,6 +429,7 @@ The kit never force removes a worktree or deletes its branch.
 | Plan and tasks | `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, `.agent/tasks/*.md`, `.agent/board.json` | Durable plan, task contracts, status, and progress. |
 | Loop runtime | `.agent/loops/*`, `agentctl loop ...` | Bounded Trigger -> Execute -> Check -> Feedback -> Memory -> Next cycles. |
 | Worktree leases | Git common dir, `agentctl worktree ...` | Isolates parallel agents with shared allocation state and non-destructive release. |
+| Harness evaluation | `.agent/evals/suites.json`, `.agent/state/evals/*`, `agentctl eval ...` | Keeps versioned policy separate from local signed evidence and compares held-in/held-out results before acceptance. |
 | Controller | `tools/agentctl.py` | Starts tasks, records notes, finishes tasks, runs checks and loops. |
 | Lifecycle hooks | `tools/agent_workflow_hook.py`, `.codex/`, `.claude/`, `.cursor/` | Injects workflow context and blocks mutating actions when no task is active where supported. |
 | Git hooks | `.githooks/` | Enforces commit format, task IDs, staged workflow docs, secret checks, and push gates. |
@@ -463,6 +487,7 @@ agentctl gate approve|reject --task --by            review gate
 agentctl guidance create --from-agent --to-agent    send supervisor plan to an agent/session
 agentctl guidance create ... --dispatch             send plan and resume the target Codex session
 agentctl guidance list|show|ack|dispatch             inspect, acknowledge, or retry guidance
+agentctl eval list|run|show|compare|gate             evaluate baseline and candidate worktrees
 agentctl loop list|show|run <id> --once             inspect or run one loop
 agentctl loop auto --checkpoint <name> --once       run checkpoint policy
 agentctl loop cycle --checkpoint <name> --cycles N  run a durable bounded cycle
@@ -496,10 +521,10 @@ The regression tests install the kit into fresh temporary Git projects. They
 replay feedback escalation, failure budgets, cooperative stop, safe and
 unknown-result orphan recovery, launch handshakes, one-shot/cycle mutual
 exclusion, descendant cleanup, non-destructive Windows PID checks, and supervisor
-guidance and managed worktree allocation: Fable-style plan creation,
+guidance, managed worktree allocation, and harness evaluation: Fable-style plan creation,
 Codex work-start surfacing, finish blocking until acknowledgement, and successful
-completion after `guidance ack`. CI runs the same tests on every push and pull
-request.
+completion after `guidance ack`, plus baseline/candidate non-regression gates and
+tampered-evidence rejection. CI runs the same tests on every push and pull request.
 
 ## Current Boundaries
 
@@ -510,6 +535,7 @@ The current design intentionally does not include:
 - external connector loops;
 - automatic expensive experiment launches;
 - automatic merge to protected branches.
+- automatic harness mutation or acceptance without held-in/held-out evidence.
 
 The system is ready for project-level use. More autonomous scheduling should be
 added only after the checkpoint loops are reliable in real repositories.
@@ -518,5 +544,6 @@ added only after the checkpoint loops are reliable in real repositories.
 
 - `docs/workflow.md`: full workflow reference.
 - `docs/loop-engineering.md`: loop contract and checkpoint model.
+- `docs/harness-evaluation.md`: deterministic suite schema and supervisor trust boundary.
 - `docs/enforcement.md`: hook and GitHub enforcement layers.
 - `.agent/rules/github-standards.md`: commit, push, and PR standards.

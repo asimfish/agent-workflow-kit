@@ -16,6 +16,7 @@ Commands:
   guidance   create/list/show/ack/dispatch supervisor guidance packets
   handoff    create/list/show/close cross-agent task packets
   worktree   create/list/release task-scoped worktree leases
+  eval       run and compare deterministic baseline/candidate verifier suites
   loop       run/status/resume/stop bounded project loops and checkpoints
   refresh    re-record doc hashes after plan/rules/task docs changed
   board      print the task board (human or --json)
@@ -32,11 +33,13 @@ import argparse
 import datetime as _dt
 import errno
 import hashlib
+import hmac
 import json
 import math
 import os
 import platform
 import re
+import secrets
 import signal
 import shlex
 import shutil
@@ -91,6 +94,14 @@ REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 WORKTREE_LEASES_DIR = "agent-workflow"
 WORKTREE_LEASES_FILE = "worktree-leases.json"
 WORKTREE_LEASES_LOCK = "worktree-leases.lock"
+EVALS_DIR = "evals"
+EVAL_SUITES_FILE = "suites.json"
+EVAL_RUNS_DIR = "runs"
+EVAL_DECISIONS_DIR = "decisions"
+EVAL_SIGNING_KEY_FILE = "eval-hmac.key"
+EVAL_OUTPUT_CAP = 4000
+EVAL_TIMEOUT_DEFAULT = 120
+EVAL_TIMEOUT_MAX = 3600
 
 LOOP_REQUIRED_SECTIONS = ("Trigger", "Execute", "Check", "Feedback", "Memory", "Next")
 DEFAULT_LOOP_CHECKPOINTS = {
@@ -2584,6 +2595,536 @@ def cmd_worktree(args: argparse.Namespace) -> int:
     return 2
 
 
+# ---------- harness evaluation ----------
+
+def _evals_dir(root: Path) -> Path:
+    return root / WORKFLOW_DIR / EVALS_DIR
+
+
+def _eval_runtime_dir(root: Path) -> Path:
+    return root / WORKFLOW_DIR / STATE_DIR / EVALS_DIR
+
+
+def _eval_suite_path(root: Path, value: str | None = None) -> Path:
+    if not value:
+        return _evals_dir(root) / EVAL_SUITES_FILE
+    path = Path(value).expanduser()
+    return path.resolve() if path.is_absolute() else (root / path).resolve()
+
+
+def _eval_validate_catalog(data: object) -> dict:
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise ValueError("eval catalog must be an object with version=1")
+    suites = data.get("suites")
+    if not isinstance(suites, dict) or not suites:
+        raise ValueError("eval catalog requires a non-empty suites object")
+    for suite_id, suite in suites.items():
+        if not isinstance(suite_id, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", suite_id):
+            raise ValueError(f"invalid eval suite id: {suite_id!r}")
+        if not isinstance(suite, dict):
+            raise ValueError(f"eval suite {suite_id} must be an object")
+        cases = suite.get("cases")
+        if not isinstance(cases, list) or not cases or len(cases) > 100:
+            raise ValueError(f"eval suite {suite_id} requires 1-100 cases")
+        seen = set()
+        splits = set()
+        for case in cases:
+            if not isinstance(case, dict):
+                raise ValueError(f"eval suite {suite_id} has a non-object case")
+            case_id = case.get("id")
+            if (not isinstance(case_id, str)
+                    or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", case_id)
+                    or case_id in seen):
+                raise ValueError(f"eval suite {suite_id} has an invalid or duplicate case id: {case_id!r}")
+            seen.add(case_id)
+            split = case.get("split")
+            if split not in {"held_in", "held_out"}:
+                raise ValueError(f"eval case {case_id} must use split held_in or held_out")
+            splits.add(split)
+            argv = case.get("argv")
+            if (not isinstance(argv, list) or not argv or len(argv) > 64
+                    or any(not isinstance(item, str) or not item or len(item) > 4096 for item in argv)):
+                raise ValueError(f"eval case {case_id} requires a bounded non-empty argv list")
+            timeout = case.get("timeout_seconds", EVAL_TIMEOUT_DEFAULT)
+            if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                    or not math.isfinite(float(timeout)) or timeout < 1 or timeout > EVAL_TIMEOUT_MAX):
+                raise ValueError(f"eval case {case_id} has an invalid timeout_seconds")
+            expected = case.get("expected_exit_codes", [0])
+            if (not isinstance(expected, list) or not expected
+                    or any(isinstance(code, bool) or not isinstance(code, int) for code in expected)):
+                raise ValueError(f"eval case {case_id} has invalid expected_exit_codes")
+            if not isinstance(case.get("required", True), bool):
+                raise ValueError(f"eval case {case_id} required must be boolean")
+            artifacts = case.get("artifacts", [])
+            if not isinstance(artifacts, list):
+                raise ValueError(f"eval case {case_id} artifacts must be a list")
+            for artifact in artifacts:
+                if not isinstance(artifact, str) or not artifact:
+                    raise ValueError(f"eval case {case_id} has an invalid artifact path")
+                artifact_path = Path(artifact)
+                if artifact_path.is_absolute() or ".." in artifact_path.parts:
+                    raise ValueError(f"eval case {case_id} artifact paths must stay inside the target")
+        if splits != {"held_in", "held_out"}:
+            raise ValueError(f"eval suite {suite_id} must include held_in and held_out cases")
+    return data
+
+
+def _eval_catalog(root: Path, suite_file: str | None = None) -> tuple[Path, dict]:
+    path = _eval_suite_path(root, suite_file)
+    if not path.is_file():
+        raise ValueError(f"eval suite file not found: {path}")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"unable to read eval suite file {path}: {exc}") from exc
+    return path, _eval_validate_catalog(data)
+
+
+def _eval_suite_hash(suite_id: str, suite: dict) -> str:
+    payload = json.dumps(
+        {"id": suite_id, "suite": suite}, sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _eval_git_snapshot(path: Path) -> tuple[str, bool]:
+    head = _git_process(path, "rev-parse", "HEAD")
+    status = _git_process(path, "status", "--porcelain", "--untracked-files=all")
+    if head.returncode or status.returncode:
+        detail = (head.stderr or status.stderr or "not a readable Git checkout").strip()
+        raise ValueError(f"unable to inspect eval checkout {path}: {detail}")
+    generated_prefixes = (
+        f"{WORKFLOW_DIR}/{STATE_DIR}/{EVALS_DIR}/{EVAL_RUNS_DIR}/",
+        f"{WORKFLOW_DIR}/{STATE_DIR}/{EVALS_DIR}/{EVAL_DECISIONS_DIR}/",
+    )
+    relevant = []
+    for line in status.stdout.splitlines():
+        changed_path = line[3:] if len(line) > 3 else line
+        if " -> " in changed_path:
+            changed_path = changed_path.split(" -> ", 1)[1]
+        changed_path = changed_path.strip('"')
+        if not changed_path.startswith(generated_prefixes):
+            relevant.append(line)
+    return head.stdout.strip(), bool(relevant)
+
+
+def _eval_environment() -> dict[str, str]:
+    allowed = {
+        "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "TMP", "TEMP",
+        "LANG", "LC_ALL", "LC_CTYPE", "SYSTEMROOT", "WINDIR", "PATHEXT",
+        "COMSPEC", "CI", "GITHUB_ACTIONS",
+    }
+    env = {key: value for key, value in os.environ.items() if key in allowed}
+    env["AGENT_EVAL"] = "1"
+    return env
+
+
+def _eval_run_case(target: Path, case: dict) -> dict:
+    started = time.monotonic()
+    timeout = float(case.get("timeout_seconds", EVAL_TIMEOUT_DEFAULT))
+    popen_args = {}
+    if os.name == "posix":
+        popen_args["start_new_session"] = True
+    elif os.name == "nt":
+        popen_args["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    stdout = ""
+    stderr = ""
+    exit_code = 1
+    timed_out = False
+    start_error = ""
+    try:
+        proc = subprocess.Popen(
+            case["argv"], cwd=str(target), env=_eval_environment(), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen_args,
+        )
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            exit_code = proc.returncode
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            stderr = exc.stderr if isinstance(exc.stderr, str) else ""
+            _terminate_loop_process(proc)
+            tail_out, tail_err = proc.communicate()
+            stdout += tail_out or ""
+            stderr += tail_err or ""
+            exit_code = 124
+    except OSError as exc:
+        start_error = str(exc)
+        stderr = str(exc)
+        exit_code = 127
+    artifacts = []
+    artifacts_ok = True
+    for artifact in case.get("artifacts", []):
+        exists = (target / artifact).exists()
+        artifacts.append({"path": artifact, "exists": exists})
+        artifacts_ok = artifacts_ok and exists
+    expected = case.get("expected_exit_codes", [0])
+    passed = exit_code in expected and artifacts_ok and not timed_out and not start_error
+    return {
+        "id": case["id"],
+        "split": case["split"],
+        "required": case.get("required", True),
+        "argv": case["argv"],
+        "timeout_seconds": timeout,
+        "expected_exit_codes": expected,
+        "exit_code": exit_code,
+        "passed": passed,
+        "timed_out": timed_out,
+        "start_error": start_error,
+        "duration_seconds": round(time.monotonic() - started, 6),
+        "artifacts": artifacts,
+        "stdout": _cap_output(stdout, EVAL_OUTPUT_CAP),
+        "stderr": _cap_output(stderr, EVAL_OUTPUT_CAP),
+    }
+
+
+def _eval_metrics(cases: list[dict]) -> dict:
+    metrics = {}
+    for split in ("held_in", "held_out", "overall"):
+        rows = cases if split == "overall" else [case for case in cases if case["split"] == split]
+        passed = sum(1 for case in rows if case["passed"])
+        required_failures = [case["id"] for case in rows if case["required"] and not case["passed"]]
+        metrics[split] = {
+            "total": len(rows),
+            "passed": passed,
+            "score": round(passed / len(rows), 6) if rows else 0.0,
+            "required_failures": required_failures,
+        }
+    return metrics
+
+
+def _eval_report_path(root: Path, run_id: str) -> Path:
+    return _eval_runtime_dir(root) / EVAL_RUNS_DIR / f"{run_id}.json"
+
+
+def _eval_signing_key(root: Path, *, create: bool) -> bytes:
+    common = _git_common_dir(root)
+    if common is None:
+        raise ValueError("eval report signing requires a Git repository")
+    path = common / WORKTREE_LEASES_DIR / EVAL_SIGNING_KEY_FILE
+    try:
+        key = path.read_bytes()
+    except FileNotFoundError:
+        if not create:
+            raise ValueError("eval signing key is unavailable; rerun the suite from this policy checkout")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        generated = secrets.token_bytes(32)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            key = path.read_bytes()
+        else:
+            try:
+                os.write(fd, generated)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            key = generated
+    except OSError as exc:
+        raise ValueError(f"unable to read eval signing key: {exc}") from exc
+    if len(key) < 32:
+        raise ValueError("eval signing key is invalid")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return key
+
+
+def _eval_record_signature(record: dict, key: bytes) -> str:
+    unsigned = dict(record)
+    unsigned.pop("integrity", None)
+    payload = json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+
+def _eval_sign_record(record: dict, key: bytes) -> None:
+    record["integrity"] = {
+        "algorithm": "hmac-sha256",
+        "signature": _eval_record_signature(record, key),
+    }
+
+
+def _eval_verify_record(root: Path, record: dict, label: str) -> None:
+    integrity = record.get("integrity")
+    if not isinstance(integrity, dict) or integrity.get("algorithm") != "hmac-sha256":
+        raise ValueError(f"{label} has no supported supervisor integrity signature")
+    signature = integrity.get("signature")
+    if not isinstance(signature, str):
+        raise ValueError(f"{label} has an invalid supervisor integrity signature")
+    expected = _eval_record_signature(record, _eval_signing_key(root, create=False))
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError(f"{label} failed supervisor integrity verification")
+
+
+def _eval_load_report(root: Path, report_id: str) -> tuple[Path, dict]:
+    name = report_id[:-5] if report_id.endswith(".json") else report_id
+    if not re.fullmatch(r"eval-[a-z0-9_-]+", name):
+        raise ValueError(f"invalid eval report id: {report_id}")
+    path = _eval_report_path(root, name)
+    try:
+        report = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise ValueError(f"eval report not found: {name}") from exc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError(f"unable to read eval report {name}: {exc}") from exc
+    if not isinstance(report, dict) or report.get("version") != 1 or report.get("id") != name:
+        raise ValueError(f"invalid eval report: {name}")
+    _eval_verify_record(root, report, f"eval report {name}")
+    return path, report
+
+
+def _eval_list(root: Path, args: argparse.Namespace) -> int:
+    try:
+        path, catalog = _eval_catalog(root, args.suite_file)
+    except ValueError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
+    rows = []
+    for suite_id, suite in sorted(catalog["suites"].items()):
+        rows.append({
+            "id": suite_id,
+            "description": suite.get("description", ""),
+            "cases": len(suite["cases"]),
+            "suite_hash": _eval_suite_hash(suite_id, suite),
+        })
+    if args.json:
+        print(json.dumps({"suite_file": str(path), "suites": rows}, indent=2, ensure_ascii=False))
+    else:
+        for row in rows:
+            print(f"  {row['id']:<24} cases={row['cases']:<3} hash={row['suite_hash'][:12]} {row['description']}")
+    return 0
+
+
+def _eval_run(root: Path, args: argparse.Namespace) -> int:
+    try:
+        suite_path, catalog = _eval_catalog(root, args.suite_file)
+        suite = catalog["suites"].get(args.suite)
+        if not suite:
+            raise ValueError(f"eval suite not found: {args.suite}")
+        target = Path(args.target or root).expanduser().resolve()
+        if not target.is_dir():
+            raise ValueError(f"eval target is not a directory: {target}")
+        policy_commit, policy_dirty = _eval_git_snapshot(root)
+        target_commit, target_dirty = _eval_git_snapshot(target)
+    except ValueError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
+    started_at = _now()
+    started = time.monotonic()
+    results = [_eval_run_case(target, case) for case in suite["cases"]]
+    try:
+        target_commit_after, target_dirty_after = _eval_git_snapshot(target)
+    except ValueError as exc:
+        target_commit_after, target_dirty_after = "", True
+        results.append({
+            "id": "target-post-check",
+            "split": "held_out",
+            "required": True,
+            "argv": [],
+            "timeout_seconds": 0,
+            "expected_exit_codes": [0],
+            "exit_code": 1,
+            "passed": False,
+            "timed_out": False,
+            "start_error": str(exc),
+            "duration_seconds": 0.0,
+            "artifacts": [],
+            "stdout": "",
+            "stderr": str(exc),
+        })
+    metrics = _eval_metrics(results)
+    run_id = "eval-" + _safe_segment(args.suite).lower() + "-" + hashlib.sha256(
+        f"{time.time_ns()}:{target}:{target_commit}".encode("utf-8")
+    ).hexdigest()[:12]
+    report = {
+        "version": 1,
+        "id": run_id,
+        "suite": args.suite,
+        "suite_hash": _eval_suite_hash(args.suite, suite),
+        "suite_source": str(suite_path),
+        "policy_root": str(root.resolve()),
+        "policy_commit": policy_commit,
+        "policy_dirty": policy_dirty,
+        "target_root": str(target),
+        "target_commit": target_commit,
+        "target_dirty": target_dirty,
+        "target_commit_after": target_commit_after,
+        "target_dirty_after": target_dirty_after,
+        "started_at": started_at,
+        "finished_at": _now(),
+        "duration_seconds": round(time.monotonic() - started, 6),
+        "status": "passed" if not metrics["overall"]["required_failures"] else "failed",
+        "metrics": metrics,
+        "cases": results,
+    }
+    try:
+        _eval_sign_record(report, _eval_signing_key(root, create=True))
+    except ValueError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
+    path = _eval_report_path(root, run_id)
+    _save_json(path, report)
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(f"agentctl: eval {run_id} -> {report['status']} ({path.relative_to(root)})")
+        for split in ("held_in", "held_out", "overall"):
+            row = metrics[split]
+            print(f"  {split}: {row['passed']}/{row['total']} score={row['score']:.6f}")
+    return 0 if report["status"] == "passed" else 1
+
+
+def _eval_show(root: Path, args: argparse.Namespace) -> int:
+    try:
+        _path, report = _eval_load_report(root, args.report)
+    except ValueError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
+    print(json.dumps(report, indent=2, ensure_ascii=False))
+    return 0
+
+
+def _eval_decision(root: Path, args: argparse.Namespace) -> tuple[dict | None, int]:
+    try:
+        _base_path, baseline = _eval_load_report(root, args.baseline)
+        _candidate_path, candidate = _eval_load_report(root, args.candidate)
+        _suite_path, catalog = _eval_catalog(root, args.suite_file)
+        suite_id = baseline.get("suite")
+        suite = catalog["suites"].get(suite_id)
+        if not suite:
+            raise ValueError(f"current eval catalog does not contain suite {suite_id}")
+        current_hash = _eval_suite_hash(suite_id, suite)
+        if candidate.get("suite") != suite_id:
+            raise ValueError("baseline and candidate use different eval suites")
+        if baseline.get("suite_hash") != current_hash or candidate.get("suite_hash") != current_hash:
+            raise ValueError("eval suite hash changed; rerun both baseline and candidate with one policy")
+        if baseline.get("policy_commit") != candidate.get("policy_commit"):
+            raise ValueError("baseline and candidate were evaluated by different policy commits")
+        expected_cases = [(case["id"], case["split"], case.get("required", True)) for case in suite["cases"]]
+        for label, report in (("baseline", baseline), ("candidate", candidate)):
+            actual_cases = [(case.get("id"), case.get("split"), case.get("required"))
+                            for case in report.get("cases") or []]
+            if actual_cases != expected_cases:
+                raise ValueError(f"{label} report case evidence does not match the current suite")
+            recomputed = _eval_metrics(report["cases"])
+            if report.get("metrics") != recomputed:
+                raise ValueError(f"{label} report metrics do not match its case evidence")
+            expected_status = "passed" if not recomputed["overall"]["required_failures"] else "failed"
+            if report.get("status") != expected_status:
+                raise ValueError(f"{label} report status does not match its case evidence")
+            if report.get("policy_dirty"):
+                raise ValueError(f"{label} report used a dirty evaluator policy checkout")
+    except ValueError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return None, 2
+    reasons = []
+    if baseline.get("target_dirty"):
+        reasons.append("baseline target checkout was dirty")
+    if baseline.get("target_commit_after") != baseline.get("target_commit"):
+        reasons.append("baseline changed its Git commit during evaluation")
+    if baseline.get("target_dirty_after"):
+        reasons.append("baseline target checkout became dirty during evaluation")
+    if candidate.get("target_dirty"):
+        reasons.append("candidate target checkout was dirty")
+    if candidate.get("target_commit_after") != candidate.get("target_commit"):
+        reasons.append("candidate changed its Git commit during evaluation")
+    if candidate.get("target_dirty_after"):
+        reasons.append("candidate target checkout became dirty during evaluation")
+    for split in ("held_in", "held_out"):
+        base_score = float(baseline["metrics"][split]["score"])
+        candidate_score = float(candidate["metrics"][split]["score"])
+        if candidate_score < base_score:
+            reasons.append(f"{split} regressed from {base_score:.6f} to {candidate_score:.6f}")
+    required_failures = candidate["metrics"]["overall"].get("required_failures") or []
+    if required_failures:
+        reasons.append("candidate required cases failed: " + ", ".join(required_failures))
+    decision = {
+        "version": 1,
+        "suite": baseline["suite"],
+        "suite_hash": baseline["suite_hash"],
+        "policy_commit": baseline["policy_commit"],
+        "baseline": baseline["id"],
+        "baseline_target_commit": baseline["target_commit"],
+        "candidate": candidate["id"],
+        "candidate_target_commit": candidate["target_commit"],
+        "accepted": not reasons,
+        "reasons": reasons,
+        "metrics": {
+            split: {
+                "baseline": baseline["metrics"][split]["score"],
+                "candidate": candidate["metrics"][split]["score"],
+            } for split in ("held_in", "held_out", "overall")
+        },
+        "decided_at": _now(),
+    }
+    return decision, 0 if decision["accepted"] else 1
+
+
+def _eval_compare(root: Path, args: argparse.Namespace) -> int:
+    decision, rc = _eval_decision(root, args)
+    if decision is None:
+        return rc
+    if args.json:
+        print(json.dumps(decision, indent=2, ensure_ascii=False))
+    else:
+        print(f"agentctl: eval comparison -> {'accept' if decision['accepted'] else 'reject'}")
+        for split, scores in decision["metrics"].items():
+            print(f"  {split}: baseline={scores['baseline']:.6f} candidate={scores['candidate']:.6f}")
+        for reason in decision["reasons"]:
+            print(f"  reason: {reason}")
+    return rc
+
+
+def _eval_gate(root: Path, args: argparse.Namespace) -> int:
+    decision, rc = _eval_decision(root, args)
+    if decision is None:
+        return rc
+    decision_id = "eval-decision-" + hashlib.sha256(
+        f"{time.time_ns()}:{decision['baseline']}:{decision['candidate']}".encode("utf-8")
+    ).hexdigest()[:12]
+    decision["id"] = decision_id
+    decision["by"] = args.by
+    decision["note"] = args.note or ""
+    try:
+        _eval_sign_record(decision, _eval_signing_key(root, create=False))
+    except ValueError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
+    path = _eval_runtime_dir(root) / EVAL_DECISIONS_DIR / f"{decision_id}.json"
+    _save_json(path, decision)
+    if args.json:
+        print(json.dumps(decision, indent=2, ensure_ascii=False))
+    else:
+        print(
+            f"agentctl: eval gate {decision_id} -> "
+            f"{'accepted' if decision['accepted'] else 'rejected'} ({path.relative_to(root)})"
+        )
+        for reason in decision["reasons"]:
+            print(f"  reason: {reason}")
+    return rc
+
+
+def cmd_eval(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    if args.eval_action == "list":
+        return _eval_list(root, args)
+    if args.eval_action == "run":
+        return _eval_run(root, args)
+    if args.eval_action == "show":
+        return _eval_show(root, args)
+    if args.eval_action == "compare":
+        return _eval_compare(root, args)
+    if args.eval_action == "gate":
+        return _eval_gate(root, args)
+    print("agentctl: unknown eval action", file=sys.stderr)
+    return 2
+
+
 # ---------- loops ----------
 
 def _loop_follow_up_packets(root: Path, checkpoint: str | None = None) -> list[tuple[Path, dict]]:
@@ -4792,6 +5333,7 @@ def _doctor_required_paths() -> list[str]:
         ".agent/TASKS.md",
         ".agent/board.json",
         ".agent/loops/checkpoints.json",
+        ".agent/evals/suites.json",
         ".agent/rules/github-standards.md",
         ".githooks/pre-commit",
         ".githooks/commit-msg",
@@ -4842,6 +5384,19 @@ def _doctor_report(root: Path) -> dict:
         "status": "ok" if not bad_loops else "fail",
         "detail": f"{len(loop_rows)} loop(s), {len(bad_loops)} invalid",
     })
+
+    try:
+        _eval_path, eval_catalog = _eval_catalog(root)
+        eval_count = len(eval_catalog["suites"])
+    except ValueError as exc:
+        problems.append(str(exc))
+        checks.append({"name": "eval contracts", "status": "fail", "detail": str(exc)})
+    else:
+        checks.append({
+            "name": "eval contracts",
+            "status": "ok",
+            "detail": f"{eval_count} deterministic suite(s)",
+        })
 
     manual_problems = _check_base(root) + _check_receipt(root) + _check_escalations(root)
     if manual_problems:
@@ -5155,6 +5710,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="Acknowledge an inspected missing checkout before releasing its lease",
     )
     sp.set_defaults(func=cmd_worktree)
+
+    sp = sub.add_parser("eval")
+    esub = sp.add_subparsers(dest="eval_action", required=True)
+    el = esub.add_parser("list")
+    el.add_argument("--suite-file")
+    el.add_argument("--json", action="store_true")
+    er = esub.add_parser("run")
+    er.add_argument("suite")
+    er.add_argument("--target", help="Candidate or baseline checkout; defaults to the policy checkout")
+    er.add_argument("--suite-file", help="Supervisor-owned suite file; defaults to .agent/evals/suites.json")
+    er.add_argument("--json", action="store_true")
+    es = esub.add_parser("show")
+    es.add_argument("report")
+    ec = esub.add_parser("compare")
+    ec.add_argument("--baseline", required=True)
+    ec.add_argument("--candidate", required=True)
+    ec.add_argument("--suite-file")
+    ec.add_argument("--json", action="store_true")
+    eg = esub.add_parser("gate")
+    eg.add_argument("--baseline", required=True)
+    eg.add_argument("--candidate", required=True)
+    eg.add_argument("--suite-file")
+    eg.add_argument("--by", required=True)
+    eg.add_argument("--note")
+    eg.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_eval)
 
     sp = sub.add_parser("guidance")
     gsub = sp.add_subparsers(dest="guidance_action", required=True)

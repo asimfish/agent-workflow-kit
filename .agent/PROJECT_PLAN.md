@@ -23,6 +23,8 @@ instead of relying on chat memory or repeated human prompts.
   transports where the target runtime exposes a supported session interface.
 - Write isolation: each task must define a clear write scope.
 - Verification gate: task-specific tests plus `agentctl check`.
+- Harness-change gate: supervisor-owned deterministic evals compare clean
+  baseline and candidate worktrees before approval.
 
 ## Milestones
 
@@ -31,8 +33,10 @@ instead of relying on chat memory or repeated human prompts.
 | M1 | Define project workflow | done | Plan, rules, hooks, loop contracts, task docs, and dogfood evidence exist |
 | M2 | Execute bounded supervisor-worker turns | in_progress | Fable can persist a plan, resume a named Codex session, receive a transport receipt, and retain all worker gates |
 | M3 | Operational autonomy | in_progress | Resumable bounded cycles, worktree leases, scheduler adapters, budgets, stop conditions, and recovery tests are proven incrementally |
+| M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] T-025 - add harness evaluation baseline (owner: codex)
 - [x] T-024 - add managed worktree leases (owner: codex)
 - [x] T-023 - add resumable autonomous loop runtime (owner: codex)
 - [x] T-022 - finalize dispatch release metadata (owner: codex)
