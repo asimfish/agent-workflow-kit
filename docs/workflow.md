@@ -91,14 +91,39 @@ This closes the loop links as follows:
   `--dispatch`.
 - Execute: `codex exec resume <SESSION_ID>` sends the plan to the named worker
   session without invoking a shell.
-- Check: the worker runs task verification and `agentctl finish`; the dispatch
-  process also records its exit code.
+- Check: the worker runs task verification and `agentctl finish`, commits the
+  bounded turn, and leaves its checkout clean; the dispatch process also records
+  a signed contract and receipt. The supervisor then runs
+  `agentctl guidance verify <packet-id> --by <supervisor> --target
+  <worker-worktree>` from its own active planning/review session.
 - Feedback: the worker acknowledges incorporated guidance, or a failed transport
   leaves the packet ready for `guidance dispatch <packet-id>` retry.
 - Memory: task docs and packet metadata are tracked; raw dispatch output stays in
   `.agent/state/dispatch/`.
 - Next: the supervisor reviews evidence and either sends one more bounded packet,
   gates the task, or stops for a human decision.
+
+Transport success is intentionally insufficient. `guidance verify` requires the
+signed immutable contract and receipt to match the original supervisor packet,
+route, and successful process result; requires the exact target worker to
+acknowledge the same task; and requires new completion/test evidence in `review`,
+`approved`, or `done`. The target must be clean and committed. Every acceptance
+or rejection is HMAC-signed with its worker HEAD/tree and evidence hashes under
+the shared Git common directory at `agent-workflow/acceptance/`, so releasing a
+worker worktree does not erase the auditable decision. The key is local to the Git
+common directory, so this detects accidental or ordinary evidence editing; it is
+not an OS security boundary against another process running as the same user.
+
+For the release dogfood, use a separate worker session and a harmless bounded
+task, then verify it before marking the milestone complete:
+
+```bash
+agentctl guidance create ... --to-session <real-worker-session> --dispatch
+agentctl guidance verify <packet-id> --by fable --target <worker-worktree>
+```
+
+Fake-Codex regression tests prove protocol behavior but do not count as this live
+dogfood. Never dispatch into the supervisor's current session.
 
 The transport does not weaken target-session permissions and does not create a
 background daemon. A worker session should use an isolated worktree when another

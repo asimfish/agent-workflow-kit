@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-13 18:21:19",
+  "updated_at": "2026-07-14 00:37:53",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -480,6 +480,22 @@
       "deps": [],
       "created_at": "2026-07-13 17:52:22",
       "updated_at": "2026-07-13 18:21:19"
+    },
+    "T-026": {
+      "title": "add supervisor dispatch acceptance workflow",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-13 23:37:22",
+      "updated_at": "2026-07-14 00:37:53"
     }
   }
 }

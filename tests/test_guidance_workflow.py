@@ -27,21 +27,35 @@ class GuidanceWorkflowRegressionTest(unittest.TestCase):
         git = subprocess.run(["git", "init", "-q"], cwd=str(self.root),
                              text=True, capture_output=True, timeout=60)
         self.assertEqual(git.returncode, 0, git.stdout + git.stderr)
+        subprocess.run(
+            ["git", "config", "user.email", "agent@example.com"],
+            cwd=self.root, check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "config", "user.name", "Agent Test"],
+            cwd=self.root, check=True, capture_output=True, text=True)
         install = subprocess.run(
             [sys.executable, str(KIT / "tools" / "agentctl.py"), "init", str(self.root)],
             cwd=str(KIT), text=True, capture_output=True, timeout=120)
         self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
 
-    def agentctl(self, *args, expect=None):
+    def agentctl(self, *args, expect=None, cwd=None, env=None):
         proc = subprocess.run(
             [sys.executable, "tools/agentctl.py", *args],
-            cwd=str(self.root), text=True, capture_output=True, timeout=120,
-            env=self.env)
+            cwd=str(cwd or self.root), text=True, capture_output=True, timeout=120,
+            env=env or self.env)
         if expect is not None:
             self.assertEqual(
                 proc.returncode, expect,
                 f"agentctl {' '.join(args)} rc={proc.returncode}\n{proc.stdout}\n{proc.stderr}")
         return proc
+
+    def commit(self, message, cwd=None):
+        subprocess.run(
+            ["git", "add", "-A"], cwd=cwd or self.root,
+            check=True, capture_output=True, text=True)
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-q", "-m", message],
+            cwd=cwd or self.root, check=True, capture_output=True, text=True)
 
     def install_fake_codex(self, exit_code=0):
         fake_bin = self.root / "fake-bin"
@@ -61,8 +75,30 @@ args = sys.argv[1:]
 Path(os.environ["FAKE_CODEX_RECORD"]).write_text(json.dumps(args), encoding="utf-8")
 if os.environ.get("FAKE_CODEX_SLEEP"):
     time.sleep(float(os.environ["FAKE_CODEX_SLEEP"]))
+packet = re.search(r"guidance packet `([^`]+)`", args[-1]).group(1)
+task = re.search(r"for task `([^`]+)`", args[-1]).group(1)
+if os.environ.get("FAKE_CODEX_FINISH") == "1":
+    model = args[args.index("--model") + 1] if "--model" in args else ""
+    effort = ""
+    if "--config" in args:
+        effort = args[args.index("--config") + 1].split('"')[1]
+    work_command = [
+        sys.executable, "tools/agentctl.py", "work", "--agent", "codex",
+        "--task", task, "--session-id", args[-2],
+    ]
+    if model:
+        work_command.extend(["--model", model])
+    if effort:
+        work_command.extend(["--reasoning-effort", effort])
+    started = subprocess.run(
+        work_command,
+        text=True,
+        capture_output=True,
+    )
+    if started.returncode:
+        print(started.stdout + started.stderr, file=sys.stderr)
+        raise SystemExit(started.returncode)
 if os.environ.get("FAKE_CODEX_ACK") == "1":
-    packet = re.search(r"guidance packet `([^`]+)`", args[-1]).group(1)
     acknowledged = subprocess.run(
         [sys.executable, "tools/agentctl.py", "guidance", "ack", packet, "--by", "codex"],
         text=True,
@@ -71,6 +107,17 @@ if os.environ.get("FAKE_CODEX_ACK") == "1":
     if acknowledged.returncode:
         print(acknowledged.stdout + acknowledged.stderr, file=sys.stderr)
         raise SystemExit(acknowledged.returncode)
+if os.environ.get("FAKE_CODEX_FINISH") == "1":
+    finished = subprocess.run(
+        [sys.executable, "tools/agentctl.py", "finish",
+         "--summary", "fake Codex completed the bounded worker phase",
+         "--tests", "fake worker acceptance verification"],
+        text=True,
+        capture_output=True,
+    )
+    if finished.returncode:
+        print(finished.stdout + finished.stderr, file=sys.stderr)
+        raise SystemExit(finished.returncode)
 if "--output-last-message" in args:
     output = Path(args[args.index("--output-last-message") + 1])
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -87,6 +134,18 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.env["FAKE_CODEX_RECORD"] = str(record)
         self.env["FAKE_CODEX_EXIT"] = str(exit_code)
         return record
+
+    def start_fable_supervisor(self, task_id="SUP-001"):
+        self.agentctl(
+            "task", "create",
+            "--id", task_id,
+            "--title", "supervise worker acceptance",
+            "--owner", "fable",
+            "--scope", "docs/",
+            expect=0)
+        self.agentctl(
+            "work", "--agent", "fable", "--task", task_id,
+            expect=0)
 
     def test_fable_guidance_surfaces_to_codex_and_blocks_until_ack(self):
         self.agentctl(
@@ -297,7 +356,6 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
 
     def test_create_dispatch_invokes_target_session_and_records_receipt(self):
         record = self.install_fake_codex(exit_code=0)
-        self.env["FAKE_CODEX_ACK"] = "1"
         created = self.agentctl(
             "guidance", "create",
             "--from-agent", "fable",
@@ -329,7 +387,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
 
         packet = json.loads(
             self.agentctl("guidance", "show", packet_id, "--json", expect=0).stdout)
-        self.assertEqual(packet["status"], "done")
+        self.assertEqual(packet["status"], "ready")
         self.assertEqual(packet["dispatch"]["status"], "succeeded")
         self.assertEqual(packet["dispatch"]["attempts"], 1)
         self.assertEqual(packet["dispatch"]["exit_code"], 0)
@@ -337,7 +395,25 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         receipt = self.root / ".agent" / "state" / "dispatch" / f"{packet_id}.json"
         self.assertTrue(receipt.is_file())
         self.assertEqual(json.loads(receipt.read_text(encoding="utf-8"))["status"], "succeeded")
-        self.assertEqual(sorted((self.root / ".agent" / "bus" / "inbox").rglob("*.json")), [])
+        self.assertTrue(sorted((self.root / ".agent" / "bus" / "inbox").rglob("*.json")))
+
+    def test_session_bound_ack_rejects_claimed_identity_without_matching_work_session(self):
+        created = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex",
+            "--to-model", "gpt-5.5",
+            "--to-session", "session-identity",
+            "--task", "T-208",
+            "--summary", "Require a real matching local worker session",
+            "--plan", "Do not trust an unbound --by string.",
+            expect=0)
+        packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+        rejected = self.agentctl(
+            "guidance", "ack", packet_id,
+            "--by", "codex",
+            expect=1)
+        self.assertIn("session-bound guidance acknowledgement rejected", rejected.stderr)
 
     def test_failed_dispatch_keeps_guidance_ready_and_can_retry(self):
         self.install_fake_codex(exit_code=9)
@@ -407,6 +483,295 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             "--dry-run",
             expect=1)
         self.assertIn("source session", blocked.stdout + blocked.stderr)
+
+    def test_supervisor_verify_requires_ack_and_completed_task_evidence(self):
+        self.install_fake_codex(exit_code=0)
+        self.agentctl(
+            "task", "create",
+            "--id", "T-206",
+            "--title", "verify incomplete dispatch",
+            "--owner", "codex",
+            "--scope", ".agent/",
+            expect=0)
+        created = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex",
+            "--to-model", "gpt-5.5",
+            "--to-reasoning-effort", "xhigh",
+            "--to-session", "session-incomplete",
+            "--task", "T-206",
+            "--summary", "Do not accept transport success as task completion",
+            "--plan", "Read, implement, verify, acknowledge, and finish.",
+            "--dispatch",
+            expect=0)
+        packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+
+        self.start_fable_supervisor()
+        rejected = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--json",
+            expect=1)
+        record = json.loads(rejected.stdout)
+        self.assertFalse(record["accepted"])
+        self.assertIn("worker has not acknowledged the guidance", record["problems"])
+        self.assertTrue(any("expected review/approved/done" in p for p in record["problems"]))
+        self.assertEqual(record["integrity"]["algorithm"], "hmac-sha256")
+
+    def test_supervisor_verify_accepts_complete_turn_and_rejects_tampered_receipt(self):
+        self.install_fake_codex(exit_code=0)
+        self.env["FAKE_CODEX_ACK"] = "1"
+        self.env["FAKE_CODEX_FINISH"] = "1"
+        self.agentctl(
+            "task", "create",
+            "--id", "T-207",
+            "--title", "verify complete dispatch",
+            "--owner", "codex",
+            "--scope", ".agent/",
+            expect=0)
+        created = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex",
+            "--to-model", "gpt-5.5",
+            "--to-reasoning-effort", "xhigh",
+            "--to-session", "session-accepted",
+            "--task", "T-207",
+            "--summary", "Complete one evidence-checked bounded worker turn",
+            "--plan", "Read, implement, verify, acknowledge, and finish.",
+            "--dispatch",
+            expect=0)
+        packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+
+        self_review = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--json",
+            expect=1)
+        self_review_record = json.loads(self_review.stdout)
+        self.assertTrue(any("active reviewer session" in p for p in self_review_record["problems"]))
+
+        self.start_fable_supervisor()
+        self.commit("chore(agent): record completed guided turn\n\nRefs: T-207")
+        accepted = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--json",
+            expect=0)
+        record = json.loads(accepted.stdout)
+        self.assertTrue(record["accepted"])
+        self.assertTrue(all(record["checks"].values()), record)
+        self.assertEqual(record["problems"], [])
+        common_acceptance = list(
+            (self.root / ".git" / "agent-workflow" / "acceptance").glob("*.json")
+        )
+        self.assertTrue(common_acceptance)
+        self.assertFalse(
+            (self.root / ".agent" / "state" / "dispatch" / "acceptance").exists()
+        )
+
+        task_path = self.root / ".agent" / "tasks" / "T-207.md"
+        original_task = task_path.read_text(encoding="utf-8")
+        no_tests = re.sub(
+            r"^- Tests:.*$",
+            "- Tests: not run: test environment unavailable",
+            original_task,
+            flags=re.M,
+        )
+        task_path.write_text(no_tests, encoding="utf-8")
+        self.commit("test(guidance): record missing verification case\n\nRefs: T-207")
+        missing_tests = self.agentctl(
+            "guidance", "verify", packet_id, "--by", "fable", "--json", expect=1)
+        self.assertIn(
+            "task verification evidence is missing",
+            json.loads(missing_tests.stdout)["problems"],
+        )
+        task_path.write_text(original_task, encoding="utf-8")
+        self.commit("test(guidance): restore verification evidence\n\nRefs: T-207")
+
+        packet_path = next(
+            (self.root / ".agent" / "bus" / "done").rglob(f"{packet_id}.json")
+        )
+        original_packet = packet_path.read_text(encoding="utf-8")
+        changed_packet = json.loads(original_packet)
+        changed_packet["task"] = "T-208"
+        changed_packet["acknowledged_task"] = "T-208"
+        packet_path.write_text(json.dumps(changed_packet), encoding="utf-8")
+        wrong_task = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--json",
+            expect=1)
+        wrong_task_record = json.loads(wrong_task.stdout)
+        self.assertIn(
+            "worker guidance packet differs from the signed dispatch contract",
+            wrong_task_record["problems"],
+        )
+        packet_path.write_text(original_packet, encoding="utf-8")
+
+        receipt_path = self.root / ".agent" / "state" / "dispatch" / f"{packet_id}.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        receipt["status"] = "failed"
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        tampered = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--json",
+            expect=1)
+        tampered_record = json.loads(tampered.stdout)
+        self.assertFalse(tampered_record["accepted"])
+        self.assertTrue(any("integrity verification" in p for p in tampered_record["problems"]))
+
+    def test_supervisor_verify_records_rejection_for_malformed_receipt_integrity(self):
+        self.install_fake_codex(exit_code=0)
+        self.agentctl(
+            "task", "create", "--id", "T-211", "--title", "reject malformed receipt",
+            "--owner", "codex", "--scope", ".agent/", expect=0)
+        created = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable", "--to-agent", "codex",
+            "--to-model", "gpt-5.5", "--to-session", "session-malformed",
+            "--task", "T-211", "--summary", "Reject malformed signed evidence",
+            "--plan", "Fail closed and preserve the rejection record.",
+            "--dispatch", expect=0)
+        packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+        receipt_path = self.root / ".agent" / "state" / "dispatch" / f"{packet_id}.json"
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        original_receipt = json.dumps(receipt)
+        receipt["integrity"] = "malformed"
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        self.start_fable_supervisor()
+
+        rejected = self.agentctl(
+            "guidance", "verify", packet_id, "--by", "fable", "--json", expect=1)
+        record = json.loads(rejected.stdout)
+        self.assertFalse(record["accepted"])
+        self.assertTrue(any("receipt is invalid" in p for p in record["problems"]))
+        self.assertTrue(list(
+            (self.root / ".git" / "agent-workflow" / "acceptance").glob("*.json")
+        ))
+
+        receipt = json.loads(original_receipt)
+        receipt["integrity"]["signature"] = "é"
+        receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
+        non_ascii = self.agentctl(
+            "guidance", "verify", packet_id, "--by", "fable", "--json", expect=1)
+        non_ascii_record = json.loads(non_ascii.stdout)
+        self.assertFalse(non_ascii_record["accepted"])
+        self.assertTrue(any("receipt is invalid" in p for p in non_ascii_record["problems"]))
+
+    def test_supervisor_verifies_worker_worktree_and_acceptance_survives_release(self):
+        self.install_fake_codex(exit_code=0)
+        self.env["FAKE_CODEX_ACK"] = "1"
+        self.env["FAKE_CODEX_FINISH"] = "1"
+        self.start_fable_supervisor()
+        self.agentctl(
+            "task", "create",
+            "--id", "T-210",
+            "--title", "verify managed worker target",
+            "--owner", "codex",
+            "--scope", "src/",
+            expect=0)
+        created = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex",
+            "--to-model", "gpt-5.5",
+            "--to-reasoning-effort", "xhigh",
+            "--to-session", "session-worktree",
+            "--task", "T-210",
+            "--summary", "Complete one turn in an isolated worker worktree",
+            "--plan", "Acknowledge, finish, and preserve supervisor acceptance.",
+            expect=0)
+        packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+        self.commit("chore(agent): prepare managed guidance test\n\nRefs: T-210")
+
+        worker = self.root.parent / "worker"
+        leased = self.agentctl(
+            "worktree", "create",
+            "--task", "T-210",
+            "--agent", "codex",
+            "--path", str(worker),
+            expect=0)
+        lease_id = re.search(r"worktree lease (\S+) active", leased.stdout).group(1)
+        self.agentctl(
+            "guidance", "dispatch", packet_id,
+            expect=0, cwd=worker)
+
+        self.commit(
+            "feat(worker): complete managed guidance test\n\nRefs: T-210",
+            cwd=worker,
+        )
+
+        accepted = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--target", str(worker),
+            "--json",
+            expect=0)
+        record = json.loads(accepted.stdout)
+        self.assertTrue(record["accepted"])
+        self.assertTrue(all(record["checks"].values()), record)
+        worker_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=worker,
+            check=True, capture_output=True, text=True).stdout.strip()
+        self.assertEqual(record["target_head"], worker_head)
+        self.assertTrue(record["evidence"]["contract_sha256"])
+        self.assertTrue(record["evidence"]["task_document_sha256"])
+        common_acceptance = list(
+            (self.root / ".git" / "agent-workflow" / "acceptance").glob("*.json")
+        )
+        self.assertTrue(common_acceptance)
+
+        self.agentctl("worktree", "release", lease_id, expect=0)
+        self.assertFalse(worker.exists())
+        self.assertTrue(all(path.is_file() for path in common_acceptance))
+
+    def test_supervisor_verify_rejects_completion_from_before_dispatch(self):
+        self.install_fake_codex(exit_code=0)
+        self.agentctl(
+            "task", "create",
+            "--id", "T-209",
+            "--title", "reject stale completion evidence",
+            "--owner", "codex",
+            "--scope", ".agent/",
+            expect=0)
+        self.agentctl(
+            "work", "--agent", "codex", "--task", "T-209",
+            "--session-id", "session-stale",
+            "--model", "gpt-5.5",
+            "--reasoning-effort", "xhigh",
+            expect=0)
+        self.agentctl(
+            "finish",
+            "--summary", "completion created before guidance",
+            "--tests", "old verification",
+            expect=0)
+        self.env["FAKE_CODEX_ACK"] = "1"
+        created = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable",
+            "--to-agent", "codex",
+            "--to-model", "gpt-5.5",
+            "--to-reasoning-effort", "xhigh",
+            "--to-session", "session-stale",
+            "--task", "T-209",
+            "--summary", "Require new work after the old completion",
+            "--plan", "Acknowledge only; stale completion must not satisfy this turn.",
+            "--dispatch",
+            expect=0)
+        packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+
+        self.start_fable_supervisor()
+        rejected = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--json",
+            expect=1)
+        record = json.loads(rejected.stdout)
+        self.assertFalse(record["accepted"])
+        self.assertIn("task completion predates this dispatch attempt", record["problems"])
 
 
 if __name__ == "__main__":

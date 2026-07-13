@@ -120,8 +120,24 @@ When the human names this agent as a supervisor and provides a Codex session ID:
    ```
 
 4. After the bounded Codex turn returns, inspect the task document, diff, and
-   verification evidence. Send another packet only when the evidence requires a
-   new implementation turn; otherwise gate or hand off the task.
+   verification evidence. Commit the bounded worker turn, leave its checkout
+   clean, then run the supervisor-owned acceptance check:
+
+   ```bash
+   python3 tools/agentctl.py guidance verify <packet-id> --by <supervisor> \
+     --target <worker-worktree>
+   ```
+
+   A zero Codex exit code is transport evidence, not task completion. Verification
+   accepts only a signed immutable task contract and matching receipt, the exact
+   worker acknowledgement, and a matching task in `review`, `approved`, or `done`
+   with completion/test evidence. The signed decision records the worker HEAD,
+   tree, and evidence hashes, so it remains auditable after worktree release.
+   Run verification from the supervisor's own active planning/review session;
+   `--target` reads evidence from the worker checkout without transferring its
+   ignored runtime state.
+   Send another packet only when the recorded rejection requires a new bounded
+   implementation turn; otherwise gate or hand off the task.
 5. For a harness, workflow, rule, or agent-runtime change, run one unchanged eval
    suite against clean baseline and candidate worktrees before approval:
 

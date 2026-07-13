@@ -31,11 +31,12 @@ instead of relying on chat memory or repeated human prompts.
 | Milestone | Target | Status | Exit Criteria |
 |---|---|---|---|
 | M1 | Define project workflow | done | Plan, rules, hooks, loop contracts, task docs, and dogfood evidence exist |
-| M2 | Execute bounded supervisor-worker turns | in_progress | Fable can persist a plan, resume a named Codex session, receive a transport receipt, and retain all worker gates |
+| M2 | Execute bounded supervisor-worker turns | in_progress | Fable can persist a plan, resume a named Codex session, and independently accept signed route/ack/task evidence from one real turn without weakening worker gates |
 | M3 | Operational autonomy | in_progress | Resumable bounded cycles, worktree leases, scheduler adapters, budgets, stop conditions, and recovery tests are proven incrementally |
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] T-026 - add supervisor dispatch acceptance workflow (owner: codex)
 - [x] T-025 - add harness evaluation baseline (owner: codex)
 - [x] T-024 - add managed worktree leases (owner: codex)
 - [x] T-023 - add resumable autonomous loop runtime (owner: codex)

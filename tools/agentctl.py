@@ -13,7 +13,7 @@ Commands:
   finish     shorthand complete command for the active task
   complete   move the active task to review (write completion record, free lock)
   gate       approve/reject a task in review (-> done / blocked)
-  guidance   create/list/show/ack/dispatch supervisor guidance packets
+  guidance   create/list/show/ack/dispatch/verify supervisor guidance packets
   handoff    create/list/show/close cross-agent task packets
   worktree   create/list/release task-scoped worktree leases
   eval       run and compare deterministic baseline/candidate verifier suites
@@ -90,6 +90,8 @@ GUIDANCE_DISPATCH_TIMEOUT_DEFAULT = 7200
 GUIDANCE_DISPATCH_TIMEOUT_MAX = 86400
 GUIDANCE_DISPATCH_PROMPT_MAX = 24000
 GUIDANCE_DISPATCH_OUTPUT_CAP = 4000
+GUIDANCE_SIGNING_KEY_FILE = "guidance-hmac.key"
+GUIDANCE_ACCEPTANCE_DIR = "acceptance"
 REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 WORKTREE_LEASES_DIR = "agent-workflow"
 WORKTREE_LEASES_FILE = "worktree-leases.json"
@@ -1113,6 +1115,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
         if tests:
             record += f"- Tests: {tests}\n"
         record += f"- Completed-at: {ts}\n"
+        record += f"- Completed-at-ns: {time.time_ns()}\n"
         i = body.find("## Completion Record")
         if i >= 0:
             body = body[:i] + "## Completion Record\n" + record
@@ -1474,6 +1477,101 @@ def _guidance_dispatch_state_dir(root: Path) -> Path:
     return _state_dir(root) / "dispatch"
 
 
+def _guidance_acceptance_dir(root: Path) -> Path:
+    common = _git_common_dir(root)
+    if common is None:
+        raise ValueError("guidance acceptance requires a Git repository")
+    return common / WORKTREE_LEASES_DIR / GUIDANCE_ACCEPTANCE_DIR
+
+
+def _guidance_signing_key(root: Path, *, create: bool) -> bytes:
+    common = _git_common_dir(root)
+    if common is None:
+        raise ValueError("guidance evidence signing requires a Git repository")
+    path = common / WORKTREE_LEASES_DIR / GUIDANCE_SIGNING_KEY_FILE
+    try:
+        key = path.read_bytes()
+    except FileNotFoundError:
+        if not create:
+            raise ValueError("guidance signing key is unavailable; rerun dispatch from this checkout")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        generated = secrets.token_bytes(32)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            key = path.read_bytes()
+        else:
+            try:
+                os.write(fd, generated)
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            key = generated
+    except OSError as exc:
+        raise ValueError(f"unable to read guidance signing key: {exc}") from exc
+    if len(key) < 32:
+        raise ValueError("guidance signing key is invalid")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return key
+
+
+def _guidance_record_signature(record: dict, key: bytes) -> str:
+    unsigned = dict(record)
+    unsigned.pop("integrity", None)
+    payload = json.dumps(
+        unsigned, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+    return hmac.new(key, payload, hashlib.sha256).hexdigest()
+
+
+def _guidance_sign_record(record: dict, key: bytes) -> None:
+    record["integrity"] = {
+        "algorithm": "hmac-sha256",
+        "signature": _guidance_record_signature(record, key),
+    }
+
+
+def _guidance_verify_record(root: Path, record: dict, label: str) -> None:
+    integrity = record.get("integrity")
+    if not isinstance(integrity, dict) or integrity.get("algorithm") != "hmac-sha256":
+        raise ValueError(f"{label} has no supported supervisor integrity signature")
+    signature = integrity.get("signature")
+    if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        raise ValueError(f"{label} has an invalid supervisor integrity signature")
+    expected = _guidance_record_signature(record, _guidance_signing_key(root, create=False))
+    if not hmac.compare_digest(signature, expected):
+        raise ValueError(f"{label} failed supervisor integrity verification")
+
+
+def _guidance_contract(packet: dict) -> dict:
+    """Return the immutable supervisor-to-worker contract for one dispatch."""
+    return {
+        key: packet.get(key) or ([] if key == "artifacts" else "")
+        for key in (
+            "id", "kind", "created_at", "from_agent", "from_model", "from_session",
+            "to_agent", "to_model", "to_reasoning_effort", "to_session", "task",
+            "summary", "plan", "artifacts",
+        )
+    }
+
+
+def _guidance_contract_digest(contract: dict) -> str:
+    payload = json.dumps(
+        contract, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def _guidance_file_digest(path: Path) -> str:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
 def _guidance_dispatch_prompt(packet: dict) -> str:
     packet_id = packet.get("id") or "unknown"
     to_agent = packet.get("to_agent") or "codex"
@@ -1631,11 +1729,13 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
         ) or packet
 
     started_at = _now()
+    started_at_ns = time.time_ns()
     running = {
         "transport": transport,
         "status": "running",
         "attempts": attempts,
         "started_at": started_at,
+        "started_at_ns": started_at_ns,
         "finished_at": "",
         "exit_code": None,
         "session_id": session_id,
@@ -1675,14 +1775,19 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
         exit_code = 1
 
     finished_at = _now()
+    finished_at_ns = time.time_ns()
     receipt = {
         "version": 1,
         "packet": packet["id"],
+        "contract": _guidance_contract(prompt_packet),
+        "contract_sha256": _guidance_contract_digest(_guidance_contract(prompt_packet)),
         "transport": transport,
         "status": "succeeded" if exit_code == 0 else "failed",
         "attempts": attempts,
         "started_at": started_at,
+        "started_at_ns": started_at_ns,
         "finished_at": finished_at,
+        "finished_at_ns": finished_at_ns,
         "exit_code": exit_code,
         "session_id": session_id,
         "model": model,
@@ -1692,9 +1797,18 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
         "stdout_tail": _dispatch_output_tail(stdout),
         "stderr_tail": _dispatch_output_tail(stderr),
     }
+    try:
+        _guidance_sign_record(receipt, _guidance_signing_key(root, create=True))
+    except ValueError as exc:
+        print(f"agentctl: unable to sign guidance receipt: {exc}", file=sys.stderr)
+        receipt["status"] = "failed"
+        receipt["exit_code"] = 1
+        receipt["failure"] = str(exc)
+        exit_code = 1
     _save_json(state_dir / f"{_safe_segment(packet['id'])}.json", receipt)
     persistent = {key: receipt[key] for key in (
-        "transport", "status", "attempts", "started_at", "finished_at", "exit_code",
+        "transport", "status", "attempts", "started_at", "started_at_ns",
+        "finished_at", "finished_at_ns", "exit_code",
         "session_id", "model", "reasoning_effort", "last_message", "failure",
     )}
     _update_guidance_dispatch(root, packet["id"], persistent)
@@ -1711,6 +1825,262 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
     if detail:
         print(detail, file=sys.stderr)
     return 1
+
+
+def _guidance_completion_evidence(
+    root: Path, task: str, *, not_before_ns: int,
+) -> tuple[bool, list[str]]:
+    problems: list[str] = []
+    status = _task_status(root, task)
+    if status not in {"review", "approved", "done"}:
+        problems.append(f"task {task} status is {status or 'missing'}, expected review/approved/done")
+    path = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    body = _read(path)
+    if not body:
+        problems.append(f"task document is missing: {path.relative_to(root)}")
+        return False, problems
+    doc_status_match = re.search(r"^Status:\s*(\S+)", body, flags=re.M)
+    doc_status = doc_status_match.group(1) if doc_status_match else ""
+    if doc_status != status:
+        problems.append(
+            f"task {task} document status is {doc_status or 'missing'}, "
+            f"board status is {status or 'missing'}"
+        )
+    section = _extract_section(body, "## Completion Record")
+    summary = re.search(r"^- Summary:\s*(.+)$", section, flags=re.M)
+    tests = re.search(r"^- Tests:\s*(.+)$", section, flags=re.M)
+    completed = re.search(r"^- Completed-at:\s*(.+)$", section, flags=re.M)
+    completed_ns = re.search(r"^- Completed-at-ns:\s*(\d+)$", section, flags=re.M)
+    if not summary or not summary.group(1).strip():
+        problems.append("task completion summary is missing")
+    missing_test_markers = {"", "-", "n/a", "na", "none", "not recorded", "not run"}
+    test_evidence = tests.group(1).strip().lower() if tests else ""
+    missing_test_prefix = re.match(
+        r"^(?:not run|not recorded|n/?a|none)(?:\b|\s*[:;,({\[-])",
+        test_evidence,
+    )
+    if test_evidence in missing_test_markers or missing_test_prefix:
+        problems.append("task verification evidence is missing")
+    if not completed or not completed.group(1).strip():
+        problems.append("task completion timestamp is missing")
+    if not completed_ns:
+        problems.append("task completion lacks dispatch-bound nanosecond evidence")
+    elif int(completed_ns.group(1)) < not_before_ns:
+        problems.append("task completion predates this dispatch attempt")
+    return not problems, problems
+
+
+def _guidance_verify(root: Path, args: argparse.Namespace) -> int:
+    target_root = Path(args.target or root).expanduser().resolve()
+    if not target_root.is_dir():
+        print(f"agentctl: guidance verify target is not a directory: {target_root}", file=sys.stderr)
+        return 2
+    if _git_common_dir(target_root) != _git_common_dir(root):
+        print("agentctl: guidance verify target must belong to the supervisor repository", file=sys.stderr)
+        return 2
+    path = _find_packet(target_root, args.packet)
+    if not path:
+        print(f"agentctl: guidance packet not found: {args.packet}", file=sys.stderr)
+        return 2
+    packet = _load_json(path, {})
+    supervisor_path = _find_packet(root, args.packet)
+    supervisor_packet = _load_json(supervisor_path, {}) if supervisor_path else {}
+    if packet.get("kind") != GUIDANCE_KIND:
+        print(f"agentctl: packet is not supervisor guidance: {args.packet}", file=sys.stderr)
+        return 2
+    reviewer = (args.by or "").strip()
+    if not reviewer:
+        print("agentctl: guidance verify requires --by <supervisor>", file=sys.stderr)
+        return 2
+    problems: list[str] = []
+    reviewer_session = _load_session(root)
+    reviewer_profile = _agent_profile(root, reviewer)
+    reviewer_role = (reviewer_profile.get("role") or "").lower()
+    if reviewer_session.get("agent") != reviewer:
+        problems.append(
+            f"active reviewer session is {reviewer_session.get('agent') or 'missing'}, expected {reviewer}"
+        )
+    if not any(label in reviewer_role for label in ("supervisor", "planning", "review")):
+        problems.append(f"reviewer {reviewer} is not registered with a supervisor/planning/review role")
+    try:
+        if _managed_worktree_lease(root):
+            problems.append("guidance verification must run from the supervisor checkout, not a worker lease")
+    except RuntimeError as exc:
+        problems.append(f"unable to verify supervisor checkout ownership: {exc}")
+    if reviewer == packet.get("to_agent"):
+        problems.append("worker cannot verify its own dispatched turn")
+    task = packet.get("task") or packet.get("to_task") or ""
+    dispatch = packet.get("dispatch") if isinstance(packet.get("dispatch"), dict) else {}
+    receipt_path = _guidance_dispatch_state_dir(target_root) / f"{_safe_segment(packet.get('id') or '')}.json"
+    receipt: dict = {}
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if not isinstance(receipt, dict):
+            raise ValueError("receipt is not an object")
+        _guidance_verify_record(root, receipt, f"guidance receipt {packet.get('id')}")
+    except FileNotFoundError:
+        problems.append("signed dispatch receipt is missing")
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as exc:
+        problems.append(f"dispatch receipt is invalid: {exc}")
+        receipt = {}
+    if receipt:
+        contract = receipt.get("contract")
+        contract_digest = receipt.get("contract_sha256")
+        if not isinstance(contract, dict) or not isinstance(contract_digest, str):
+            problems.append("signed receipt has no valid guidance contract")
+            contract = {}
+        elif _guidance_contract_digest(contract) != contract_digest:
+            problems.append("signed receipt guidance contract digest is invalid")
+            contract = {}
+        if contract:
+            task = contract.get("task") or ""
+            if _guidance_contract_digest(_guidance_contract(packet)) != contract_digest:
+                problems.append("worker guidance packet differs from the signed dispatch contract")
+            if not supervisor_packet:
+                problems.append("supervisor guidance packet is missing")
+            elif _guidance_contract_digest(_guidance_contract(supervisor_packet)) != contract_digest:
+                problems.append("supervisor guidance packet differs from the signed dispatch contract")
+        expected = {
+            "packet": contract.get("id") if contract else packet.get("id"),
+            "transport": "codex-cli",
+            "status": "succeeded",
+            "exit_code": 0,
+            "session_id": (contract.get("to_session") if contract else packet.get("to_session")) or "",
+            "model": (contract.get("to_model") if contract else packet.get("to_model")) or "",
+            "reasoning_effort": (
+                contract.get("to_reasoning_effort") if contract
+                else packet.get("to_reasoning_effort")
+            ) or "",
+        }
+        for key, value in expected.items():
+            if receipt.get(key) != value:
+                problems.append(
+                    f"receipt {key} is {receipt.get(key)!r}, expected {value!r}"
+                )
+        for key in (
+            "transport", "status", "attempts", "started_at", "started_at_ns",
+            "finished_at", "finished_at_ns", "exit_code",
+            "session_id", "model", "reasoning_effort", "last_message", "failure",
+        ):
+            if dispatch.get(key) != receipt.get(key):
+                problems.append(f"packet dispatch metadata differs from receipt field {key}")
+        last_message = receipt.get("last_message") or ""
+        final_path = target_root / last_message if last_message else None
+        if not final_path or not final_path.is_file() or not _read(final_path).strip():
+            problems.append("Codex final-message evidence is missing or empty")
+    contract = receipt.get("contract") if isinstance(receipt.get("contract"), dict) else {}
+    target_agent = contract.get("to_agent") or packet.get("to_agent") or ""
+    if not task:
+        problems.append("guidance packet has no task")
+    if reviewer_session.get("task") == task:
+        problems.append("reviewer session cannot own the worker task being verified")
+    if packet.get("status") != "done":
+        problems.append("worker has not acknowledged the guidance")
+    if packet.get("acknowledged_by") != target_agent:
+        problems.append(
+            f"guidance was acknowledged by {packet.get('acknowledged_by') or 'nobody'}, "
+            f"expected {target_agent or 'target worker'}"
+        )
+    if task and packet.get("acknowledged_task") != task:
+        problems.append(
+            f"guidance acknowledgement targets {packet.get('acknowledged_task') or 'no task'}, "
+            f"expected {task}"
+        )
+    started_at_ns = receipt.get("started_at_ns") if isinstance(receipt, dict) else None
+    if not isinstance(started_at_ns, int) or isinstance(started_at_ns, bool) or started_at_ns <= 0:
+        problems.append("dispatch receipt has no valid nanosecond start marker")
+        started_at_ns = time.time_ns()
+    acknowledged_at_ns = packet.get("acknowledged_at_ns")
+    if not isinstance(acknowledged_at_ns, int) or isinstance(acknowledged_at_ns, bool):
+        problems.append("guidance acknowledgement lacks dispatch-bound nanosecond evidence")
+    elif acknowledged_at_ns < started_at_ns:
+        problems.append("guidance acknowledgement predates this dispatch attempt")
+    if task:
+        owner = ((_load_board(target_root).get("tasks") or {}).get(task) or {}).get("owner") or ""
+        if owner and owner != target_agent:
+            problems.append(
+                f"task {task} owner is {owner}, "
+                f"expected target worker {target_agent or 'missing'}"
+            )
+        _ok, task_problems = _guidance_completion_evidence(
+            target_root, task, not_before_ns=started_at_ns,
+        )
+        problems.extend(task_problems)
+
+    target_status = _git_process(target_root, "status", "--porcelain", "--untracked-files=all")
+    target_head = _git(target_root, "rev-parse", "HEAD")
+    target_tree = _git(target_root, "rev-parse", "HEAD^{tree}")
+    if target_status.returncode:
+        problems.append(f"unable to inspect worker checkout status: {target_status.stderr.strip()}")
+    elif target_status.stdout.strip():
+        problems.append("worker checkout has uncommitted evidence; commit the bounded turn before verification")
+    if not target_head or not target_tree:
+        problems.append("worker checkout has no committed HEAD/tree evidence")
+    task_doc = target_root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    final_message = receipt.get("last_message") if receipt else ""
+    final_path = target_root / final_message if final_message else Path()
+    accepted = not problems
+    receipt_integrity = receipt.get("integrity") if isinstance(receipt, dict) else {}
+    if not isinstance(receipt_integrity, dict):
+        receipt_integrity = {}
+    record = {
+        "version": 1,
+        "id": f"guidance-acceptance-{secrets.token_hex(6)}",
+        "packet": packet.get("id"),
+        "task": task,
+        "reviewed_at": _now(),
+        "reviewed_by": reviewer,
+        "reviewer_task": reviewer_session.get("task") or "",
+        "target_root": str(target_root),
+        "target_head": target_head,
+        "target_tree": target_tree,
+        "accepted": accepted,
+        "checks": {
+            "signed_receipt": bool(receipt) and not any("receipt" in p for p in problems),
+            "route_matches": bool(receipt) and not any(
+                p.startswith("receipt ") or "dispatch metadata" in p for p in problems
+            ),
+            "worker_acknowledged": packet.get("status") == "done"
+            and packet.get("acknowledged_by") == packet.get("to_agent"),
+            "task_evidence_complete": not any(p.startswith("task ") or "task completion" in p
+                                                or "task verification" in p for p in problems),
+        },
+        "problems": problems,
+        "evidence": {
+            "contract": contract,
+            "contract_sha256": receipt.get("contract_sha256") if receipt else "",
+            "receipt_sha256": _guidance_file_digest(receipt_path),
+            "receipt_signature": receipt_integrity.get("signature"),
+            "task_document_sha256": _guidance_file_digest(task_doc),
+            "board_sha256": _guidance_file_digest(target_root / WORKFLOW_DIR / BOARD_FILE),
+            "final_message_sha256": _guidance_file_digest(final_path) if final_message else "",
+        },
+    }
+    try:
+        _guidance_sign_record(record, _guidance_signing_key(root, create=True))
+    except ValueError as exc:
+        print(f"agentctl: unable to sign guidance acceptance: {exc}", file=sys.stderr)
+        return 2
+    try:
+        acceptance_dir = _guidance_acceptance_dir(root)
+    except ValueError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
+    record_path = acceptance_dir / f"{record['id']}.json"
+    _save_json(record_path, record)
+    if args.json:
+        print(json.dumps(record, indent=2, ensure_ascii=False))
+    elif accepted:
+        print(
+            f"agentctl: guidance {packet.get('id')} accepted by {reviewer} "
+            f"({record_path})"
+        )
+    else:
+        print(f"agentctl: guidance {packet.get('id')} rejected by {reviewer}:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        print(f"agentctl: rejection recorded at {record_path}", file=sys.stderr)
+    return 0 if accepted else 1
 
 
 def _print_guidance_focus(root: Path, agent: str, task: str,
@@ -1903,8 +2273,41 @@ def _guidance_ack(root: Path, args: argparse.Namespace) -> int:
         return 2
     st = _load_session(root)
     by = args.by or st.get("agent") or pkt.get("to_agent") or "agent"
+    bound_route = bool(pkt.get("to_session") or pkt.get("to_model"))
+    if bound_route:
+        mismatches = []
+        if not st.get("task"):
+            mismatches.append("no active worker task session")
+        if st.get("agent") != pkt.get("to_agent") or by != st.get("agent"):
+            mismatches.append(
+                f"agent is {st.get('agent') or 'missing'}, "
+                f"expected {pkt.get('to_agent') or 'target worker'}"
+            )
+        if pkt.get("to_session") and st.get("session_id") != pkt.get("to_session"):
+            mismatches.append(
+                f"session is {st.get('session_id') or 'missing'}, expected {pkt.get('to_session')}"
+            )
+        if pkt.get("to_model") and st.get("model") != pkt.get("to_model"):
+            mismatches.append(
+                f"model is {st.get('model') or 'missing'}, expected {pkt.get('to_model')}"
+            )
+        expected_task = pkt.get("task") or pkt.get("to_task") or ""
+        if expected_task and st.get("task") != expected_task:
+            mismatches.append(
+                f"task is {st.get('task') or 'missing'}, expected {expected_task}"
+            )
+        if mismatches:
+            print(
+                "agentctl: session-bound guidance acknowledgement rejected; "
+                "enter the exact worker task/session with agentctl work first:",
+                file=sys.stderr,
+            )
+            for mismatch in mismatches:
+                print(f"  - {mismatch}", file=sys.stderr)
+            return 1
     pkt["status"] = "done"
     pkt["updated_at"] = _now()
+    pkt["acknowledged_at_ns"] = time.time_ns()
     pkt["acknowledged_by"] = by
     pkt["acknowledged_task"] = args.task or st.get("task") or pkt.get("task") or ""
     if args.note:
@@ -1937,6 +2340,8 @@ def cmd_guidance(args: argparse.Namespace) -> int:
         return _guidance_ack(root, args)
     if args.guidance_action == "dispatch":
         return _guidance_dispatch(root, args)
+    if args.guidance_action == "verify":
+        return _guidance_verify(root, args)
     print("agentctl: unknown guidance action", file=sys.stderr)
     return 2
 
@@ -5784,6 +6189,11 @@ def build_parser() -> argparse.ArgumentParser:
     gd.add_argument("--timeout", type=int, default=GUIDANCE_DISPATCH_TIMEOUT_DEFAULT)
     gd.add_argument("--dry-run", action="store_true",
                     help="Print the dispatch command without starting Codex")
+    gv = gsub.add_parser("verify")
+    gv.add_argument("packet")
+    gv.add_argument("--by", required=True, help="Independent supervisor or reviewer identity")
+    gv.add_argument("--target", help="Worker checkout containing task and packet evidence")
+    gv.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_guidance)
 
     sp = sub.add_parser("loop")

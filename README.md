@@ -171,6 +171,23 @@ kit never adds a dangerous bypass flag. The worker's final message and raw
 receipt stay under the gitignored `.agent/state/dispatch/`, while the guidance
 packet records transport status, attempt count, timestamps, and exit code.
 
+After the turn returns, the worker commits the bounded turn and leaves its
+checkout clean. Fable then verifies the whole state transition:
+
+```bash
+python3 tools/agentctl.py guidance verify <packet-id> --by fable \
+  --target <worker-worktree>
+```
+
+This does not trust a successful process exit by itself. It requires a signed
+immutable guidance contract and receipt matching the target session/model/effort,
+acknowledgement by the exact worker for the same task, and a new task completion
+record with tests in `review`, `approved`, or `done`. Fable runs this from its
+active planning/review session; the worker cannot self-approve by changing `--by`.
+Signed decisions bind the committed worker HEAD/tree and evidence hashes, and
+survive worktree release under the Git common directory at
+`agent-workflow/acceptance/`.
+
 When the matching Codex/GPT-5.5 worker starts or resumes, it still runs:
 
 ```bash
@@ -486,7 +503,7 @@ agentctl finish --summary "..." --tests "..."       move task to review
 agentctl gate approve|reject --task --by            review gate
 agentctl guidance create --from-agent --to-agent    send supervisor plan to an agent/session
 agentctl guidance create ... --dispatch             send plan and resume the target Codex session
-agentctl guidance list|show|ack|dispatch             inspect, acknowledge, or retry guidance
+agentctl guidance list|show|ack|dispatch|verify      inspect, execute, and accept/reject guidance
 agentctl eval list|run|show|compare|gate             evaluate baseline and candidate worktrees
 agentctl loop list|show|run <id> --once             inspect or run one loop
 agentctl loop auto --checkpoint <name> --once       run checkpoint policy
@@ -523,8 +540,10 @@ unknown-result orphan recovery, launch handshakes, one-shot/cycle mutual
 exclusion, descendant cleanup, non-destructive Windows PID checks, and supervisor
 guidance, managed worktree allocation, and harness evaluation: Fable-style plan creation,
 Codex work-start surfacing, finish blocking until acknowledgement, and successful
-completion after `guidance ack`, plus baseline/candidate non-regression gates and
-tampered-evidence rejection. CI runs the same tests on every push and pull request.
+completion after `guidance ack`, supervisor rejection of transport-only success,
+signed acceptance of evidence-complete turns, tampered-receipt rejection, plus
+baseline/candidate non-regression gates and tampered-evidence rejection. CI runs
+the same tests on every push and pull request.
 
 ## Current Boundaries
 
