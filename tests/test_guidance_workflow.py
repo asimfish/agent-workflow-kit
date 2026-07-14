@@ -62,6 +62,34 @@ class GuidanceWorkflowRegressionTest(unittest.TestCase):
             ["git", "commit", "--no-verify", "-q", "-m", message],
             cwd=cwd or self.root, check=True, capture_output=True, text=True)
 
+    def assert_guidance_receipt_integrity(self, packet_id, cwd=None):
+        checkout = Path(cwd or self.root)
+        receipt_path = (
+            checkout / ".agent" / "state" / "dispatch" / f"{packet_id}.json"
+        )
+        receipt_bytes = receipt_path.read_bytes()
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=checkout, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        key_bytes = (
+            Path(common_dir) / "agent-workflow" / "guidance-hmac.key"
+        ).read_bytes()
+        receipt_payload = json.loads(receipt_bytes)
+        receipt_signature = receipt_payload.pop("integrity")["signature"]
+        canonical_receipt = json.dumps(
+            receipt_payload, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        expected_signature = hmac.new(
+            key_bytes, canonical_receipt, hashlib.sha256,
+        ).hexdigest()
+        self.assertEqual(
+            receipt_signature, expected_signature,
+            (common_dir, receipt_payload),
+        )
+        return receipt_bytes, key_bytes
+
     def install_fake_codex(self, exit_code=0):
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir(parents=True, exist_ok=True)
@@ -686,6 +714,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             "--dispatch",
             expect=0)
         packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+        initial_receipt, initial_key = self.assert_guidance_receipt_integrity(packet_id)
 
         self_review = self.agentctl(
             "guidance", "verify", packet_id,
@@ -694,9 +723,21 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             expect=1)
         self_review_record = json.loads(self_review.stdout)
         self.assertTrue(any("active reviewer session" in p for p in self_review_record["problems"]))
+        self.assertEqual(
+            self.assert_guidance_receipt_integrity(packet_id),
+            (initial_receipt, initial_key),
+        )
 
         self.start_fable_supervisor()
+        self.assertEqual(
+            self.assert_guidance_receipt_integrity(packet_id),
+            (initial_receipt, initial_key),
+        )
         self.commit("chore(agent): record completed guided turn\n\nRefs: T-207")
+        self.assertEqual(
+            self.assert_guidance_receipt_integrity(packet_id),
+            (initial_receipt, initial_key),
+        )
         accepted = self.agentctl(
             "guidance", "verify", packet_id,
             "--by", "fable",
