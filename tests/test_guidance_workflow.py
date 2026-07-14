@@ -829,6 +829,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.commit("chore(agent): prepare managed guidance test\n\nRefs: T-210")
 
         worker = self.root.parent / "worker"
+        self.addCleanup(shutil.rmtree, worker, ignore_errors=True)
         leased = self.agentctl(
             "worktree", "create",
             "--task", "T-210",
@@ -840,10 +841,33 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             "guidance", "dispatch", packet_id,
             expect=0, cwd=worker)
 
+        receipt_path = (
+            worker / ".agent" / "state" / "dispatch" / f"{packet_id}.json"
+        )
+        receipt_before_commit = receipt_path.read_bytes()
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=self.root, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        signing_key = Path(common_dir) / "agent-workflow" / "guidance-hmac.key"
+        key_before_commit = signing_key.read_bytes()
+
+        pre_commit = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--target", str(worker),
+            "--json",
+            expect=1)
+        pre_commit_record = json.loads(pre_commit.stdout)
+        self.assertTrue(
+            pre_commit_record["checks"]["signed_receipt"], pre_commit_record)
+
         self.commit(
             "feat(worker): complete managed guidance test\n\nRefs: T-210",
             cwd=worker,
         )
+        self.assertEqual(receipt_path.read_bytes(), receipt_before_commit)
+        self.assertEqual(signing_key.read_bytes(), key_before_commit)
 
         accepted = self.agentctl(
             "guidance", "verify", packet_id,
