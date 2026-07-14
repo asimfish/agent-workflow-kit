@@ -37,4 +37,4 @@
 | T-024 | done | codex | `tools/agentctl.py, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-024.md](tasks/T-024.md) | add managed worktree leases |
 | T-025 | done | codex | `tools/agentctl.py, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-025.md](tasks/T-025.md) | add harness evaluation baseline |
 | T-026 | done | codex | `tools/, tests/, templates/project/, README.md, docs/, .agent/` | [.agent/tasks/T-026.md](tasks/T-026.md) | add supervisor dispatch acceptance workflow |
-| T-027 | review | codex | `tools/agentctl.py, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-027.md](tasks/T-027.md) | close PR 3 merge blockers |
+| T-027 | done | codex | `tools/agentctl.py, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-027.md](tasks/T-027.md) | close PR 3 merge blockers |

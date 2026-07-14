@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-14 23:01:40",
+  "updated_at": "2026-07-15 02:35:30",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -499,7 +499,7 @@
     },
     "T-027": {
       "title": "close PR 3 merge blockers",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/agentctl.py",
@@ -511,7 +511,7 @@
       ],
       "deps": [],
       "created_at": "2026-07-14 22:43:18",
-      "updated_at": "2026-07-14 23:01:40"
+      "updated_at": "2026-07-15 02:35:30"
     }
   }
 }
