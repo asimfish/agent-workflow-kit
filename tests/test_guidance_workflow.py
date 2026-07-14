@@ -149,7 +149,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         if os.name == "nt":
             executable = fake_bin / "codex.cmd"
             executable.write_text(
-                f'@"{sys.executable}" "%~dp0codex.py" %*\n', encoding="utf-8")
+                f'@"{sys.executable}" -X utf8 "%~dp0codex.py" %*\n', encoding="utf-8")
         else:
             executable = script
         record = self.root / ".agent" / "state" / "fake-codex-args.json"
