@@ -1791,7 +1791,7 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0,
             )
         proc = subprocess.Popen(
-            command, cwd=str(root), text=True, encoding="utf-8",
+            command, cwd=str(root), text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             **popen_args,
         )
