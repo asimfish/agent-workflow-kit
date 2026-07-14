@@ -7,6 +7,8 @@ acknowledges that the guidance was incorporated.
 """
 
 import importlib.util
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -851,6 +853,30 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         ).stdout.strip()
         signing_key = Path(common_dir) / "agent-workflow" / "guidance-hmac.key"
         key_before_commit = signing_key.read_bytes()
+        worker_common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=worker, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        worker_signing_key = (
+            Path(worker_common_dir) / "agent-workflow" / "guidance-hmac.key"
+        )
+        self.assertEqual(
+            worker_signing_key.read_bytes(), key_before_commit,
+            (common_dir, worker_common_dir),
+        )
+        receipt_payload = json.loads(receipt_before_commit)
+        receipt_signature = receipt_payload.pop("integrity")["signature"]
+        canonical_receipt = json.dumps(
+            receipt_payload, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        expected_signature = hmac.new(
+            key_before_commit, canonical_receipt, hashlib.sha256,
+        ).hexdigest()
+        self.assertEqual(
+            receipt_signature, expected_signature,
+            (common_dir, worker_common_dir, receipt_payload),
+        )
 
         pre_commit = self.agentctl(
             "guidance", "verify", packet_id,
