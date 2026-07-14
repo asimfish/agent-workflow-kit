@@ -81,9 +81,17 @@ if os.environ.get("FAKE_CODEX_CHILD_PID"):
     Path(os.environ["FAKE_CODEX_CHILD_PID"]).write_text(str(child.pid), encoding="utf-8")
 if os.environ.get("FAKE_CODEX_SLEEP"):
     time.sleep(float(os.environ["FAKE_CODEX_SLEEP"]))
-joined_args = " ".join(args)
-packet = re.search(r"guidance packet `([^`]+)`", joined_args).group(1)
-task = re.search(r"for task `([^`]+)`", joined_args).group(1)
+packets = []
+for path in Path(".agent/bus/inbox").rglob("*.json"):
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("kind") == "supervisor-guidance" and payload.get("status") == "ready":
+        packets.append(payload)
+packet_payload = max(
+    packets,
+    key=lambda payload: (payload.get("dispatch") or {}).get("started_at_ns") or 0,
+)
+packet = packet_payload["id"]
+task = packet_payload.get("task") or packet_payload.get("to_task")
 if os.environ.get("FAKE_CODEX_FINISH") == "1":
     model = args[args.index("--model") + 1] if "--model" in args else ""
     effort = ""
