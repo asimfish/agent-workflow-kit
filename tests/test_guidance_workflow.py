@@ -81,8 +81,9 @@ if os.environ.get("FAKE_CODEX_CHILD_PID"):
     Path(os.environ["FAKE_CODEX_CHILD_PID"]).write_text(str(child.pid), encoding="utf-8")
 if os.environ.get("FAKE_CODEX_SLEEP"):
     time.sleep(float(os.environ["FAKE_CODEX_SLEEP"]))
-packet = re.search(r"guidance packet `([^`]+)`", args[-1]).group(1)
-task = re.search(r"for task `([^`]+)`", args[-1]).group(1)
+joined_args = " ".join(args)
+packet = re.search(r"guidance packet `([^`]+)`", joined_args).group(1)
+task = re.search(r"for task `([^`]+)`", joined_args).group(1)
 if os.environ.get("FAKE_CODEX_FINISH") == "1":
     model = args[args.index("--model") + 1] if "--model" in args else ""
     effort = ""
@@ -90,7 +91,7 @@ if os.environ.get("FAKE_CODEX_FINISH") == "1":
         effort = args[args.index("--config") + 1].split('"')[1]
     work_command = [
         sys.executable, "tools/agentctl.py", "work", "--agent", "codex",
-        "--task", task, "--session-id", args[-2],
+        "--task", task, "--session-id", args[args.index("--output-last-message") + 2],
     ]
     if model:
         work_command.extend(["--model", model])

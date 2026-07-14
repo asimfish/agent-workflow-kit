@@ -110,3 +110,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-14 22:59:52 [T-027] Removed an unintended generated template controller copy; init distributes the executing controller directly, while only the workflow hook is template-owned.
 - 2026-07-14 23:01:06 [T-027] Evaluation correctly rejected a dirty policy checkout; included the pending board timestamp update before rerunning signed baseline/candidate evidence.
 - 2026-07-15 05:09:30 [T-028] Added a Windows .cmd fake-Codex launcher and converted the dispatch descendant timeout regression into a cross-platform process-tree assertion; all 19 focused guidance tests pass on POSIX.
+- 2026-07-15 05:14:43 [T-028] Windows CI run 56 exposed .cmd argument-boundary loss in the fake Codex launcher; production descendant cleanup passed. Updated the test double to parse the joined argv stream and derive session position from --output-last-message.
