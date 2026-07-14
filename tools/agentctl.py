@@ -1745,7 +1745,7 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
         command.extend(["--model", model])
     if reasoning_effort:
         command.extend(["--config", f'model_reasoning_effort="{reasoning_effort}"'])
-    command.extend(["--output-last-message", str(last_message), session_id, prompt])
+    command.extend(["--output-last-message", str(last_message), session_id, "-"])
 
     print(f"agentctl: dispatch command: {shlex.join(command[:-1] + ['<guidance-prompt>'])}")
     if args.dry_run:
@@ -1791,8 +1791,9 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
                 subprocess, "CREATE_NEW_PROCESS_GROUP", 0,
             )
         proc = subprocess.Popen(
-            command, cwd=str(root), text=True,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen_args,
+            command, cwd=str(root), text=True, encoding="utf-8", errors="replace",
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            **popen_args,
         )
         try:
             _attach_windows_kill_job(proc)
@@ -1804,7 +1805,7 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
                 pass
             raise
         try:
-            stdout, stderr = proc.communicate(timeout=timeout)
+            stdout, stderr = proc.communicate(input=prompt, timeout=timeout)
             exit_code = proc.returncode
         except subprocess.TimeoutExpired:
             _terminate_loop_process(proc)

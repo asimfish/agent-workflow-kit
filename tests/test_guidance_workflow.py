@@ -6,14 +6,17 @@ Codex sees it at work start, and task completion is blocked until Codex
 acknowledges that the guidance was incorporated.
 """
 
-import json
 import importlib.util
+import hashlib
+import hmac
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -59,11 +62,39 @@ class GuidanceWorkflowRegressionTest(unittest.TestCase):
             ["git", "commit", "--no-verify", "-q", "-m", message],
             cwd=cwd or self.root, check=True, capture_output=True, text=True)
 
+    def assert_guidance_receipt_integrity(self, packet_id, cwd=None):
+        checkout = Path(cwd or self.root)
+        receipt_path = (
+            checkout / ".agent" / "state" / "dispatch" / f"{packet_id}.json"
+        )
+        receipt_bytes = receipt_path.read_bytes()
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=checkout, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        key_bytes = (
+            Path(common_dir) / "agent-workflow" / "guidance-hmac.key"
+        ).read_bytes()
+        receipt_payload = json.loads(receipt_bytes)
+        receipt_signature = receipt_payload.pop("integrity")["signature"]
+        canonical_receipt = json.dumps(
+            receipt_payload, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        expected_signature = hmac.new(
+            key_bytes, canonical_receipt, hashlib.sha256,
+        ).hexdigest()
+        self.assertEqual(
+            receipt_signature, expected_signature,
+            (common_dir, receipt_payload),
+        )
+        return receipt_bytes, key_bytes
+
     def install_fake_codex(self, exit_code=0):
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir(parents=True, exist_ok=True)
-        executable = fake_bin / "codex"
-        executable.write_text(
+        script = fake_bin / ("codex.py" if os.name == "nt" else "codex")
+        script.write_text(
             """#!/usr/bin/env python3
 import json
 import os
@@ -75,13 +106,24 @@ import time
 
 args = sys.argv[1:]
 Path(os.environ["FAKE_CODEX_RECORD"]).write_text(json.dumps(args), encoding="utf-8")
+prompt = sys.stdin.read() if args[-1] == "-" else args[-1]
+Path(os.environ["FAKE_CODEX_STDIN_RECORD"]).write_text(prompt, encoding="utf-8")
 if os.environ.get("FAKE_CODEX_CHILD_PID"):
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     Path(os.environ["FAKE_CODEX_CHILD_PID"]).write_text(str(child.pid), encoding="utf-8")
 if os.environ.get("FAKE_CODEX_SLEEP"):
     time.sleep(float(os.environ["FAKE_CODEX_SLEEP"]))
-packet = re.search(r"guidance packet `([^`]+)`", args[-1]).group(1)
-task = re.search(r"for task `([^`]+)`", args[-1]).group(1)
+packets = []
+for path in Path(".agent/bus/inbox").rglob("*.json"):
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if payload.get("kind") == "supervisor-guidance" and payload.get("status") == "ready":
+        packets.append(payload)
+packet_payload = max(
+    packets,
+    key=lambda payload: (payload.get("dispatch") or {}).get("started_at_ns") or 0,
+)
+packet = packet_payload["id"]
+task = packet_payload.get("task") or packet_payload.get("to_task")
 if os.environ.get("FAKE_CODEX_FINISH") == "1":
     model = args[args.index("--model") + 1] if "--model" in args else ""
     effort = ""
@@ -89,7 +131,7 @@ if os.environ.get("FAKE_CODEX_FINISH") == "1":
         effort = args[args.index("--config") + 1].split('"')[1]
     work_command = [
         sys.executable, "tools/agentctl.py", "work", "--agent", "codex",
-        "--task", task, "--session-id", args[-2],
+        "--task", task, "--session-id", args[args.index("--output-last-message") + 2],
     ]
     if model:
         work_command.extend(["--model", model])
@@ -133,10 +175,18 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
 """,
             encoding="utf-8",
         )
-        executable.chmod(0o755)
+        script.chmod(0o755)
+        if os.name == "nt":
+            executable = fake_bin / "codex.cmd"
+            executable.write_text(
+                f'@"{sys.executable}" -X utf8 "%~dp0codex.py" %*\n', encoding="utf-8")
+        else:
+            executable = script
         record = self.root / ".agent" / "state" / "fake-codex-args.json"
+        prompt_record = self.root / ".agent" / "state" / "fake-codex-stdin.txt"
         self.env["PATH"] = str(fake_bin) + os.pathsep + self.env.get("PATH", "")
         self.env["FAKE_CODEX_RECORD"] = str(record)
+        self.env["FAKE_CODEX_STDIN_RECORD"] = str(prompt_record)
         self.env["FAKE_CODEX_EXIT"] = str(exit_code)
         return record
 
@@ -454,7 +504,8 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             args[args.index("--config") + 1],
             'model_reasoning_effort="xhigh"')
         self.assertEqual(args[-2], "session-success")
-        prompt = args[-1]
+        self.assertEqual(args[-1], "-")
+        prompt = record.with_name("fake-codex-stdin.txt").read_text(encoding="utf-8")
         self.assertIn(packet_id, prompt)
         self.assertIn("T-202", prompt)
         self.assertIn("Implement the bounded worker phase", prompt)
@@ -541,9 +592,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.assertEqual(packet["dispatch"]["exit_code"], 124)
         self.assertIn("timed out after 1s", packet["dispatch"]["failure"])
 
-    def test_dispatch_timeout_terminates_descendant_process_group(self):
-        if os.name != "posix":
-            self.skipTest("POSIX process-group regression")
+    def test_dispatch_timeout_terminates_descendant_process_tree(self):
         self.install_fake_codex(exit_code=0)
         child_pid_path = self.root / ".agent" / "state" / "fake-child.pid"
         self.env["FAKE_CODEX_CHILD_PID"] = str(child_pid_path)
@@ -557,11 +606,22 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             "--dispatch", "--timeout", "1", expect=1)
         self.assertIn("timed out after 1s", failed.stdout + failed.stderr)
         child_pid = int(child_pid_path.read_text(encoding="utf-8"))
-        state = subprocess.run(
-            ["ps", "-o", "stat=", "-p", str(child_pid)],
-            text=True, capture_output=True, timeout=10,
-        ).stdout.strip()
-        self.assertTrue(not state or state.startswith("Z"), state)
+        if os.name == "posix":
+            state = subprocess.run(
+                ["ps", "-o", "stat=", "-p", str(child_pid)],
+                text=True, capture_output=True, timeout=10,
+            ).stdout.strip()
+            self.assertTrue(not state or state.startswith("Z"), state)
+        else:
+            for _ in range(50):
+                listing = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {child_pid}", "/FO", "CSV", "/NH"],
+                    text=True, capture_output=True, timeout=10,
+                ).stdout
+                if str(child_pid) not in listing:
+                    break
+                time.sleep(0.1)
+            self.assertNotIn(str(child_pid), listing)
 
     def test_windows_timeout_cleanup_attempts_tree_kill_after_leader_exit(self):
         spec = importlib.util.spec_from_file_location(
@@ -654,6 +714,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             "--dispatch",
             expect=0)
         packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+        initial_receipt, initial_key = self.assert_guidance_receipt_integrity(packet_id)
 
         self_review = self.agentctl(
             "guidance", "verify", packet_id,
@@ -662,9 +723,21 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             expect=1)
         self_review_record = json.loads(self_review.stdout)
         self.assertTrue(any("active reviewer session" in p for p in self_review_record["problems"]))
+        self.assertEqual(
+            self.assert_guidance_receipt_integrity(packet_id),
+            (initial_receipt, initial_key),
+        )
 
         self.start_fable_supervisor()
+        self.assertEqual(
+            self.assert_guidance_receipt_integrity(packet_id),
+            (initial_receipt, initial_key),
+        )
         self.commit("chore(agent): record completed guided turn\n\nRefs: T-207")
+        self.assertEqual(
+            self.assert_guidance_receipt_integrity(packet_id),
+            (initial_receipt, initial_key),
+        )
         accepted = self.agentctl(
             "guidance", "verify", packet_id,
             "--by", "fable",
@@ -799,6 +872,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.commit("chore(agent): prepare managed guidance test\n\nRefs: T-210")
 
         worker = self.root.parent / "worker"
+        self.addCleanup(shutil.rmtree, worker, ignore_errors=True)
         leased = self.agentctl(
             "worktree", "create",
             "--task", "T-210",
@@ -810,10 +884,57 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             "guidance", "dispatch", packet_id,
             expect=0, cwd=worker)
 
+        receipt_path = (
+            worker / ".agent" / "state" / "dispatch" / f"{packet_id}.json"
+        )
+        receipt_before_commit = receipt_path.read_bytes()
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=self.root, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        signing_key = Path(common_dir) / "agent-workflow" / "guidance-hmac.key"
+        key_before_commit = signing_key.read_bytes()
+        worker_common_dir = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=worker, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        worker_signing_key = (
+            Path(worker_common_dir) / "agent-workflow" / "guidance-hmac.key"
+        )
+        self.assertEqual(
+            worker_signing_key.read_bytes(), key_before_commit,
+            (common_dir, worker_common_dir),
+        )
+        receipt_payload = json.loads(receipt_before_commit)
+        receipt_signature = receipt_payload.pop("integrity")["signature"]
+        canonical_receipt = json.dumps(
+            receipt_payload, sort_keys=True, separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False,
+        ).encode("utf-8")
+        expected_signature = hmac.new(
+            key_before_commit, canonical_receipt, hashlib.sha256,
+        ).hexdigest()
+        self.assertEqual(
+            receipt_signature, expected_signature,
+            (common_dir, worker_common_dir, receipt_payload),
+        )
+
+        pre_commit = self.agentctl(
+            "guidance", "verify", packet_id,
+            "--by", "fable",
+            "--target", str(worker),
+            "--json",
+            expect=1)
+        pre_commit_record = json.loads(pre_commit.stdout)
+        self.assertTrue(
+            pre_commit_record["checks"]["signed_receipt"], pre_commit_record)
+
         self.commit(
             "feat(worker): complete managed guidance test\n\nRefs: T-210",
             cwd=worker,
         )
+        self.assertEqual(receipt_path.read_bytes(), receipt_before_commit)
+        self.assertEqual(signing_key.read_bytes(), key_before_commit)
 
         accepted = self.agentctl(
             "guidance", "verify", packet_id,
