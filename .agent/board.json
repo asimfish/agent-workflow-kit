@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-07 18:48:58",
+  "updated_at": "2026-07-15 02:35:30",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -405,6 +405,113 @@
       "deps": [],
       "created_at": "2026-07-07 18:47:46",
       "updated_at": "2026-07-07 18:48:58"
+    },
+    "T-021": {
+      "title": "add codex session dispatch transport",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-10 13:11:24",
+      "updated_at": "2026-07-10 13:42:17"
+    },
+    "T-022": {
+      "title": "finalize dispatch release metadata",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-10 13:42:36",
+      "updated_at": "2026-07-10 13:44:16"
+    },
+    "T-023": {
+      "title": "add resumable autonomous loop runtime",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-10 22:11:14",
+      "updated_at": "2026-07-11 11:56:09"
+    },
+    "T-024": {
+      "title": "add managed worktree leases",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-11 15:07:49",
+      "updated_at": "2026-07-12 00:14:10"
+    },
+    "T-025": {
+      "title": "add harness evaluation baseline",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-13 17:52:22",
+      "updated_at": "2026-07-13 18:21:19"
+    },
+    "T-026": {
+      "title": "add supervisor dispatch acceptance workflow",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-13 23:37:22",
+      "updated_at": "2026-07-14 00:37:53"
+    },
+    "T-027": {
+      "title": "close PR 3 merge blockers",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-14 22:43:18",
+      "updated_at": "2026-07-15 02:35:30"
     }
   }
 }

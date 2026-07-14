@@ -14,6 +14,11 @@
 8. Worker completes with `agentctl finish`.
 9. Git hooks verify active task context, doc updates, and commit format.
 
+Harness and workflow changes add one supervisor-owned evaluation step before the
+ordinary review gate. The same suite runs against clean baseline and candidate
+worktrees, and both held-in and held-out scores must avoid regression. See
+`docs/harness-evaluation.md`.
+
 ## Loop Contract
 
 Every loop in `.agent/loops/` must close six links:
@@ -61,6 +66,108 @@ T-199 supervisor scope=data/manifest + validation report
 ```
 
 Each worker writes only its scope. The supervisor owns manifest merge and final validation.
+
+## Supervisor To Codex Dispatch
+
+When the supervisor has a Codex session ID, one bounded producer-reviewer turn
+can be started directly:
+
+```bash
+agentctl guidance create \
+  --from-agent fable \
+  --to-agent codex-gpt55xhigh \
+  --to-model gpt-5.5 \
+  --to-reasoning-effort xhigh \
+  --to-session <session-id> \
+  --task T-101 \
+  --summary "implement the next verified phase" \
+  --plan-file .agent/plans/T-101.md \
+  --dispatch
+```
+
+This closes the loop links as follows:
+
+- Trigger: the supervisor creates a task-scoped guidance packet with
+  `--dispatch`.
+- Execute: `codex exec resume <SESSION_ID>` sends the plan to the named worker
+  session without invoking a shell.
+- Check: the worker runs task verification and `agentctl finish`, commits the
+  bounded turn, and leaves its checkout clean; the dispatch process also records
+  a signed contract and receipt. The supervisor then runs
+  `agentctl guidance verify <packet-id> --by <supervisor> --target
+  <worker-worktree>` from its own active planning/review session.
+- Feedback: the worker acknowledges incorporated guidance, or a failed transport
+  leaves the packet ready for `guidance dispatch <packet-id>` retry.
+- Memory: task docs and packet metadata are tracked; raw dispatch output stays in
+  `.agent/state/dispatch/`.
+- Next: the supervisor reviews evidence and either sends one more bounded packet,
+  gates the task, or stops for a human decision.
+
+Transport success is intentionally insufficient. `guidance verify` requires the
+signed immutable contract and receipt to match the original supervisor packet,
+route, and successful process result; requires the exact target worker to
+acknowledge the same task; and requires new completion/test evidence in `review`,
+`approved`, or `done`. The target must be clean and committed. Every acceptance
+or rejection is HMAC-signed with its worker HEAD/tree and evidence hashes under
+the shared Git common directory at `agent-workflow/acceptance/`, so releasing a
+worker worktree does not erase the auditable decision. The key is local to the Git
+common directory, so this detects accidental or ordinary evidence editing; it is
+not an OS security boundary against another process running as the same user.
+
+For the release dogfood, use a separate worker session and a harmless bounded
+task, then verify it before marking the milestone complete:
+
+```bash
+agentctl guidance create ... --to-session <real-worker-session> --dispatch
+agentctl guidance verify <packet-id> --by fable --target <worker-worktree>
+```
+
+Fake-Codex regression tests prove protocol behavior but do not count as this live
+dogfood. Never dispatch into the supervisor's current session.
+
+The transport does not weaken target-session permissions and does not create a
+background daemon. A worker session should use an isolated worktree when another
+agent is actively changing the same repository checkout.
+
+## Managed Worktree Allocation
+
+The supervisor owns worktree allocation. First commit the task plan and reach a
+clean baseline; a worker must never start from steering that exists only in an
+uncommitted supervisor checkout. Then create one lease:
+
+```bash
+agentctl worktree create --task T-101 --agent codex-worker
+agentctl worktree list --json
+```
+
+Allocation applies the same status, owner, dependency, and active write-scope
+rules as worker startup, so the fresh worker can actually claim the task. Active
+lease scopes are checked in the shared registry, not inferred only from a branch's
+local board, and overlapping leases are rejected even when sessions use the same
+agent ID. A worker starting inside a managed checkout cannot override its leased
+task, agent, or scope. The default branch is `feature/T-101-codex-worker`; the
+default path is a sibling pool derived from the checkout root. Both may be
+overridden explicitly, but a target cannot overlap the real checkout root or
+another registered checkout. The lease registry is stored under the shared Git
+common directory rather than `.agent/`, because `.agent/state/` is worktree-local
+and would give parallel agents different allocation views.
+
+Run the worker or its bounded guidance dispatch from the printed worktree path.
+When the worker phase is committed and the checkout is clean, release it from a
+different worktree:
+
+```bash
+agentctl worktree release <lease-id>
+```
+
+Release removes the clean linked checkout but preserves its branch. Stable Git
+admin-directory identity detects externally moved worktrees even after detach or
+branch changes. Dirty, current, moved, or branch-conflicting worktrees stop for
+inspection. Prunable and already-missing metadata also stop because cleanliness
+cannot be verified; after inspecting the missing path, use `worktree release
+<lease-id> --ack-missing` to release the registry entry and any remaining
+prunable Git metadata. There is no force removal, automatic branch deletion,
+worktree pool, or merge automation.
 
 ## Low-Friction Agent Loop
 

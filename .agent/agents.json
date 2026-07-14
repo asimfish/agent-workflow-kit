@@ -9,7 +9,8 @@
         "docs/"
       ],
       "tools": [],
-      "model": ""
+      "model": "",
+      "reasoning_effort": ""
     },
     "fable": {
       "role": "advanced planning supervisor; writes guidance packets for codex",
@@ -22,7 +23,8 @@
         "agentctl guidance create",
         "agentctl task create"
       ],
-      "model": "fable"
+      "model": "fable",
+      "reasoning_effort": ""
     },
     "codex": {
       "role": "implementation worker; reads guidance packets and executes tasks",
@@ -33,7 +35,8 @@
         "agentctl guidance ack",
         "agentctl finish"
       ],
-      "model": ""
+      "model": "",
+      "reasoning_effort": ""
     }
   }
 }

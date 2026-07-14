@@ -27,11 +27,23 @@ durable instructions to a worker agent, such as Codex:
 python3 tools/agentctl.py guidance create \
   --from-agent fable \
   --to-agent codex-gpt55xhigh \
-  --to-model gpt5.5xhigh \
+  --to-model gpt-5.5 \
+  --to-reasoning-effort xhigh \
   --to-session xxx \
   --task T-101 \
   --summary "Plan for the next implementation phase" \
-  --plan-file .agent/plans/T-101-fable-plan.md
+  --plan-file .agent/plans/T-101-fable-plan.md \
+  --dispatch
+```
+
+`--dispatch` persists the packet first, then runs one bounded
+`codex exec resume <SESSION_ID>` turn. Dispatch metadata is mirrored into the
+packet; raw receipts and the final worker message stay in the gitignored
+`.agent/state/dispatch/` directory. Omit `--dispatch` for an asynchronous
+file-only handoff, or retry a ready packet with:
+
+```bash
+python3 tools/agentctl.py guidance dispatch <packet-id>
 ```
 
 When that Codex worker runs

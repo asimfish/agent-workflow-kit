@@ -22,9 +22,11 @@ python3 tools/agentctl.py work --agent codex
 ```
 
 `work` resumes the current task or auto-claims the next assigned `ready`/`todo`
-task, then creates a read receipt with hashes for the plan, task index, rules,
-and task document. Later checks can detect when those files changed and require
-`agentctl refresh`.
+task, then creates a read receipt with hashes for the workflow entry, plan, task
+index, agent registry, operating and GitHub rules, checkpoint policy, and task
+document. Later checks detect when those files change and require an explicit
+`agentctl refresh`. `agentctl note` and `agentctl finish` enforce the same receipt
+directly, so a note cannot silently erase evidence that instructions changed.
 
 If there is no assigned task for the current request, the agent creates and starts
 one itself:

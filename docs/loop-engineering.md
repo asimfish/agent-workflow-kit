@@ -46,18 +46,26 @@ python3 tools/agentctl.py loop list
 python3 tools/agentctl.py loop show daily-plan-triage
 python3 tools/agentctl.py loop run daily-plan-triage --once
 python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
+python3 tools/agentctl.py loop cycle --checkpoint experiment-check --cycles 3 --interval 300
+python3 tools/agentctl.py loop status
+python3 tools/agentctl.py loop resume
+python3 tools/agentctl.py loop stop --reason "direction changed"
 ```
 
-Only one-shot runs are supported in this phase. Continuous behavior comes from
-workflow checkpoints, not from a daemon:
+One-shot runs and explicitly bounded cycles are supported. `loop cycle` requires
+a finite `--cycles` count (maximum 100), honors the checkpoint policy, and stops
+on failure unless `--continue-on-failure` is explicit. `--max-failures` can
+bound retries more tightly. There is still no background daemon; normal
+continuation comes from workflow checkpoints:
 
 - `work-start`: runs `daily-plan-triage` after `agentctl work` starts or resumes a task.
 - `pre-finish`: runs strict `doc-hygiene` before a task can move to review.
 - `post-finish`: writes a final non-strict `doc-hygiene` memory report after review.
 - `experiment-check`: runs `experiment-monitor` when an experiment task asks for it.
 
-Cron, worktree pools, connector loops, and automatic experiment launches are
-intentionally out of scope until checkpoint loops are proven in real projects.
+Built-in cron management, worktree pools, connector loops, and automatic
+experiment launches are intentionally out of scope until checkpoint loops are
+proven in real projects.
 
 Each run writes:
 
@@ -71,6 +79,86 @@ The run report records what was read, what happened, which checks ran, what
 feedback was produced, what memory changed, and what should happen next.
 Checkpoint state is also recorded in `.agent/loops/state.json`, so the next
 cycle can see the latest checkpoint status and report paths.
+
+## Resumable Cycle Runtime
+
+`loop cycle` stores one current runtime under `cycle_runtime` in
+`.agent/loops/state.json`. The record includes a runtime ID, checkpoint,
+configuration, owner PID/host fingerprint, completed count, failure count,
+reports, stop reason, and a bounded event trail. Replacing a terminal runtime
+moves a compact summary into `cycle_history`.
+
+The state machine is intentionally small:
+
+```text
+running -> completed | completed_with_failures | failed | blocked
+running -> stop_requested -> stopped
+running -> interrupted [resume_safe=true] -> running (resume) | stopped
+running -> interrupted [resume_safe=false] -> stopped (explicit reconciliation)
+```
+
+Rules:
+
+- Starting another cycle is refused while the latest runtime is live,
+  `stop_requested`, or interrupted and unfinished.
+- Start, resume, stop, and cycle-result transitions validate expected status and
+  owner under the same lock; JSON snapshots are atomically replaced so readers
+  see either the previous or next complete state.
+- `loop run`, `loop auto`, and `loop cycle` share a durable execution lease.
+  Starting a cycle while a one-shot run owns the lease is rejected, and a
+  non-owner one-shot run cannot execute while a cycle is live or interrupted.
+  If a one-shot owner dies before its report and state are committed, the lease
+  becomes `interrupted` and retains the same active-command evidence. After the
+  command exits and its effects are inspected, reconcile it with
+  `loop stop --ack-inflight --reason "<reconciliation>"`.
+- `loop status` detects a missing owner process on the same host. If no cycle was
+  in flight, it records `interrupted` with `resume_safe=true`, and `loop resume`
+  continues with the next unfinished cycle.
+- On Linux, macOS, and Windows, owner and child identities persist both PID and
+  a native process-birth marker (boot/start ticks, microsecond libproc start
+  time, or `GetProcessTimes`). Recovery treats a live but reused PID as a
+  different process instead of preserving a stale runtime or execution lease.
+- Linux process records are parsed as bytes because task names are not required
+  to be UTF-8. On POSIX, if the recorded leader has exited while its numeric
+  process-group ID still exists, recovery treats that group as unverifiable:
+  automatic replay remains blocked, but an operator can inspect side effects and
+  reconcile it explicitly with `loop stop --ack-inflight --reason "<reason>"`.
+  Permission-denied PID or process-group probes are treated as existing rather
+  than dead, preserving that conservative replay block.
+- A cycle starts with `resume_safe=false` and becomes safe only when its result is
+  persisted in the same locked update as progress and terminal state. During a
+  declared shell check, the runtime also stores a command hash, child PID,
+  process group, and host fingerprint.
+- A child first waits behind a short launch gate. The parent persists its PID and
+  process-group identity before releasing that gate, so a parent crash cannot
+  leave an already-running but unrecorded command. An unreleased gate expires
+  without executing the command.
+- If the owner disappears mid-cycle, automatic resume is refused because the
+  command may still be running or may have produced partial side effects. Wait
+  for the recorded command to exit, inspect its effects, then close that runtime
+  with `loop stop --ack-inflight --reason "<reconciliation>"` before starting a
+  new bounded cycle.
+- `loop stop` is cooperative. A running check is allowed to return or time out;
+  the runtime stops before launching the next cycle.
+- Reaching `--max-failures` stops the runtime. Reaching an escalated follow-up
+  marks it `blocked` immediately, even when continuing on ordinary failures.
+- `--max-failures` above 1 requires `--continue-on-failure`; otherwise the first
+  failure stops the runtime as before.
+- Failed, blocked, and explicitly stopped runs are terminal evidence. Resolve
+  the underlying feedback, then start a new bounded runtime rather than
+  rewriting history. `finish --ack-escalations` does not authorize more retries.
+
+This provides crash recovery and an external scheduler contract without
+claiming unattended service management. Task-scoped local worktree leases are
+available through `agentctl worktree`; cross-host leases, automatic worktree
+pools, and scheduler installation remain separate operational-autonomy layers.
+Loop check commands should be idempotent: the runtime prevents automatic replay
+when completion is unknown, but cannot undo side effects produced before a
+process crash.
+
+State updates use a persistent OS advisory lock. The kernel releases ownership
+when a process exits, so recovery never deletes a lock path another writer may
+already own.
 
 ## Feedback Link
 
@@ -174,4 +262,4 @@ agent whether a task-specific relaunch list is needed.
   the conversation.
 - Stop on missing evidence, missing budget, unclear ownership, or a required
   human decision.
-- Add scheduling only after the one-shot loop is reliable.
+- Keep scheduling outside the core until bounded and resumed cycles are reliable in a real project.

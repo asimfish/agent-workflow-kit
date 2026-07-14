@@ -48,7 +48,8 @@ assigned, for example `codex`, `claude`, `cursor`, or `agent`.
 ## During Work
 
 - Keep edits inside the active task write scope.
-- If the plan, task index, task doc, or rules changed, re-read them and run:
+- If the workflow entry, plan, task index, task doc, agent registry, rules, or
+  checkpoint policy changed, re-read them and run:
 
   ```bash
   python3 tools/agentctl.py refresh
@@ -74,6 +75,86 @@ assigned, for example `codex`, `claude`, `cursor`, or `agent`.
   ```bash
   python3 tools/agentctl.py loop auto --checkpoint experiment-check --once
   ```
+
+- Before starting a multi-cycle checkpoint, inspect durable runtime state. Resume
+  only an interruption marked safe; stop it explicitly when the plan changed:
+
+  ```bash
+  python3 tools/agentctl.py loop status
+  python3 tools/agentctl.py loop cycle --checkpoint <name> --cycles <n>
+  python3 tools/agentctl.py loop resume
+  python3 tools/agentctl.py loop stop --reason "<why this runtime is abandoned>"
+  ```
+
+  If status says an in-flight cycle or one-shot execution has an unknown result,
+  do not resume or replay it.
+  Wait for the recorded command to exit, inspect its side effects, then reconcile
+  it with `loop stop --ack-inflight --reason "<what was verified>"`.
+
+  The runner is bounded and cooperative. Never bypass an escalated follow-up or
+  start a competing runtime to hide an interrupted one.
+
+## Supervisor Dispatch
+
+When the human names this agent as a supervisor and provides a Codex session ID:
+
+1. Decompose the request into a bounded task with explicit scope and acceptance
+   evidence.
+2. If another agent is changing the current checkout, commit the task plan and
+   allocate a clean task-scoped worktree. Run the worker or dispatch command from
+   the printed path:
+
+   ```bash
+   python3 tools/agentctl.py worktree create --task <task-id> --agent <codex-worker>
+   ```
+
+3. Register the worker profile if needed, then create and dispatch one guidance
+   packet:
+
+   ```bash
+   python3 tools/agentctl.py guidance create \
+     --from-agent <supervisor> --to-agent <codex-worker> \
+     --to-model <model> --to-reasoning-effort <effort> \
+     --to-session <session-id> --task <task-id> \
+     --summary "<bounded phase>" --plan-file <plan-path> --dispatch
+   ```
+
+4. After the bounded Codex turn returns, inspect the task document, diff, and
+   verification evidence. Commit the bounded worker turn, leave its checkout
+   clean, then run the supervisor-owned acceptance check:
+
+   ```bash
+   python3 tools/agentctl.py guidance verify <packet-id> --by <supervisor> \
+     --target <worker-worktree>
+   ```
+
+   A zero Codex exit code is transport evidence, not task completion. Verification
+   accepts only a signed immutable task contract and matching receipt, the exact
+   worker acknowledgement, and a matching task in `review`, `approved`, or `done`
+   with completion/test evidence. The signed decision records the worker HEAD,
+   tree, and evidence hashes, so it remains auditable after worktree release.
+   Run verification from the supervisor's own active planning/review session;
+   `--target` reads evidence from the worker checkout without transferring its
+   ignored runtime state.
+   Send another packet only when the recorded rejection requires a new bounded
+   implementation turn; otherwise gate or hand off the task.
+5. For a harness, workflow, rule, or agent-runtime change, run one unchanged eval
+   suite against clean baseline and candidate worktrees before approval:
+
+   ```bash
+   python3 tools/agentctl.py eval run <suite> --target <baseline-path> --json
+   python3 tools/agentctl.py eval run <suite> --target <candidate-path> --json
+   python3 tools/agentctl.py eval gate --baseline <baseline-id> \
+     --candidate <candidate-id> --by <reviewer>
+   ```
+
+   The supervisor owns the suite and decision. A candidate must not edit or
+   replace its verifier policy.
+
+Dispatch uses the target session's existing Codex trust, approvals, and sandbox.
+Never add a dangerous bypass, acknowledge guidance for the worker, or approve
+work without independent evidence. Omit `--dispatch` when only a durable
+file-based handoff is possible.
 
 ## Finish And Commit
 
