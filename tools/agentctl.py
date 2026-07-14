@@ -589,6 +589,7 @@ def _doc_hash_targets(root: Path, task: str | None):
                         task=task,
                         session_id=st.get("session_id") or "",
                         model=st.get("model") or "",
+                        reasoning_effort=st.get("reasoning_effort") or "",
                     )
                 )
             else:
@@ -820,7 +821,8 @@ def cmd_init(args: argparse.Namespace) -> int:
 
 
 def _print_focus(root: Path, task: str, agent: str | None = None,
-                 session_id: str = "", model: str = "") -> None:
+                 session_id: str = "", model: str = "",
+                 reasoning_effort: str = "") -> None:
     task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
     print(f"\n=== FOCUS [{task}] — re-read before continuing ===")
     if task_doc.is_file():
@@ -834,7 +836,10 @@ def _print_focus(root: Path, task: str, agent: str | None = None,
     else:
         print(f"(no task doc at {WORKFLOW_DIR}/{TASKS_DIR}/{task}.md)")
     if agent:
-        _print_guidance_focus(root, agent, task, session_id=session_id, model=model)
+        _print_guidance_focus(
+            root, agent, task, session_id=session_id, model=model,
+            reasoning_effort=reasoning_effort,
+        )
     print("Required reading: AGENTS.md, .agent/PROJECT_PLAN.md, and the task doc above.")
     print("=== end focus ===")
 
@@ -842,8 +847,8 @@ def _print_focus(root: Path, task: str, agent: str | None = None,
 def cmd_work(args: argparse.Namespace) -> int:
     root = _repo_root()
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
-    meta = _resolve_worker_metadata(root, agent, args)
     if args.task:
+        meta = _resolve_worker_metadata(root, agent, args)
         start_args = argparse.Namespace(task=args.task, agent=agent, scope=args.scope, force=args.force,
                                         session_id=meta["session_id"], model=meta["model"],
                                         reasoning_effort=meta["reasoning_effort"])
@@ -851,12 +856,22 @@ def cmd_work(args: argparse.Namespace) -> int:
     st = _load_session(root)
     active = st.get("task")
     if active and _task_status(root, active) == "in_progress" and not args.force:
-        print(f"agentctl: resuming active task {active} (agent={st.get('agent') or agent})")
-        _print_focus(root, active, st.get("agent") or agent,
-                     session_id=st.get("session_id") or meta["session_id"],
-                     model=st.get("model") or meta["model"])
+        resume_agent = st.get("agent") or agent
+        resume_meta = _resolve_worker_metadata(root, resume_agent, args)
+        effective_meta = {
+            key: resume_meta[key] or st.get(key) or ""
+            for key in ("session_id", "model", "reasoning_effort")
+        }
+        if any(st.get(key, "") != value for key, value in effective_meta.items()):
+            st.update(effective_meta)
+            _save_session(root, st)
+            st["doc_hashes"] = _hash_docs(root, active)
+            _save_session(root, st)
+        print(f"agentctl: resuming active task {active} (agent={resume_agent})")
+        _print_focus(root, active, resume_agent, **effective_meta)
         _run_loop_checkpoint(root, "work-start", once=True, trigger="work-resume", strict=False)
         return 0
+    meta = _resolve_worker_metadata(root, agent, args)
     task = _select_next_task(root, agent)
     if not task:
         if args.auto_create:
@@ -989,7 +1004,10 @@ def cmd_start(args: argparse.Namespace) -> int:
     if meta["session_id"]:
         label += f" session={meta['session_id']}"
     print(f"agentctl: started {task} ({label}) -> in_progress")
-    _print_focus(root, task, agent, session_id=meta["session_id"], model=meta["model"])
+    _print_focus(
+        root, task, agent, session_id=meta["session_id"], model=meta["model"],
+        reasoning_effort=meta["reasoning_effort"],
+    )
     _run_loop_checkpoint(root, "work-start", once=True, trigger="work-start", strict=False)
     return 0
 
@@ -1005,7 +1023,12 @@ def cmd_focus(args: argparse.Namespace) -> int:
     meta = _resolve_worker_metadata(root, agent, args)
     _print_focus(root, task, agent,
                  session_id=getattr(args, "session_id", None) or st.get("session_id") or meta["session_id"],
-                 model=getattr(args, "model", None) or st.get("model") or meta["model"])
+                 model=getattr(args, "model", None) or st.get("model") or meta["model"],
+                 reasoning_effort=(
+                     getattr(args, "reasoning_effort", None)
+                     or st.get("reasoning_effort")
+                     or meta["reasoning_effort"]
+                 ))
     return 0
 
 
@@ -1073,6 +1096,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
         task_specific_only=True,
         session_id=st.get("session_id") or "",
         model=st.get("model") or "",
+        reasoning_effort=st.get("reasoning_effort") or "",
     )
     if pending_guidance:
         for _path, pkt in pending_guidance:
@@ -1361,7 +1385,8 @@ def _guidance_packet_paths(root: Path, packet: dict) -> tuple[Path, Path]:
 
 def _guidance_matches_worker(pkt: dict, to_agent: str | None = None,
                              session_id: str | None = None,
-                             model: str | None = None) -> bool:
+                             model: str | None = None,
+                             reasoning_effort: str | None = None) -> bool:
     if to_agent and pkt.get("to_agent") != to_agent:
         return False
     target_session = pkt.get("to_session") or ""
@@ -1369,6 +1394,9 @@ def _guidance_matches_worker(pkt: dict, to_agent: str | None = None,
         return False
     target_model = pkt.get("to_model") or ""
     if target_model and model and target_model != model:
+        return False
+    target_effort = pkt.get("to_reasoning_effort") or ""
+    if target_effort and target_effort != (reasoning_effort or ""):
         return False
     return True
 
@@ -1402,7 +1430,8 @@ def _append_guidance_doc(root: Path, packet: dict) -> None:
 def _open_guidance_packets(root: Path, to_agent: str | None = None, task: str | None = None,
                            task_specific_only: bool = False,
                            session_id: str | None = None,
-                           model: str | None = None) -> list[tuple[Path, dict]]:
+                           model: str | None = None,
+                           reasoning_effort: str | None = None) -> list[tuple[Path, dict]]:
     packets: list[tuple[Path, dict]] = []
     inbox = _bus_dir(root, BUS_INBOX)
     if not inbox.is_dir():
@@ -1411,7 +1440,10 @@ def _open_guidance_packets(root: Path, to_agent: str | None = None, task: str | 
         pkt = _load_json(path, {})
         if pkt.get("kind") != GUIDANCE_KIND or pkt.get("status") != "ready":
             continue
-        if not _guidance_matches_worker(pkt, to_agent=to_agent, session_id=session_id, model=model):
+        if not _guidance_matches_worker(
+            pkt, to_agent=to_agent, session_id=session_id, model=model,
+            reasoning_effort=reasoning_effort,
+        ):
             continue
         pkt_task = pkt.get("task") or ""
         pkt_to_task = pkt.get("to_task") or ""
@@ -1751,24 +1783,46 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
     exit_code = 1
     failure = ""
     try:
-        proc = subprocess.run(
-            command,
-            cwd=str(root),
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            timeout=timeout,
+        popen_args = {}
+        if os.name == "posix":
+            popen_args["start_new_session"] = True
+        elif os.name == "nt":
+            popen_args["creationflags"] = getattr(
+                subprocess, "CREATE_NEW_PROCESS_GROUP", 0,
+            )
+        proc = subprocess.Popen(
+            command, cwd=str(root), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, **popen_args,
         )
-        stdout = proc.stdout or ""
-        stderr = proc.stderr or ""
-        exit_code = proc.returncode
+        try:
+            _attach_windows_kill_job(proc)
+        except OSError:
+            _terminate_loop_process(proc)
+            try:
+                proc.communicate(timeout=5)
+            except subprocess.SubprocessError:
+                pass
+            raise
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+            exit_code = proc.returncode
+        except subprocess.TimeoutExpired:
+            _terminate_loop_process(proc)
+            try:
+                stdout, stderr = proc.communicate(timeout=5)
+            except subprocess.TimeoutExpired as cleanup_exc:
+                stdout = cleanup_exc.stdout if isinstance(cleanup_exc.stdout, str) else ""
+                stderr = cleanup_exc.stderr if isinstance(cleanup_exc.stderr, str) else ""
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            failure = f"codex dispatch timed out after {timeout}s"
+            exit_code = 124
+        finally:
+            _close_windows_job(proc)
         if exit_code:
-            failure = f"codex exited with status {exit_code}"
-    except subprocess.TimeoutExpired as exc:
-        stdout = exc.stdout if isinstance(exc.stdout, str) else ""
-        stderr = exc.stderr if isinstance(exc.stderr, str) else ""
-        failure = f"codex dispatch timed out after {timeout}s"
-        exit_code = 124
+            failure = failure or f"codex exited with status {exit_code}"
     except OSError as exc:
         failure = f"failed to start codex: {exc}"
         stderr = str(exc)
@@ -2084,9 +2138,11 @@ def _guidance_verify(root: Path, args: argparse.Namespace) -> int:
 
 
 def _print_guidance_focus(root: Path, agent: str, task: str,
-                          session_id: str = "", model: str = "") -> None:
+                          session_id: str = "", model: str = "",
+                          reasoning_effort: str = "") -> None:
     packets = _open_guidance_packets(root, to_agent=agent, task=task,
-                                     session_id=session_id, model=model)
+                                     session_id=session_id, model=model,
+                                     reasoning_effort=reasoning_effort)
     if not packets:
         return
     print("[Supervisor Guidance]\n")
@@ -2273,7 +2329,10 @@ def _guidance_ack(root: Path, args: argparse.Namespace) -> int:
         return 2
     st = _load_session(root)
     by = args.by or st.get("agent") or pkt.get("to_agent") or "agent"
-    bound_route = bool(pkt.get("to_session") or pkt.get("to_model"))
+    bound_route = bool(
+        pkt.get("to_session") or pkt.get("to_model")
+        or pkt.get("to_reasoning_effort")
+    )
     if bound_route:
         mismatches = []
         if not st.get("task"):
@@ -2290,6 +2349,13 @@ def _guidance_ack(root: Path, args: argparse.Namespace) -> int:
         if pkt.get("to_model") and st.get("model") != pkt.get("to_model"):
             mismatches.append(
                 f"model is {st.get('model') or 'missing'}, expected {pkt.get('to_model')}"
+            )
+        if (pkt.get("to_reasoning_effort")
+                and st.get("reasoning_effort") != pkt.get("to_reasoning_effort")):
+            mismatches.append(
+                "reasoning effort is "
+                f"{st.get('reasoning_effort') or 'missing'}, "
+                f"expected {pkt.get('to_reasoning_effort')}"
             )
         expected_task = pkt.get("task") or pkt.get("to_task") or ""
         if expected_task and st.get("task") != expected_task:
@@ -4150,15 +4216,17 @@ def _terminate_loop_process(proc: subprocess.Popen) -> None:
                 except OSError:
                     pass
         return
+    if _close_windows_job(proc):
+        return
     try:
-        if proc.poll() is None:
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                timeout=5,
-                check=False,
-            )
+        # taskkill can retain tree information briefly after the leader exits.
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+            check=False,
+        )
         if proc.poll() is None:
             proc.kill()
     except (OSError, subprocess.SubprocessError):
@@ -4167,6 +4235,90 @@ def _terminate_loop_process(proc: subprocess.Popen) -> None:
                 proc.kill()
         except OSError:
             pass
+
+
+def _attach_windows_kill_job(proc: subprocess.Popen) -> None:
+    """Attach a Windows process to a job whose close terminates descendants."""
+    if os.name != "nt":
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    class IO_COUNTERS(ctypes.Structure):
+        _fields_ = [
+            ("ReadOperationCount", ctypes.c_ulonglong),
+            ("WriteOperationCount", ctypes.c_ulonglong),
+            ("OtherOperationCount", ctypes.c_ulonglong),
+            ("ReadTransferCount", ctypes.c_ulonglong),
+            ("WriteTransferCount", ctypes.c_ulonglong),
+            ("OtherTransferCount", ctypes.c_ulonglong),
+        ]
+
+    class BASIC_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("PerProcessUserTimeLimit", ctypes.c_longlong),
+            ("PerJobUserTimeLimit", ctypes.c_longlong),
+            ("LimitFlags", wintypes.DWORD),
+            ("MinimumWorkingSetSize", ctypes.c_size_t),
+            ("MaximumWorkingSetSize", ctypes.c_size_t),
+            ("ActiveProcessLimit", wintypes.DWORD),
+            ("Affinity", ctypes.c_size_t),
+            ("PriorityClass", wintypes.DWORD),
+            ("SchedulingClass", wintypes.DWORD),
+        ]
+
+    class EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+        _fields_ = [
+            ("BasicLimitInformation", BASIC_LIMIT_INFORMATION),
+            ("IoInfo", IO_COUNTERS),
+            ("ProcessMemoryLimit", ctypes.c_size_t),
+            ("JobMemoryLimit", ctypes.c_size_t),
+            ("PeakProcessMemoryUsed", ctypes.c_size_t),
+            ("PeakJobMemoryUsed", ctypes.c_size_t),
+        ]
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+    kernel32.SetInformationJobObject.argtypes = [
+        wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+    ]
+    kernel32.SetInformationJobObject.restype = wintypes.BOOL
+    kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    job = kernel32.CreateJobObjectW(None, None)
+    if not job:
+        raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+    info = EXTENDED_LIMIT_INFORMATION()
+    info.BasicLimitInformation.LimitFlags = 0x00002000
+    configured = kernel32.SetInformationJobObject(
+        job, 9, ctypes.byref(info), ctypes.sizeof(info),
+    )
+    assigned = configured and kernel32.AssignProcessToJobObject(job, int(proc._handle))
+    if not assigned:
+        error = ctypes.get_last_error()
+        kernel32.CloseHandle(job)
+        raise OSError(error, "unable to assign dispatch process to Windows job")
+    proc._agentctl_windows_job = job
+
+
+def _close_windows_job(proc: subprocess.Popen) -> bool:
+    job = getattr(proc, "_agentctl_windows_job", None)
+    if not job:
+        return False
+    proc._agentctl_windows_job = None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        close_handle = ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+        close_handle(job)
+    except (AttributeError, OSError):
+        return False
+    return True
 
 
 def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
@@ -5617,6 +5769,7 @@ def _check_pending_guidance(root: Path) -> list:
             task_specific_only=True,
             session_id=st.get("session_id") or "",
             model=st.get("model") or "",
+            reasoning_effort=st.get("reasoning_effort") or "",
         )
     ]
 

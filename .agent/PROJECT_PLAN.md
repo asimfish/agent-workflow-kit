@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-027 - close PR 3 merge blockers (owner: codex)
 - [x] T-026 - add supervisor dispatch acceptance workflow (owner: codex)
 - [x] T-025 - add harness evaluation baseline (owner: codex)
 - [x] T-024 - add managed worktree leases (owner: codex)

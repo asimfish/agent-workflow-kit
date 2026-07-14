@@ -7,6 +7,7 @@ acknowledges that the guidance was incorporated.
 """
 
 import json
+import importlib.util
 import os
 import re
 import shutil
@@ -15,6 +16,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 KIT = Path(__file__).resolve().parents[1]
 
@@ -73,6 +75,9 @@ import time
 
 args = sys.argv[1:]
 Path(os.environ["FAKE_CODEX_RECORD"]).write_text(json.dumps(args), encoding="utf-8")
+if os.environ.get("FAKE_CODEX_CHILD_PID"):
+    child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    Path(os.environ["FAKE_CODEX_CHILD_PID"]).write_text(str(child.pid), encoding="utf-8")
 if os.environ.get("FAKE_CODEX_SLEEP"):
     time.sleep(float(os.environ["FAKE_CODEX_SLEEP"]))
 packet = re.search(r"guidance packet `([^`]+)`", args[-1]).group(1)
@@ -291,6 +296,76 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.assertEqual(len(remaining_packets), 1, remaining_packets)
         self.assertEqual(remaining_packets[0]["to_session"], "yyy")
 
+    def test_reasoning_effort_routes_guidance_without_session_id(self):
+        self.agentctl(
+            "task", "create", "--id", "T-104", "--title", "effort routed work",
+            "--owner", "codex", "--scope", ".agent/", expect=0)
+        packet_ids = {}
+        for effort in ("high", "xhigh"):
+            created = self.agentctl(
+                "guidance", "create",
+                "--from-agent", "fable", "--to-agent", "codex",
+                "--to-model", "gpt-5.5", "--to-reasoning-effort", effort,
+                "--task", "T-104", "--summary", f"Plan for {effort} worker",
+                "--plan", f"Only the {effort} worker incorporates this packet.",
+                expect=0)
+            packet_ids[effort] = re.search(
+                r"guidance packet created: (\S+)", created.stdout
+            ).group(1)
+
+        work = self.agentctl(
+            "work", "--agent", "codex", "--model", "gpt-5.5",
+            "--reasoning-effort", "high", expect=0)
+        combined = work.stdout + work.stderr
+        self.assertIn("Plan for high worker", combined)
+        self.assertNotIn("Plan for xhigh worker", combined)
+        wrong_ack = self.agentctl(
+            "guidance", "ack", packet_ids["xhigh"], "--by", "codex", expect=1)
+        self.assertIn("reasoning effort is high, expected xhigh", wrong_ack.stderr)
+        self.agentctl(
+            "guidance", "ack", packet_ids["high"], "--by", "codex", expect=0)
+        self.agentctl("check", "--mode", "manual", expect=0)
+
+    def test_effort_only_guidance_rejects_mismatched_ack(self):
+        self.agentctl(
+            "task", "create", "--id", "T-105", "--title", "effort-only route",
+            "--owner", "codex", "--scope", ".agent/", expect=0)
+        created = self.agentctl(
+            "guidance", "create", "--from-agent", "fable", "--to-agent", "codex",
+            "--to-reasoning-effort", "xhigh", "--task", "T-105",
+            "--summary", "Effort-only supervisor route",
+            "--plan", "Only an xhigh worker may acknowledge this packet.", expect=0)
+        packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+        self.agentctl(
+            "work", "--agent", "codex", "--reasoning-effort", "high", expect=0)
+        rejected = self.agentctl(
+            "guidance", "ack", packet_id, "--by", "codex", expect=1)
+        self.assertIn("reasoning effort is high, expected xhigh", rejected.stderr)
+
+    def test_resume_persists_reasoning_effort_for_all_gates(self):
+        self.agentctl(
+            "task", "create", "--id", "T-106", "--title", "resume route",
+            "--owner", "codex", "--scope", ".agent/", expect=0)
+        self.agentctl(
+            "work", "--agent", "codex", "--model", "gpt-5.5", expect=0)
+        created = self.agentctl(
+            "guidance", "create", "--from-agent", "fable", "--to-agent", "codex",
+            "--to-model", "gpt-5.5", "--to-reasoning-effort", "high",
+            "--task", "T-106", "--summary", "Resume with the intended effort",
+            "--plan", "Persist the route before applying any completion gate.", expect=0)
+        packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
+        resumed = self.agentctl(
+            "work", "--agent", "codex", "--model", "gpt-5.5",
+            "--reasoning-effort", "high", expect=0)
+        self.assertIn("Resume with the intended effort", resumed.stdout)
+        state = json.loads(self.agentctl("status", "--json", expect=0).stdout)
+        self.assertEqual(state["reasoning_effort"], "high")
+        self.agentctl("check", "--mode", "manual", expect=1)
+        self.agentctl(
+            "finish", "--summary", "must remain blocked", "--tests", "none", expect=1)
+        self.agentctl("guidance", "ack", packet_id, "--by", "codex", expect=0)
+        self.agentctl("check", "--mode", "manual", expect=0)
+
     def test_agent_profile_session_metadata_routes_guidance_by_default(self):
         self.agentctl(
             "agents", "add",
@@ -465,6 +540,42 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.assertEqual(packet["dispatch"]["status"], "failed")
         self.assertEqual(packet["dispatch"]["exit_code"], 124)
         self.assertIn("timed out after 1s", packet["dispatch"]["failure"])
+
+    def test_dispatch_timeout_terminates_descendant_process_group(self):
+        if os.name != "posix":
+            self.skipTest("POSIX process-group regression")
+        self.install_fake_codex(exit_code=0)
+        child_pid_path = self.root / ".agent" / "state" / "fake-child.pid"
+        self.env["FAKE_CODEX_CHILD_PID"] = str(child_pid_path)
+        self.env["FAKE_CODEX_SLEEP"] = "10"
+        failed = self.agentctl(
+            "guidance", "create",
+            "--from-agent", "fable", "--to-agent", "codex",
+            "--to-session", "session-timeout-tree", "--task", "T-212",
+            "--summary", "Bound the complete dispatch process tree",
+            "--plan", "Terminate descendants before recording timeout failure.",
+            "--dispatch", "--timeout", "1", expect=1)
+        self.assertIn("timed out after 1s", failed.stdout + failed.stderr)
+        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+        state = subprocess.run(
+            ["ps", "-o", "stat=", "-p", str(child_pid)],
+            text=True, capture_output=True, timeout=10,
+        ).stdout.strip()
+        self.assertTrue(not state or state.startswith("Z"), state)
+
+    def test_windows_timeout_cleanup_attempts_tree_kill_after_leader_exit(self):
+        spec = importlib.util.spec_from_file_location(
+            "agentctl_windows_guidance_cleanup", self.root / "tools" / "agentctl.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        proc = mock.Mock(pid=4242)
+        proc.poll.return_value = 0
+        with mock.patch.object(module.os, "name", "nt"), \
+                mock.patch.object(module, "_close_windows_job", return_value=False), \
+                mock.patch.object(module.subprocess, "run") as taskkill:
+            module._terminate_loop_process(proc)
+        taskkill.assert_called_once()
+        self.assertIn("/T", taskkill.call_args.args[0])
 
     def test_dispatch_refuses_source_session_recursion(self):
         created = self.agentctl(
