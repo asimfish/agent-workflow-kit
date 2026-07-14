@@ -76,6 +76,8 @@ import time
 
 args = sys.argv[1:]
 Path(os.environ["FAKE_CODEX_RECORD"]).write_text(json.dumps(args), encoding="utf-8")
+prompt = sys.stdin.read() if args[-1] == "-" else args[-1]
+Path(os.environ["FAKE_CODEX_STDIN_RECORD"]).write_text(prompt, encoding="utf-8")
 if os.environ.get("FAKE_CODEX_CHILD_PID"):
     child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
     Path(os.environ["FAKE_CODEX_CHILD_PID"]).write_text(str(child.pid), encoding="utf-8")
@@ -151,8 +153,10 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         else:
             executable = script
         record = self.root / ".agent" / "state" / "fake-codex-args.json"
+        prompt_record = self.root / ".agent" / "state" / "fake-codex-stdin.txt"
         self.env["PATH"] = str(fake_bin) + os.pathsep + self.env.get("PATH", "")
         self.env["FAKE_CODEX_RECORD"] = str(record)
+        self.env["FAKE_CODEX_STDIN_RECORD"] = str(prompt_record)
         self.env["FAKE_CODEX_EXIT"] = str(exit_code)
         return record
 
@@ -470,7 +474,8 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             args[args.index("--config") + 1],
             'model_reasoning_effort="xhigh"')
         self.assertEqual(args[-2], "session-success")
-        prompt = args[-1]
+        self.assertEqual(args[-1], "-")
+        prompt = record.with_name("fake-codex-stdin.txt").read_text(encoding="utf-8")
         self.assertIn(packet_id, prompt)
         self.assertIn("T-202", prompt)
         self.assertIn("Implement the bounded worker phase", prompt)
