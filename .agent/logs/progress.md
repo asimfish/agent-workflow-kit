@@ -109,3 +109,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-14 22:56:13 [T-027] Addressed independent review: effort-only routes are binding, resumed worker metadata persists before hashes/gates, and Windows dispatches use kill-on-close jobs with bounded cleanup; 19 focused guidance tests pass.
 - 2026-07-14 22:59:52 [T-027] Removed an unintended generated template controller copy; init distributes the executing controller directly, while only the workflow hook is template-owned.
 - 2026-07-14 23:01:06 [T-027] Evaluation correctly rejected a dirty policy checkout; included the pending board timestamp update before rerunning signed baseline/candidate evidence.
+- 2026-07-15 05:09:30 [T-028] Added a Windows .cmd fake-Codex launcher and converted the dispatch descendant timeout regression into a cross-platform process-tree assertion; all 19 focused guidance tests pass on POSIX.

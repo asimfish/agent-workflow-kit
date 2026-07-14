@@ -6,14 +6,15 @@ Codex sees it at work start, and task completion is blocked until Codex
 acknowledges that the guidance was incorporated.
 """
 
-import json
 import importlib.util
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -62,8 +63,8 @@ class GuidanceWorkflowRegressionTest(unittest.TestCase):
     def install_fake_codex(self, exit_code=0):
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir(parents=True, exist_ok=True)
-        executable = fake_bin / "codex"
-        executable.write_text(
+        script = fake_bin / ("codex.py" if os.name == "nt" else "codex")
+        script.write_text(
             """#!/usr/bin/env python3
 import json
 import os
@@ -133,7 +134,13 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
 """,
             encoding="utf-8",
         )
-        executable.chmod(0o755)
+        script.chmod(0o755)
+        if os.name == "nt":
+            executable = fake_bin / "codex.cmd"
+            executable.write_text(
+                f'@"{sys.executable}" "%~dp0codex.py" %*\n', encoding="utf-8")
+        else:
+            executable = script
         record = self.root / ".agent" / "state" / "fake-codex-args.json"
         self.env["PATH"] = str(fake_bin) + os.pathsep + self.env.get("PATH", "")
         self.env["FAKE_CODEX_RECORD"] = str(record)
@@ -541,9 +548,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.assertEqual(packet["dispatch"]["exit_code"], 124)
         self.assertIn("timed out after 1s", packet["dispatch"]["failure"])
 
-    def test_dispatch_timeout_terminates_descendant_process_group(self):
-        if os.name != "posix":
-            self.skipTest("POSIX process-group regression")
+    def test_dispatch_timeout_terminates_descendant_process_tree(self):
         self.install_fake_codex(exit_code=0)
         child_pid_path = self.root / ".agent" / "state" / "fake-child.pid"
         self.env["FAKE_CODEX_CHILD_PID"] = str(child_pid_path)
@@ -557,11 +562,22 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             "--dispatch", "--timeout", "1", expect=1)
         self.assertIn("timed out after 1s", failed.stdout + failed.stderr)
         child_pid = int(child_pid_path.read_text(encoding="utf-8"))
-        state = subprocess.run(
-            ["ps", "-o", "stat=", "-p", str(child_pid)],
-            text=True, capture_output=True, timeout=10,
-        ).stdout.strip()
-        self.assertTrue(not state or state.startswith("Z"), state)
+        if os.name == "posix":
+            state = subprocess.run(
+                ["ps", "-o", "stat=", "-p", str(child_pid)],
+                text=True, capture_output=True, timeout=10,
+            ).stdout.strip()
+            self.assertTrue(not state or state.startswith("Z"), state)
+        else:
+            for _ in range(50):
+                listing = subprocess.run(
+                    ["tasklist", "/FI", f"PID eq {child_pid}", "/FO", "CSV", "/NH"],
+                    text=True, capture_output=True, timeout=10,
+                ).stdout
+                if str(child_pid) not in listing:
+                    break
+                time.sleep(0.1)
+            self.assertNotIn(str(child_pid), listing)
 
     def test_windows_timeout_cleanup_attempts_tree_kill_after_leader_exit(self):
         spec = importlib.util.spec_from_file_location(

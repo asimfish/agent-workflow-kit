@@ -31,3 +31,18 @@ jobs:
       - name: Run loop workflow regression tests
         shell: bash
         run: python3 -m unittest discover -s tests -v
+
+  windows-dispatch-check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Compile workflow controller
+        run: python -m py_compile tools/agentctl.py tools/agent_workflow_hook.py
+
+      - name: Verify Windows guidance dispatch
+        run: python -m unittest tests.test_guidance_workflow -v
