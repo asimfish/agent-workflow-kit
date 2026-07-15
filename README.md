@@ -128,7 +128,10 @@ When an agent starts work, it should follow this cycle:
 7. For an independently gated task, a registered supervisor/reviewer starts a
    separate planning/review task and runs `agentctl gate approve --task <worker-task>
    --by <reviewer>` from that active reviewer session. The worker and a spoofed
-   `--by` value cannot approve the worker task.
+   `--by` value cannot approve the worker task. The controller fingerprints
+   host-issued Codex/Claude/Cursor runtime identifiers, records every runtime
+   that participated in implementation, and rejects any of those runtimes as
+   the reviewer.
 8. Commit with Conventional Commits and a task ID.
 9. Push only after Git hooks pass.
 

@@ -333,6 +333,38 @@ def _resolve_worker_metadata(root: Path, agent: str | None, args: argparse.Names
     }
 
 
+def _runtime_identity() -> str:
+    """Fingerprint host-issued agent/session identifiers without persisting raw IDs."""
+    values = []
+    for name in (
+        "CODEX_THREAD_ID",
+        "CLAUDE_CODE_SESSION_ID",
+        "CURSOR_CONVERSATION_ID",
+        "WHALENT_AGENT_ID",
+        "WHALENT_CODEX_INSTANCE_ID",
+    ):
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            values.append(f"{name}={value}")
+    if not values:
+        return ""
+    digest = hashlib.sha256("\n".join(values).encode("utf-8")).hexdigest()
+    return f"host-runtime:{digest[:32]}"
+
+
+def _record_runtime_identity(st: dict) -> str:
+    current = _runtime_identity()
+    identities = st.get("runtime_identities")
+    if not isinstance(identities, list):
+        identities = []
+    identities = [str(item) for item in identities if str(item).strip()]
+    if current and current not in identities:
+        identities.append(current)
+    st["runtime_identity"] = current
+    st["runtime_identities"] = identities
+    return current
+
+
 def _record_adoption_baseline(root: Path) -> None:
     """Record the pre-install HEAD so old history is not retroactively gated."""
     path = _adoption_path(root)
@@ -795,14 +827,51 @@ def _managed_hook_config(existing: str, desired: str, rel: str) -> str:
         prior = current_hooks.get(event, [])
         if not isinstance(prior, list) or not isinstance(wanted, list):
             raise ValueError(f"cannot merge {rel}: hooks.{event} must be an array")
-        preserved = [
-            item for item in prior
-            if "agent_workflow_hook.py" not in json.dumps(item, sort_keys=True)
-        ]
+        preserved = []
+        for item in prior:
+            cleaned = _remove_managed_hook_command(item)
+            if cleaned is not None:
+                preserved.append(cleaned)
         current_hooks[event] = preserved + wanted
     if "version" in managed:
         current.setdefault("version", managed["version"])
     return json.dumps(current, indent=2, ensure_ascii=False) + "\n"
+
+
+def _remove_managed_hook_command(item):
+    if not isinstance(item, dict):
+        return item
+    command = item.get("command")
+    if isinstance(command, str) and "agent_workflow_hook.py" in command:
+        return None
+    cleaned = dict(item)
+    nested = item.get("hooks")
+    if isinstance(nested, list):
+        remaining = []
+        for child in nested:
+            child_cleaned = _remove_managed_hook_command(child)
+            if child_cleaned is not None:
+                remaining.append(child_cleaned)
+        if not remaining:
+            return None
+        cleaned["hooks"] = remaining
+    return cleaned
+
+
+def _hook_row_contains(observed, expected) -> bool:
+    """Return True when observed preserves every effective field in expected."""
+    if not isinstance(observed, dict) or not isinstance(expected, dict):
+        return observed == expected
+    for key, wanted in expected.items():
+        actual = observed.get(key)
+        if key == "hooks" and isinstance(wanted, list):
+            if not isinstance(actual, list):
+                return False
+            if not all(any(_hook_row_contains(row, child) for row in actual) for child in wanted):
+                return False
+        elif actual != wanted:
+            return False
+    return True
 
 
 def _init_install_plan(root: Path, kit: Path, src: Path, *, force_managed: bool) -> tuple[dict, list[str], int]:
@@ -882,6 +951,10 @@ def _init_install_plan(root: Path, kit: Path, src: Path, *, force_managed: bool)
         "version": 1,
         "installed_at": manifest.get("installed_at") or _now(),
         "managed_files": managed,
+        "managed_hooks": {
+            rel: json.loads(template_files[rel])
+            for rel in (".codex/hooks.json", ".claude/settings.json", ".cursor/hooks.json")
+        },
         "policy": "project state is preserved; managed files upgrade only from recorded hashes",
     }, indent=2, ensure_ascii=False) + "\n"
     writes[_install_manifest_path(root)] = manifest_text
@@ -1003,7 +1076,12 @@ def cmd_work(args: argparse.Namespace) -> int:
             key: resume_meta[key] or st.get(key) or ""
             for key in ("session_id", "model", "reasoning_effort")
         }
-        if any(st.get(key, "") != value for key, value in effective_meta.items()):
+        runtime_before = list(st.get("runtime_identities") or [])
+        current_runtime_before = st.get("runtime_identity")
+        _record_runtime_identity(st)
+        if (any(st.get(key, "") != value for key, value in effective_meta.items())
+                or runtime_before != st.get("runtime_identities")
+                or current_runtime_before != st.get("runtime_identity")):
             st.update(effective_meta)
             _save_session(root, st)
             st["doc_hashes"] = _hash_docs(root, active)
@@ -1134,6 +1212,7 @@ def cmd_start(args: argparse.Namespace) -> int:
                "scope": scope, "session_id": meta["session_id"], "model": meta["model"],
                "reasoning_effort": meta["reasoning_effort"],
                "notes": [], "doc_hashes": {}}
+    _record_runtime_identity(session)
     _save_session(root, session)
     session["doc_hashes"] = _hash_docs(root, task)
     _save_session(root, session)
@@ -1279,6 +1358,9 @@ def cmd_complete(args: argparse.Namespace) -> int:
         record = f"- Summary: {summary}\n"
         if tests:
             record += f"- Tests: {tests}\n"
+        worker_runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item)]
+        if worker_runtimes:
+            record += f"- Worker-runtimes: {', '.join(worker_runtimes)}\n"
         record += f"- Completed-at: {ts}\n"
         record += f"- Completed-at-ns: {time.time_ns()}\n"
         i = body.find("## Completion Record")
@@ -1336,6 +1418,16 @@ def cmd_gate(args: argparse.Namespace) -> int:
     reviewer_profile = _agent_profile(root, reviewer)
     reviewer_role = str(reviewer_profile.get("role") or "").lower()
     reviewer_task = str(reviewer_session.get("task") or "")
+    reviewer_runtime = _runtime_identity()
+    session_runtime = str(reviewer_session.get("runtime_identity") or "")
+    completion = _extract_section(
+        _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"), "## Completion Record",
+    )
+    worker_runtime_match = re.search(r"^- Worker-runtimes:\s*(.+)$", completion, flags=re.M)
+    worker_runtimes = {
+        item.strip() for item in (worker_runtime_match.group(1).split(",") if worker_runtime_match else [])
+        if item.strip()
+    }
     review_problems = []
     if reviewer_session.get("agent") != reviewer:
         review_problems.append(
@@ -1347,6 +1439,14 @@ def cmd_gate(args: argparse.Namespace) -> int:
         review_problems.append("reviewer session cannot own the task being decided")
     if reviewer == (t.get("owner") or ""):
         review_problems.append("task owner cannot approve or reject their own task")
+    if not reviewer_runtime:
+        review_problems.append("reviewer host runtime identity is unavailable")
+    elif session_runtime != reviewer_runtime:
+        review_problems.append("active reviewer session is not bound to the current host runtime")
+    if not worker_runtimes:
+        review_problems.append("worker completion has no host runtime evidence; finish it with the current kit")
+    elif reviewer_runtime in worker_runtimes:
+        review_problems.append("reviewer host runtime participated in the worker task and is not independent")
     if not any(label in reviewer_role for label in ("supervisor", "planning", "review")):
         review_problems.append(
             f"reviewer {reviewer or '<missing>'} is not registered with a supervisor/planning/review role"
@@ -1376,7 +1476,9 @@ def cmd_gate(args: argparse.Namespace) -> int:
             gate_doc,
             f"# Gate {task}\n\n- Decision: approved\n- By: {reviewer}\n"
             f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
-            f"{reviewer_session.get('started_at') or ''}\n- At: {ts}\n- Note: {args.note or ''}\n",
+            f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
+            f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
+            f"- At: {ts}\n- Note: {args.note or ''}\n",
         )
         st = _load_session(root)
         st["last_gate"] = {"task": task, "decision": "approved", "at": ts}
@@ -1393,7 +1495,9 @@ def cmd_gate(args: argparse.Namespace) -> int:
         gate_doc,
         f"# Gate {task}\n\n- Decision: rejected\n- By: {reviewer}\n"
         f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
-        f"{reviewer_session.get('started_at') or ''}\n- At: {ts}\n- Note: {args.note or ''}\n",
+        f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
+        f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
+        f"- At: {ts}\n- Note: {args.note or ''}\n",
     )
     st = _load_session(root)
     st["last_gate"] = {"task": task, "decision": "rejected", "at": ts}
@@ -1411,6 +1515,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         return 2
     st["doc_hashes"] = _hash_docs(root, st["task"])
     st["refreshed_at"] = _now()
+    _record_runtime_identity(st)
     _save_session(root, st)
     print(f"agentctl: refreshed read receipt for {st['task']}")
     return 0
@@ -6084,6 +6189,7 @@ def _doctor_managed_install(root: Path) -> tuple[list[str], list[str], list[dict
     warnings: list[str] = []
     checks: list[dict] = []
     manifest_path = _install_manifest_path(root)
+    manifest = {}
     if not manifest_path.is_file():
         if (root / "templates" / "project").is_dir() and _kit_root() == root:
             checks.append({
@@ -6115,32 +6221,34 @@ def _doctor_managed_install(root: Path) -> tuple[list[str], list[str], list[dict
             "detail": f"{len(hashes)} managed file(s), {len(changed)} drifted",
         })
 
-    hook_specs = {
-        ".codex/hooks.json": ("SessionStart", "PreToolUse", "Stop"),
-        ".claude/settings.json": ("SessionStart", "PreToolUse", "Stop"),
-        ".cursor/hooks.json": ("sessionStart", "preToolUse", "beforeShellExecution", "stop"),
-    }
+    managed_hooks = manifest.get("managed_hooks") if isinstance(manifest, dict) else None
+    if not isinstance(managed_hooks, dict):
+        template_root = root / "templates" / "project"
+        managed_hooks = {}
+        for rel in (".codex/hooks.json", ".claude/settings.json", ".cursor/hooks.json"):
+            path = template_root / rel
+            if path.is_file():
+                try:
+                    managed_hooks[rel] = json.loads(_read(path))
+                except json.JSONDecodeError:
+                    pass
     hook_failures = []
-    for rel, events in hook_specs.items():
+    for rel in (".codex/hooks.json", ".claude/settings.json", ".cursor/hooks.json"):
         try:
             data = json.loads(_read(root / rel))
             hooks = data.get("hooks")
             if not isinstance(hooks, dict):
                 raise ValueError("hooks is not an object")
-            for event in events:
+            expected = managed_hooks.get(rel)
+            expected_hooks = expected.get("hooks") if isinstance(expected, dict) else None
+            if not isinstance(expected_hooks, dict):
+                raise ValueError("managed hook contract is missing from the installation manifest")
+            for event, wanted_rows in expected_hooks.items():
                 rows = hooks.get(event)
-                if not isinstance(rows, list) or not any(
-                    "agent_workflow_hook.py" in json.dumps(row, sort_keys=True) for row in rows
-                ):
+                if not isinstance(rows, list) or not isinstance(wanted_rows, list):
                     raise ValueError(f"missing managed {event} hook")
-            if rel == ".cursor/hooks.json":
-                for event in ("preToolUse", "beforeShellExecution"):
-                    managed_rows = [
-                        row for row in hooks[event]
-                        if "agent_workflow_hook.py" in json.dumps(row, sort_keys=True)
-                    ]
-                    if not managed_rows or not all(row.get("failClosed") is True for row in managed_rows):
-                        raise ValueError(f"managed {event} hook must set failClosed=true")
+                if not all(any(_hook_row_contains(row, wanted) for row in rows) for wanted in wanted_rows):
+                    raise ValueError(f"managed {event} hook differs from the shipped contract")
         except (AttributeError, json.JSONDecodeError, ValueError) as exc:
             hook_failures.append(f"{rel}: {exc}")
     if hook_failures:

@@ -58,7 +58,10 @@ Run `agentctl focus` manually any time to re-anchor.
   (auto-checks the plan box) or `-> blocked`. The command requires `--by` to
   match the active agent session, a registered supervisor/planning/review role,
   and a separate in-progress reviewer task; the task owner cannot decide their
-  own task.
+  own task. Task completion records hashed host runtime identifiers from Codex,
+  Claude, Cursor, or the hosting agent platform. Gate decisions require the
+  current host runtime to match the reviewer session and differ from every
+  runtime that participated in the worker task.
 - `board` / `task` / `agents` — machine-readable task board, task scaffolding, agent registry.
 - `refresh` — re-record doc hashes after the plan/rules/task docs changed.
 
@@ -102,3 +105,6 @@ hook entries, and records exact hashes for kit-managed executables, Git hooks,
 Cursor rules, and CI workflows in `.agent/install-manifest.json`. A locally
 modified managed file aborts the whole install. `--force-managed` is an explicit
 operator acknowledgement to replace those managed files after inspection.
+Provider hook upgrades remove only the managed command node, preserving custom
+commands that share the same matcher. `doctor` compares the effective matcher,
+command, timeout, and fail-closed fields against the installed contract.

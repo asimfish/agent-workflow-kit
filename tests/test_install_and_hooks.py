@@ -1,6 +1,7 @@
 """Regression coverage for safe adoption and native lifecycle hook contracts."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -56,9 +57,18 @@ class InstallAndHookRegressionTest(unittest.TestCase):
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             event = "SessionStart" if "cursor" not in rel else "sessionStart"
+            hooks = {event: [{"command": "echo existing"}]}
+            if "cursor" not in rel:
+                hooks["PreToolUse"] = [{
+                    "matcher": "Bash|Edit|Write",
+                    "hooks": [
+                        {"type": "command", "command": "tools/agent_workflow_hook.py pre-tool-use"},
+                        {"type": "command", "command": "echo keep-nested"},
+                    ],
+                }]
             path.write_text(json.dumps({
                 "custom": {"preserved": True},
-                "hooks": {event: [{"command": "echo existing"}]},
+                "hooks": hooks,
             }), encoding="utf-8")
         (self.root / ".gitignore").write_text("build/\n", encoding="utf-8")
         pr_template = self.root / ".github" / "PULL_REQUEST_TEMPLATE.md"
@@ -83,6 +93,10 @@ class InstallAndHookRegressionTest(unittest.TestCase):
             self.assertEqual(
                 sum("agent_workflow_hook.py" in json.dumps(row) for row in data["hooks"][event]), 1,
             )
+            if "cursor" not in rel:
+                self.assertTrue(any(
+                    "echo keep-nested" in json.dumps(row) for row in data["hooks"]["PreToolUse"]
+                ))
 
         plan = self.root / ".agent" / "PROJECT_PLAN.md"
         plan.write_text(plan.read_text(encoding="utf-8") + "\nHuman-owned plan change.\n", encoding="utf-8")
@@ -112,6 +126,13 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         self.assertIn("PreToolUse", repaired["hooks"])
         doctor = json.loads(self.agentctl("doctor", "--json").stdout)
         self.assertTrue(doctor["ok"], doctor)
+
+        repaired["hooks"]["PreToolUse"][-1]["matcher"] = "Read"
+        codex_config.write_text(json.dumps(repaired, indent=2) + "\n", encoding="utf-8")
+        ineffective = json.loads(self.agentctl("doctor", "--json", expect=1).stdout)
+        self.assertTrue(any("differs from the shipped contract" in p for p in ineffective["problems"]))
+        self.init()
+        self.agentctl("doctor")
 
     def test_unknown_managed_file_conflict_does_not_partially_install(self):
         path = self.root / ".github" / "workflows" / "agent-workflow-check.yml"
@@ -178,10 +199,12 @@ class IndependentGateRegressionTest(unittest.TestCase):
         )
         self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
 
-    def agentctl(self, *args, expect=0):
+    def agentctl(self, *args, expect=0, runtime="worker-runtime"):
+        env = os.environ.copy()
+        env["CODEX_THREAD_ID"] = runtime
         proc = subprocess.run(
             [sys.executable, "tools/agentctl.py", *args], cwd=self.root,
-            text=True, capture_output=True, timeout=120,
+            text=True, capture_output=True, timeout=120, env=env,
         )
         self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
         return proc
@@ -198,15 +221,29 @@ class IndependentGateRegressionTest(unittest.TestCase):
         self.agentctl(
             "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-102",
             "--title", "review worker change", "--scope", ".agent/gates/",
+            runtime="worker-runtime",
         )
-        self_review = self.agentctl("gate", "approve", "--task", "T-102", "--by", "supervisor", expect=1)
+        same_runtime = self.agentctl(
+            "gate", "approve", "--task", "T-101", "--by", "supervisor",
+            expect=1, runtime="worker-runtime",
+        )
+        self.assertIn("participated in the worker task", same_runtime.stderr)
+        self_review = self.agentctl(
+            "gate", "approve", "--task", "T-102", "--by", "supervisor",
+            expect=1, runtime="worker-runtime",
+        )
         self.assertIn("cannot own the task", self_review.stderr)
 
-        self.agentctl("gate", "approve", "--task", "T-101", "--by", "supervisor")
+        self.agentctl("refresh", runtime="reviewer-runtime")
+        self.agentctl(
+            "gate", "approve", "--task", "T-101", "--by", "supervisor",
+            runtime="reviewer-runtime",
+        )
         board = json.loads(self.agentctl("board", "--json").stdout)
         self.assertEqual(board["tasks"]["T-101"]["status"], "done")
         gate = (self.root / ".agent" / "gates" / "T-101.md").read_text(encoding="utf-8")
         self.assertIn("Reviewer task: T-102", gate)
+        self.assertIn("Reviewer runtime: host-runtime:", gate)
         self.agentctl("check", "--mode", "manual")
 
 
