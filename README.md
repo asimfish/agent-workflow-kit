@@ -44,6 +44,20 @@ This is equivalent to:
 python3 tools/agentctl.py init /path/to/your/project
 ```
 
+Installation is preflighted before any file is written. Existing `AGENTS.md`, PR
+template, and Codex/Claude/Cursor hook JSON are merged in managed sections while
+project content is preserved. Project-owned `.agent/` plans, tasks, rules, and
+runtime history are seeded only when absent. Re-running `init` is idempotent and
+upgrades unchanged kit-managed tools using `.agent/install-manifest.json`.
+
+If a managed tool or workflow file was edited locally, installation stops before
+making partial changes. Inspect the diff first, then explicitly replace only the
+kit-managed files when appropriate:
+
+```bash
+python3 tools/agentctl.py init /path/to/your/project --force-managed
+```
+
 ## What It Installs
 
 The target project gets a local `.agent/` system plus hooks and controller files:
@@ -111,8 +125,12 @@ When an agent starts work, it should follow this cycle:
 4. Work only inside the active task write scope.
 5. Record meaningful progress with `agentctl note "..."`.
 6. Finish with `agentctl finish --summary "..." --tests "..."`.
-7. Commit with Conventional Commits and a task ID.
-8. Push only after Git hooks pass.
+7. For an independently gated task, a registered supervisor/reviewer starts a
+   separate planning/review task and runs `agentctl gate approve --task <worker-task>
+   --by <reviewer>` from that active reviewer session. The worker and a spoofed
+   `--by` value cannot approve the worker task.
+8. Commit with Conventional Commits and a task ID.
+9. Push only after Git hooks pass.
 
 `agentctl work` and `agentctl finish` automatically run checkpoint loops, so the
 agent does not need to remember separate triage and document hygiene commands.
@@ -162,8 +180,11 @@ The plan is stored as a durable packet under `.agent/bus/` and mirrored into
 continuation command for the target session:
 
 ```text
-codex exec resume <SESSION_ID> <guidance-prompt>
+codex exec resume <SESSION_ID> -
 ```
+
+The guidance prompt is UTF-8 text supplied on standard input rather than a
+command-line argument.
 
 The call is synchronous and bounded (default timeout: 7200 seconds). It inherits
 the target Codex session's configured trust, approval, and sandbox policy; the

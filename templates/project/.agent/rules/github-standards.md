@@ -103,7 +103,10 @@ Refs: T-001
 ```
 
 Do not create or merge PRs with failing verification. Require review (human or
-reviewer agent) before merging to a protected branch.
+reviewer agent) before merging to a protected branch. An agent reviewer must be
+registered with a supervisor/planning/review role, enter a separate active
+review task, and run `gate approve|reject` from that session. A task owner or a
+spoofed `--by` string is not an independent review.
 
 Do not leave template placeholders blank. Use `none` or `not run: <reason>` when
 there is no value.
