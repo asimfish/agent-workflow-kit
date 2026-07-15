@@ -42,3 +42,4 @@
 | T-029 | review | codex | `tools/, tests/, templates/project/, integrations/, docs/, README.md, AGENTS.md, .agent/, .codex/, .claude/, .cursor/, .github/, .githooks/, hooks/` | [.agent/tasks/T-029.md](tasks/T-029.md) | harden installation review gates and native hooks |
 | T-030 | review | codex | `tools/, tests/, templates/project/, README.md, docs/, .agent/` | [.agent/tasks/T-030.md](tasks/T-030.md) | close T-029 independent review findings |
 | T-031 | review | codex | `tools/, tests/, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-031.md](tasks/T-031.md) | fix Windows dispatch identity and decoding |
+| T-032 | review | codex | `tools/, tests/, .agent/` | [.agent/tasks/T-032.md](tasks/T-032.md) | prevent completion evidence injection |

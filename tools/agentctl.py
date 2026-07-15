@@ -1297,6 +1297,11 @@ def cmd_note(args: argparse.Namespace) -> int:
     return cmd_progress(argparse.Namespace(note=note))
 
 
+def _completion_record_value(value: str) -> str:
+    """Keep worker-provided completion text inside one Markdown field."""
+    return " ".join(str(value or "").split())
+
+
 def cmd_complete(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
@@ -1312,7 +1317,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
         for problem in changed:
             print(f"  - {problem}", file=sys.stderr)
         return 1
-    summary = args.summary or ""
+    summary = _completion_record_value(args.summary)
     if not summary:
         print("agentctl: --summary is required", file=sys.stderr)
         return 2
@@ -1335,7 +1340,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
             )
         print("agentctl: finish blocked; incorporate the supervisor guidance and acknowledge it before finishing.", file=sys.stderr)
         return 1
-    tests = args.tests or ""
+    tests = _completion_record_value(args.tests)
     ack = bool(getattr(args, "ack_escalations", False))
     escalated = _escalated_follow_ups(root, task)
     if escalated and not ack:

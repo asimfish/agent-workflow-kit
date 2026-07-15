@@ -122,3 +122,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-15 10:36:15 [T-029] Implemented atomic managed installation, independent reviewer-bound gates, provider hook contract regressions, and synchronized entry/enforcement documentation; 4 focused tests pass.
 - 2026-07-15 20:57:17 [T-030] Resolved all three independent review findings: nested custom hooks are preserved, doctor validates exact effective hook contracts, and gate decisions require a distinct host runtime fingerprint; 4 focused regressions pass.
 - 2026-07-15 21:09:20 [T-031] Focused fixes now pass: 5 install/gate tests and 19 guidance tests; independent review findings P1/P2 are covered by regressions.
+- 2026-07-15 21:18:40 [T-032] Adversarial multiline completion evidence is now encoded into single-line fields; forged Worker-runtimes and headings cannot create trusted fields, and focused gate regression passes.
