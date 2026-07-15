@@ -36,6 +36,10 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-032 - prevent completion evidence injection (owner: codex)
+- [ ] T-031 - fix Windows dispatch identity and decoding (owner: codex)
+- [ ] T-030 - close T-029 independent review findings (owner: codex)
+- [ ] T-029 - harden installation review gates and native hooks (owner: codex)
 - [x] T-028 - verify windows dispatch process-tree cleanup (owner: codex)
 - [x] T-027 - close PR 3 merge blockers (owner: codex)
 - [x] T-026 - add supervisor dispatch acceptance workflow (owner: codex)

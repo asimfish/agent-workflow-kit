@@ -17,7 +17,7 @@ enforceable, plan-driven workflow for multiple AI agents. It has two layers:
 | Plan / tasks / board | `PROJECT_PLAN.md` (human plan), `TASKS.md` (index), `board.json` (machine board), `tasks/*.md` (task contracts) |
 | Multi-agent runtime | `agents.json` (profiles/write-scope), `locks/` (per-task locks), write-scope conflict detection so agents don't clobber each other |
 | Handoffs / bus | `.agent/bus/` stores machine-readable task packets; `.agent/handoffs/` stores human-readable cross-agent handoff notes |
-| Task lifecycle | `work -> note -> finish (review) -> optional gate approve (done)`; status machine `todo->ready->in_progress->review->approved->done` (branches `blocked`/`failed`) |
+| Task lifecycle | `work -> note -> finish (review) -> independent gate approve (done)`; status machine `todo->ready->in_progress->review->approved->done` (branches `blocked`/`failed`) |
 | Long-task anti-drift | lifecycle hook re-injects the current task focus on resume/compaction |
 | Three-layer enforcement | lifecycle hooks (process), git hooks (commit/push gate), GitHub Action (remote backstop) |
 
@@ -65,7 +65,7 @@ agentctl finish --summary "..." --tests "..."    # -> review
 Supervisor: write PLAN or ask supervisor agent to split T-101/T-102/T-103
 agent1/2/3: each `work` (auto lock; conflicting scope is refused) -> focus
             -> work -> note -> finish (-> review)
-Reviewer:   optional gate approve each task -> done (plan auto-checked)
+Reviewer:   separate active review task + gate approve -> done (plan auto-checked)
 Commit/push: git hooks reject non-compliant commits automatically
 ```
 

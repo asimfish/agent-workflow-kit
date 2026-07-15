@@ -54,7 +54,14 @@ Run `agentctl focus` manually any time to re-anchor.
 - `focus` — print the current task focus (re-read before continuing).
 - `note` — append a stage note to the task doc, log, and board.
 - `finish` — write the completion record, free the lock, move the task to `review`.
-- `gate approve|reject` — optional review gate: `review -> done` (auto-checks the plan box) or `-> blocked`.
+- `gate approve|reject` — independent review gate: `review -> done`
+  (auto-checks the plan box) or `-> blocked`. The command requires `--by` to
+  match the active agent session, a registered supervisor/planning/review role,
+  and a separate in-progress reviewer task; the task owner cannot decide their
+  own task. Task completion records hashed host runtime identifiers from Codex,
+  Claude, Cursor, or the hosting agent platform. Gate decisions require the
+  current host runtime to match the reviewer session and differ from every
+  runtime that participated in the worker task.
 - `board` / `task` / `agents` — machine-readable task board, task scaffolding, agent registry.
 - `refresh` — re-record doc hashes after the plan/rules/task docs changed.
 
@@ -82,3 +89,22 @@ The installed workflow `.github/workflows/agent-workflow-check.yml` runs `agentc
 ## Important Limitation
 
 Git can enforce commit and push rules. Agent task start is enforced by the project protocol plus lifecycle hooks where the current tool supports them. Keep Git hooks and CI enabled because agent-native hooks can vary by product, trust settings, and client version.
+
+`agentctl doctor` validates that all three managed hook entries are present and
+that Cursor's mutating hooks fail closed. It also reports the remaining boundary:
+project hooks still depend on the client loading them, repository trust, and
+user or organization policy. A repository cannot prevent an administrator from
+disabling its native hooks; Git hooks and required GitHub checks remain the
+later enforcement layers.
+
+## Installation And Upgrade Safety
+
+`agentctl init` computes all writes before mutation. It preserves project-owned
+`.agent/` state, merges managed `AGENTS.md` and PR-template blocks plus provider
+hook entries, and records exact hashes for kit-managed executables, Git hooks,
+Cursor rules, and CI workflows in `.agent/install-manifest.json`. A locally
+modified managed file aborts the whole install. `--force-managed` is an explicit
+operator acknowledgement to replace those managed files after inspection.
+Provider hook upgrades remove only the managed command node, preserving custom
+commands that share the same matcher. `doctor` compares the effective matcher,
+command, timeout, and fail-closed fields against the installed contract.

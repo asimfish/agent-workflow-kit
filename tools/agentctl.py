@@ -57,6 +57,7 @@ LOCKS_DIR = "locks"
 BOARD_FILE = "board.json"
 AGENTS_FILE = "agents.json"
 ADOPTION_FILE = "adoption.json"
+INSTALL_MANIFEST_FILE = "install-manifest.json"
 PLAN_FILE = "PROJECT_PLAN.md"
 TASKS_FILE = "TASKS.md"
 TASKS_DIR = "tasks"
@@ -293,6 +294,10 @@ def _adoption_path(root: Path) -> Path:
     return root / WORKFLOW_DIR / ADOPTION_FILE
 
 
+def _install_manifest_path(root: Path) -> Path:
+    return root / WORKFLOW_DIR / INSTALL_MANIFEST_FILE
+
+
 def _load_agents(root: Path) -> dict:
     return _load_json(_agents_path(root), {"version": 1, "agents": {}})
 
@@ -326,6 +331,38 @@ def _resolve_worker_metadata(root: Path, agent: str | None, args: argparse.Names
             or ""
         ),
     }
+
+
+def _runtime_identity() -> str:
+    """Fingerprint host-issued agent/session identifiers without persisting raw IDs."""
+    values = []
+    for name in (
+        "CODEX_THREAD_ID",
+        "CLAUDE_CODE_SESSION_ID",
+        "CURSOR_CONVERSATION_ID",
+        "WHALENT_AGENT_ID",
+        "WHALENT_CODEX_INSTANCE_ID",
+    ):
+        value = (os.environ.get(name) or "").strip()
+        if value:
+            values.append(f"{name}={value}")
+    if not values:
+        return ""
+    digest = hashlib.sha256("\n".join(values).encode("utf-8")).hexdigest()
+    return f"host-runtime:{digest[:32]}"
+
+
+def _record_runtime_identity(st: dict) -> str:
+    current = _runtime_identity()
+    identities = st.get("runtime_identities")
+    if not isinstance(identities, list):
+        identities = []
+    identities = [str(item) for item in identities if str(item).strip()]
+    if current and current not in identities:
+        identities.append(current)
+    st["runtime_identity"] = current
+    st["runtime_identities"] = identities
+    return current
 
 
 def _record_adoption_baseline(root: Path) -> None:
@@ -743,6 +780,186 @@ def _next_task_id(root: Path, prefix: str = "T") -> str:
 
 # ---------- commands ----------
 
+_AGENTS_BLOCK_START = "<!-- agent-workflow-kit:start -->"
+_AGENTS_BLOCK_END = "<!-- agent-workflow-kit:end -->"
+_PR_BLOCK_START = "<!-- agent-workflow-kit:pr-start -->"
+_PR_BLOCK_END = "<!-- agent-workflow-kit:pr-end -->"
+_MERGED_TEMPLATE_PATHS = {
+    "AGENTS.md",
+    ".github/PULL_REQUEST_TEMPLATE.md",
+    ".codex/hooks.json",
+    ".claude/settings.json",
+    ".cursor/hooks.json",
+    ".gitignore",
+}
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _managed_markdown_text(existing: str, desired: str, start: str, end: str) -> str:
+    block = f"{start}\n{desired.strip()}\n{end}"
+    pattern = re.compile(
+        re.escape(start) + r".*?" + re.escape(end),
+        flags=re.S,
+    )
+    if pattern.search(existing):
+        return pattern.sub(block, existing).rstrip() + "\n"
+    if not existing.strip():
+        return block + "\n"
+    return existing.rstrip() + "\n\n" + block + "\n"
+
+
+def _managed_hook_config(existing: str, desired: str, rel: str) -> str:
+    try:
+        current = json.loads(existing) if existing.strip() else {}
+        managed = json.loads(desired)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"cannot merge {rel}: invalid JSON ({exc})") from exc
+    if not isinstance(current, dict) or not isinstance(managed, dict):
+        raise ValueError(f"cannot merge {rel}: top-level JSON value must be an object")
+    current_hooks = current.setdefault("hooks", {})
+    desired_hooks = managed.get("hooks") or {}
+    if not isinstance(current_hooks, dict) or not isinstance(desired_hooks, dict):
+        raise ValueError(f"cannot merge {rel}: hooks must be an object")
+    for event, wanted in desired_hooks.items():
+        prior = current_hooks.get(event, [])
+        if not isinstance(prior, list) or not isinstance(wanted, list):
+            raise ValueError(f"cannot merge {rel}: hooks.{event} must be an array")
+        preserved = []
+        for item in prior:
+            cleaned = _remove_managed_hook_command(item)
+            if cleaned is not None:
+                preserved.append(cleaned)
+        current_hooks[event] = preserved + wanted
+    if "version" in managed:
+        current.setdefault("version", managed["version"])
+    return json.dumps(current, indent=2, ensure_ascii=False) + "\n"
+
+
+def _remove_managed_hook_command(item):
+    if not isinstance(item, dict):
+        return item
+    command = item.get("command")
+    if isinstance(command, str) and "agent_workflow_hook.py" in command:
+        return None
+    cleaned = dict(item)
+    nested = item.get("hooks")
+    if isinstance(nested, list):
+        remaining = []
+        for child in nested:
+            child_cleaned = _remove_managed_hook_command(child)
+            if child_cleaned is not None:
+                remaining.append(child_cleaned)
+        if not remaining:
+            return None
+        cleaned["hooks"] = remaining
+    return cleaned
+
+
+def _hook_row_contains(observed, expected) -> bool:
+    """Return True when observed preserves every effective field in expected."""
+    if not isinstance(observed, dict) or not isinstance(expected, dict):
+        return observed == expected
+    for key, wanted in expected.items():
+        actual = observed.get(key)
+        if key == "hooks" and isinstance(wanted, list):
+            if not isinstance(actual, list):
+                return False
+            if not all(any(_hook_row_contains(row, child) for row in actual) for child in wanted):
+                return False
+        elif actual != wanted:
+            return False
+    return True
+
+
+def _init_install_plan(root: Path, kit: Path, src: Path, *, force_managed: bool) -> tuple[dict, list[str], int]:
+    """Build a complete write plan before init mutates the target."""
+    manifest = _load_json(_install_manifest_path(root), {})
+    old_hashes = manifest.get("managed_files") if isinstance(manifest, dict) else {}
+    if not isinstance(old_hashes, dict):
+        old_hashes = {}
+    writes: dict[Path, str] = {}
+    managed: dict[str, str] = {}
+    conflicts: list[str] = []
+    seeded = 0
+
+    template_files: dict[str, str] = {}
+    for dirpath, _dirs, files in os.walk(src):
+        for fn in files:
+            source = Path(dirpath) / fn
+            rel = str(source.relative_to(src)).replace(os.sep, "/")
+            template_files[rel] = _read(source)
+
+    exact = {
+        rel: text for rel, text in template_files.items()
+        if not rel.startswith(f"{WORKFLOW_DIR}/") and rel not in _MERGED_TEMPLATE_PATHS
+    }
+    exact["tools/agentctl.py"] = _read(kit / "tools" / "agentctl.py")
+    hooks_src = kit / "hooks"
+    if hooks_src.is_dir():
+        for hook in sorted(hooks_src.iterdir()):
+            if hook.is_file():
+                exact[f".githooks/{hook.name}"] = _read(hook)
+
+    for rel, desired in exact.items():
+        destination = root / rel
+        current = _read(destination) if destination.exists() else ""
+        desired_hash = _sha256_text(desired)
+        current_hash = _sha256_text(current) if destination.exists() else ""
+        old_hash = str(old_hashes.get(rel) or "")
+        if destination.exists() and current_hash != desired_hash:
+            if not ((old_hash and current_hash == old_hash) or force_managed):
+                conflicts.append(
+                    f"{rel} differs from the last managed version; inspect it or rerun with --force-managed"
+                )
+                continue
+        if current_hash != desired_hash:
+            writes[destination] = desired
+        managed[rel] = desired_hash
+
+    for rel, desired in template_files.items():
+        destination = root / rel
+        if rel.startswith(f"{WORKFLOW_DIR}/"):
+            if not destination.exists():
+                writes[destination] = desired
+                seeded += 1
+            continue
+        if rel == "AGENTS.md":
+            merged = _managed_markdown_text(
+                _read(destination), desired, _AGENTS_BLOCK_START, _AGENTS_BLOCK_END,
+            )
+            if _read(destination) != merged:
+                writes[destination] = merged
+        elif rel == ".github/PULL_REQUEST_TEMPLATE.md":
+            merged = _managed_markdown_text(
+                _read(destination), desired, _PR_BLOCK_START, _PR_BLOCK_END,
+            )
+            if _read(destination) != merged:
+                writes[destination] = merged
+        elif rel in {".codex/hooks.json", ".claude/settings.json", ".cursor/hooks.json"}:
+            try:
+                merged = _managed_hook_config(_read(destination), desired, rel)
+            except ValueError as exc:
+                conflicts.append(str(exc))
+                continue
+            if _read(destination) != merged:
+                writes[destination] = merged
+
+    manifest_text = json.dumps({
+        "version": 1,
+        "installed_at": manifest.get("installed_at") or _now(),
+        "managed_files": managed,
+        "managed_hooks": {
+            rel: json.loads(template_files[rel])
+            for rel in (".codex/hooks.json", ".claude/settings.json", ".cursor/hooks.json")
+        },
+        "policy": "project state is preserved; managed files upgrade only from recorded hashes",
+    }, indent=2, ensure_ascii=False) + "\n"
+    writes[_install_manifest_path(root)] = manifest_text
+    return writes, conflicts, seeded
+
 def cmd_init(args: argparse.Namespace) -> int:
     root = Path(args.path).resolve()
     kit = _kit_root()
@@ -750,20 +967,18 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not src.is_dir():
         print(f"agentctl: template dir not found: {src}", file=sys.stderr)
         return 2
-    copied = 0
-    for dirpath, _dirs, files in os.walk(src):
-        rel = Path(dirpath).relative_to(src)
-        for fn in files:
-            d = root / rel / fn
-            if d.exists():
-                continue
-            _write(d, _read(Path(dirpath) / fn))
-            copied += 1
-    # distribute agentctl.py itself so project hooks can call tools/agentctl.py
-    self_src = kit / "tools" / "agentctl.py"
+    writes, conflicts, copied = _init_install_plan(
+        root, kit, src, force_managed=bool(args.force_managed),
+    )
+    if conflicts:
+        print("agentctl: installation aborted before writing because managed files conflict:", file=sys.stderr)
+        for conflict in conflicts:
+            print(f"  - {conflict}", file=sys.stderr)
+        return 1
+    for destination, content in writes.items():
+        _write(destination, content)
     self_dst = root / "tools" / "agentctl.py"
-    if self_src.resolve() != self_dst.resolve():
-        _write(self_dst, _read(self_src))
+    if self_dst.exists():
         try:
             os.chmod(self_dst, 0o755)
         except OSError:
@@ -781,7 +996,6 @@ def cmd_init(args: argparse.Namespace) -> int:
         for h in sorted(hooks_src.iterdir()):
             if h.is_file():
                 dst = root / ".githooks" / h.name
-                _write(dst, _read(h))
                 try:
                     os.chmod(dst, 0o755)
                 except OSError:
@@ -811,7 +1025,7 @@ def cmd_init(args: argparse.Namespace) -> int:
     if (root / ".git").exists() and installed:
         _git(root, "config", "core.hooksPath", ".githooks")
         wired = True
-    print(f"agentctl: initialized workflow ({copied} template files) at {root}")
+    print(f"agentctl: initialized workflow ({copied} project seed files, {len(writes)} managed writes) at {root}")
     print(f"agentctl: distributed agentctl.py + {len(installed)} git hooks into .githooks/")
     if wired:
         print("agentctl: git core.hooksPath -> .githooks")
@@ -862,7 +1076,12 @@ def cmd_work(args: argparse.Namespace) -> int:
             key: resume_meta[key] or st.get(key) or ""
             for key in ("session_id", "model", "reasoning_effort")
         }
-        if any(st.get(key, "") != value for key, value in effective_meta.items()):
+        runtime_before = list(st.get("runtime_identities") or [])
+        current_runtime_before = st.get("runtime_identity")
+        _record_runtime_identity(st)
+        if (any(st.get(key, "") != value for key, value in effective_meta.items())
+                or runtime_before != st.get("runtime_identities")
+                or current_runtime_before != st.get("runtime_identity")):
             st.update(effective_meta)
             _save_session(root, st)
             st["doc_hashes"] = _hash_docs(root, active)
@@ -993,6 +1212,7 @@ def cmd_start(args: argparse.Namespace) -> int:
                "scope": scope, "session_id": meta["session_id"], "model": meta["model"],
                "reasoning_effort": meta["reasoning_effort"],
                "notes": [], "doc_hashes": {}}
+    _record_runtime_identity(session)
     _save_session(root, session)
     session["doc_hashes"] = _hash_docs(root, task)
     _save_session(root, session)
@@ -1035,6 +1255,8 @@ def cmd_focus(args: argparse.Namespace) -> int:
 def cmd_progress(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
+    _record_runtime_identity(st)
+    _save_session(root, st)
     changed = _check_receipt(root)
     if changed:
         print("agentctl: progress blocked because required workflow documents changed:", file=sys.stderr)
@@ -1075,17 +1297,27 @@ def cmd_note(args: argparse.Namespace) -> int:
     return cmd_progress(argparse.Namespace(note=note))
 
 
+def _completion_record_value(value: str) -> str:
+    """Keep worker-provided completion text inside one Markdown field."""
+    return " ".join(str(value or "").split())
+
+
 def cmd_complete(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
     task = st["task"]
+    # A runtime that participates in finalization is part of the worker set,
+    # even when another runtime originally started the task. Persist this
+    # before any early return so role-switching cannot recover independence.
+    _record_runtime_identity(st)
+    _save_session(root, st)
     changed = _check_receipt(root)
     if changed:
         print("agentctl: finish blocked because required workflow documents changed:", file=sys.stderr)
         for problem in changed:
             print(f"  - {problem}", file=sys.stderr)
         return 1
-    summary = args.summary or ""
+    summary = _completion_record_value(args.summary)
     if not summary:
         print("agentctl: --summary is required", file=sys.stderr)
         return 2
@@ -1108,7 +1340,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
             )
         print("agentctl: finish blocked; incorporate the supervisor guidance and acknowledge it before finishing.", file=sys.stderr)
         return 1
-    tests = args.tests or ""
+    tests = _completion_record_value(args.tests)
     ack = bool(getattr(args, "ack_escalations", False))
     escalated = _escalated_follow_ups(root, task)
     if escalated and not ack:
@@ -1138,6 +1370,9 @@ def cmd_complete(args: argparse.Namespace) -> int:
         record = f"- Summary: {summary}\n"
         if tests:
             record += f"- Tests: {tests}\n"
+        worker_runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item)]
+        if worker_runtimes:
+            record += f"- Worker-runtimes: {', '.join(worker_runtimes)}\n"
         record += f"- Completed-at: {ts}\n"
         record += f"- Completed-at-ns: {time.time_ns()}\n"
         i = body.find("## Completion Record")
@@ -1161,7 +1396,10 @@ def cmd_complete(args: argparse.Namespace) -> int:
     st["completed_at"] = ts
     st["doc_hashes"] = _hash_docs(root, task)
     _save_session(root, st)
-    print(f"agentctl: {task} -> review. optional review gate: agentctl gate approve --task {task} --by <reviewer>")
+    print(
+        f"agentctl: {task} -> review. independent reviewer gate: start a separate review task, "
+        f"then run agentctl gate approve --task {task} --by <reviewer>"
+    )
     _run_loop_checkpoint(root, "post-finish", once=True, trigger="post-finish", strict=False)
     return 0
 
@@ -1187,6 +1425,49 @@ def cmd_gate(args: argparse.Namespace) -> int:
     if not t:
         print(f"agentctl: task {task} not found on board", file=sys.stderr)
         return 2
+    reviewer = (args.by or "").strip()
+    reviewer_session = _load_session(root)
+    reviewer_profile = _agent_profile(root, reviewer)
+    reviewer_role = str(reviewer_profile.get("role") or "").lower()
+    reviewer_task = str(reviewer_session.get("task") or "")
+    reviewer_runtime = _runtime_identity()
+    session_runtime = str(reviewer_session.get("runtime_identity") or "")
+    completion = _extract_section(
+        _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"), "## Completion Record",
+    )
+    worker_runtime_match = re.search(r"^- Worker-runtimes:\s*(.+)$", completion, flags=re.M)
+    worker_runtimes = {
+        item.strip() for item in (worker_runtime_match.group(1).split(",") if worker_runtime_match else [])
+        if item.strip()
+    }
+    review_problems = []
+    if reviewer_session.get("agent") != reviewer:
+        review_problems.append(
+            f"active reviewer session is {reviewer_session.get('agent') or 'missing'}, expected {reviewer}"
+        )
+    if not reviewer_task or _task_status(root, reviewer_task) != "in_progress":
+        review_problems.append("reviewer must have an active in_progress planning/review task")
+    if reviewer_task == task:
+        review_problems.append("reviewer session cannot own the task being decided")
+    if reviewer == (t.get("owner") or ""):
+        review_problems.append("task owner cannot approve or reject their own task")
+    if not reviewer_runtime:
+        review_problems.append("reviewer host runtime identity is unavailable")
+    elif session_runtime != reviewer_runtime:
+        review_problems.append("active reviewer session is not bound to the current host runtime")
+    if not worker_runtimes:
+        review_problems.append("worker completion has no host runtime evidence; finish it with the current kit")
+    elif reviewer_runtime in worker_runtimes:
+        review_problems.append("reviewer host runtime participated in the worker task and is not independent")
+    if not any(label in reviewer_role for label in ("supervisor", "planning", "review")):
+        review_problems.append(
+            f"reviewer {reviewer or '<missing>'} is not registered with a supervisor/planning/review role"
+        )
+    if review_problems:
+        print("agentctl: independent gate decision rejected:", file=sys.stderr)
+        for problem in review_problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
     ts = _now()
     gate_doc = root / WORKFLOW_DIR / GATES_DIR / f"{task}.md"
     if args.action == "approve":
@@ -1203,13 +1484,18 @@ def cmd_gate(args: argparse.Namespace) -> int:
         _check_plan_box(root, task)
         _set_task_doc_status(root, task, "done")
         _update_tasks_index(root, task, status="done", owner=t.get("owner"), scope=t.get("scope"), title=t.get("title"))
-        _write(gate_doc, f"# Gate {task}\n\n- Decision: approved\n- By: {args.by}\n- At: {ts}\n- Note: {args.note or ''}\n")
+        _write(
+            gate_doc,
+            f"# Gate {task}\n\n- Decision: approved\n- By: {reviewer}\n"
+            f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
+            f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
+            f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
+            f"- At: {ts}\n- Note: {args.note or ''}\n",
+        )
         st = _load_session(root)
-        if st.get("task") == task:
-            st["status"] = "done"
-            st["gated_at"] = ts
-            st["doc_hashes"] = _hash_docs(root, task)
-            _save_session(root, st)
+        st["last_gate"] = {"task": task, "decision": "approved", "at": ts}
+        st["doc_hashes"] = _hash_docs(root, st.get("task"))
+        _save_session(root, st)
         print(f"agentctl: {task} approved -> done")
         return 0
     t["status"] = "blocked"
@@ -1217,13 +1503,18 @@ def cmd_gate(args: argparse.Namespace) -> int:
     _save_board(root, board)
     _set_task_doc_status(root, task, "blocked")
     _update_tasks_index(root, task, status="blocked", owner=t.get("owner"), scope=t.get("scope"), title=t.get("title"))
-    _write(gate_doc, f"# Gate {task}\n\n- Decision: rejected\n- By: {args.by}\n- At: {ts}\n- Note: {args.note or ''}\n")
+    _write(
+        gate_doc,
+        f"# Gate {task}\n\n- Decision: rejected\n- By: {reviewer}\n"
+        f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
+        f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
+        f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
+        f"- At: {ts}\n- Note: {args.note or ''}\n",
+    )
     st = _load_session(root)
-    if st.get("task") == task:
-        st["status"] = "blocked"
-        st["gated_at"] = ts
-        st["doc_hashes"] = _hash_docs(root, task)
-        _save_session(root, st)
+    st["last_gate"] = {"task": task, "decision": "rejected", "at": ts}
+    st["doc_hashes"] = _hash_docs(root, st.get("task"))
+    _save_session(root, st)
     print(f"agentctl: {task} rejected -> blocked")
     return 0
 
@@ -1236,6 +1527,7 @@ def cmd_refresh(args: argparse.Namespace) -> int:
         return 2
     st["doc_hashes"] = _hash_docs(root, st["task"])
     st["refreshed_at"] = _now()
+    _record_runtime_identity(st)
     _save_session(root, st)
     print(f"agentctl: refreshed read receipt for {st['task']}")
     return 0
@@ -1560,6 +1852,12 @@ def _guidance_record_signature(record: dict, key: bytes) -> str:
 
 
 def _guidance_sign_record(record: dict, key: bytes) -> None:
+    # Sign the same plain JSON value types that will be read back from disk.
+    # This also prevents platform-specific scalar subclasses from changing the
+    # canonical payload between signing and verification.
+    persisted = json.loads(json.dumps(record, ensure_ascii=False, allow_nan=False))
+    record.clear()
+    record.update(persisted)
     record["integrity"] = {
         "algorithm": "hmac-sha256",
         "signature": _guidance_record_signature(record, key),
@@ -5904,6 +6202,89 @@ def _doctor_required_paths() -> list[str]:
     ]
 
 
+def _doctor_managed_install(root: Path) -> tuple[list[str], list[str], list[dict]]:
+    problems: list[str] = []
+    warnings: list[str] = []
+    checks: list[dict] = []
+    manifest_path = _install_manifest_path(root)
+    manifest = {}
+    if not manifest_path.is_file():
+        if (root / "templates" / "project").is_dir() and _kit_root() == root:
+            checks.append({
+                "name": "managed installation", "status": "ok",
+                "detail": "kit source checkout (manifest applies to installed targets)",
+            })
+        else:
+            warnings.append(
+                "installation manifest is missing (legacy install); reinstall from a current kit checkout"
+            )
+            checks.append({"name": "managed installation", "status": "warn", "detail": "no install manifest"})
+    else:
+        manifest = _load_json(manifest_path, {})
+        hashes = manifest.get("managed_files") if isinstance(manifest, dict) else None
+        if not isinstance(hashes, dict):
+            problems.append("installation manifest has invalid managed_files")
+            hashes = {}
+        changed = []
+        for rel, expected in hashes.items():
+            path = root / rel
+            # Installation manifests hash managed text after Python's universal
+            # newline normalization. Doctor must use the same representation so
+            # a normal CRLF checkout is not reported as drifted on Windows.
+            observed = _sha256_text(_read(path)) if path.is_file() else "missing"
+            if observed != expected:
+                changed.append(rel)
+        if changed:
+            problems.append("managed installation files changed outside init: " + ", ".join(changed))
+        checks.append({
+            "name": "managed installation",
+            "status": "fail" if changed else "ok",
+            "detail": f"{len(hashes)} managed file(s), {len(changed)} drifted",
+        })
+
+    managed_hooks = manifest.get("managed_hooks") if isinstance(manifest, dict) else None
+    if not isinstance(managed_hooks, dict):
+        template_root = root / "templates" / "project"
+        managed_hooks = {}
+        for rel in (".codex/hooks.json", ".claude/settings.json", ".cursor/hooks.json"):
+            path = template_root / rel
+            if path.is_file():
+                try:
+                    managed_hooks[rel] = json.loads(_read(path))
+                except json.JSONDecodeError:
+                    pass
+    hook_failures = []
+    for rel in (".codex/hooks.json", ".claude/settings.json", ".cursor/hooks.json"):
+        try:
+            data = json.loads(_read(root / rel))
+            hooks = data.get("hooks")
+            if not isinstance(hooks, dict):
+                raise ValueError("hooks is not an object")
+            expected = managed_hooks.get(rel)
+            expected_hooks = expected.get("hooks") if isinstance(expected, dict) else None
+            if not isinstance(expected_hooks, dict):
+                raise ValueError("managed hook contract is missing from the installation manifest")
+            for event, wanted_rows in expected_hooks.items():
+                rows = hooks.get(event)
+                if not isinstance(rows, list) or not isinstance(wanted_rows, list):
+                    raise ValueError(f"missing managed {event} hook")
+                if not all(any(_hook_row_contains(row, wanted) for row in rows) for wanted in wanted_rows):
+                    raise ValueError(f"managed {event} hook differs from the shipped contract")
+        except (AttributeError, json.JSONDecodeError, ValueError) as exc:
+            hook_failures.append(f"{rel}: {exc}")
+    if hook_failures:
+        problems.append("native hook configuration invalid: " + "; ".join(hook_failures))
+    checks.append({
+        "name": "native hook configuration",
+        "status": "fail" if hook_failures else "ok",
+        "detail": "Codex, Claude, and Cursor managed hook entries are present",
+    })
+    warnings.append(
+        "native hooks still depend on client support, repository trust, and user policy; Git hooks and CI are the fallback"
+    )
+    return problems, warnings, checks
+
+
 def _doctor_report(root: Path) -> dict:
     problems: list[str] = []
     warnings: list[str] = []
@@ -5930,6 +6311,11 @@ def _doctor_report(root: Path) -> dict:
     else:
         warnings.append("not a Git repository; local Git hooks are not active")
         checks.append({"name": "git hooks", "status": "warn", "detail": "not a Git repository"})
+
+    install_problems, install_warnings, install_checks = _doctor_managed_install(root)
+    problems.extend(install_problems)
+    warnings.extend(install_warnings)
+    checks.extend(install_checks)
 
     loop_rows = [_loop_summary_line(root, p) for p in _loop_files(root)]
     bad_loops = [row for row in loop_rows if not row.get("ok")]
@@ -6133,6 +6519,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("init")
     sp.add_argument("path", nargs="?", default=".")
+    sp.add_argument(
+        "--force-managed", action="store_true",
+        help="replace conflicting kit-managed files after explicit inspection",
+    )
     sp.set_defaults(func=cmd_init)
 
     sp = sub.add_parser("work")
