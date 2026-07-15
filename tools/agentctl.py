@@ -1255,6 +1255,8 @@ def cmd_focus(args: argparse.Namespace) -> int:
 def cmd_progress(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
+    _record_runtime_identity(st)
+    _save_session(root, st)
     changed = _check_receipt(root)
     if changed:
         print("agentctl: progress blocked because required workflow documents changed:", file=sys.stderr)
@@ -1299,6 +1301,11 @@ def cmd_complete(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
     task = st["task"]
+    # A runtime that participates in finalization is part of the worker set,
+    # even when another runtime originally started the task. Persist this
+    # before any early return so role-switching cannot recover independence.
+    _record_runtime_identity(st)
+    _save_session(root, st)
     changed = _check_receipt(root)
     if changed:
         print("agentctl: finish blocked because required workflow documents changed:", file=sys.stderr)
@@ -1840,6 +1847,12 @@ def _guidance_record_signature(record: dict, key: bytes) -> str:
 
 
 def _guidance_sign_record(record: dict, key: bytes) -> None:
+    # Sign the same plain JSON value types that will be read back from disk.
+    # This also prevents platform-specific scalar subclasses from changing the
+    # canonical payload between signing and verification.
+    persisted = json.loads(json.dumps(record, ensure_ascii=False, allow_nan=False))
+    record.clear()
+    record.update(persisted)
     record["integrity"] = {
         "algorithm": "hmac-sha256",
         "signature": _guidance_record_signature(record, key),
@@ -6210,7 +6223,10 @@ def _doctor_managed_install(root: Path) -> tuple[list[str], list[str], list[dict
         changed = []
         for rel, expected in hashes.items():
             path = root / rel
-            observed = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else "missing"
+            # Installation manifests hash managed text after Python's universal
+            # newline normalization. Doctor must use the same representation so
+            # a normal CRLF checkout is not reported as drifted on Windows.
+            observed = _sha256_text(_read(path)) if path.is_file() else "missing"
             if observed != expected:
                 changed.append(rel)
         if changed:

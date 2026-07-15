@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -143,6 +144,15 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         self.assertFalse((self.root / ".agent").exists())
         self.assertEqual(path.read_text(encoding="utf-8"), "name: project workflow\n")
 
+    def test_doctor_accepts_crlf_managed_text(self):
+        self.init()
+        managed = self.root / "tools" / "agentctl.py"
+        managed.write_bytes(managed.read_bytes().replace(b"\n", b"\r\n"))
+
+        doctor = json.loads(self.agentctl("doctor", "--json").stdout)
+        self.assertTrue(doctor["ok"], doctor)
+        self.init()
+
     def test_provider_payloads_block_without_session_and_allow_after_work_entry(self):
         self.init()
         fixtures = [
@@ -213,24 +223,35 @@ class IndependentGateRegressionTest(unittest.TestCase):
         self.agentctl(
             "work", "--agent", "codex", "--auto-create", "--new-id", "T-101",
             "--title", "worker change", "--scope", "src/",
+            runtime="worker-start-runtime",
         )
-        self.agentctl("finish", "--summary", "worker evidence", "--tests", "unit test")
+        self.agentctl(
+            "finish", "--summary", "worker evidence", "--tests", "unit test",
+            runtime="worker-finish-runtime",
+        )
+        completion = (self.root / ".agent" / "tasks" / "T-101.md").read_text(encoding="utf-8")
+        worker_runtime_line = re.search(r"^- Worker-runtimes:\s*(.+)$", completion, flags=re.M)
+        self.assertIsNotNone(worker_runtime_line)
+        self.assertEqual(len(worker_runtime_line.group(1).split(", ")), 2)
 
-        spoofed = self.agentctl("gate", "approve", "--task", "T-101", "--by", "supervisor", expect=1)
+        spoofed = self.agentctl(
+            "gate", "approve", "--task", "T-101", "--by", "supervisor",
+            expect=1, runtime="worker-finish-runtime",
+        )
         self.assertIn("active reviewer session is codex", spoofed.stderr)
         self.agentctl(
             "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-102",
             "--title", "review worker change", "--scope", ".agent/gates/",
-            runtime="worker-runtime",
+            runtime="worker-finish-runtime",
         )
         same_runtime = self.agentctl(
             "gate", "approve", "--task", "T-101", "--by", "supervisor",
-            expect=1, runtime="worker-runtime",
+            expect=1, runtime="worker-finish-runtime",
         )
         self.assertIn("participated in the worker task", same_runtime.stderr)
         self_review = self.agentctl(
             "gate", "approve", "--task", "T-102", "--by", "supervisor",
-            expect=1, runtime="worker-runtime",
+            expect=1, runtime="worker-finish-runtime",
         )
         self.assertIn("cannot own the task", self_review.stderr)
 

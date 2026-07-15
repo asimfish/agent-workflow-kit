@@ -41,3 +41,4 @@
 | T-028 | done | codex | `.github/workflows/, tests/, tools/agentctl.py, .agent/` | [.agent/tasks/T-028.md](tasks/T-028.md) | verify windows dispatch process-tree cleanup |
 | T-029 | review | codex | `tools/, tests/, templates/project/, integrations/, docs/, README.md, AGENTS.md, .agent/, .codex/, .claude/, .cursor/, .github/, .githooks/, hooks/` | [.agent/tasks/T-029.md](tasks/T-029.md) | harden installation review gates and native hooks |
 | T-030 | review | codex | `tools/, tests/, templates/project/, README.md, docs/, .agent/` | [.agent/tasks/T-030.md](tasks/T-030.md) | close T-029 independent review findings |
+| T-031 | review | codex | `tools/, tests/, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-031.md](tasks/T-031.md) | fix Windows dispatch identity and decoding |

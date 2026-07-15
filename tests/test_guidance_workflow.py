@@ -141,6 +141,8 @@ if os.environ.get("FAKE_CODEX_FINISH") == "1":
         work_command,
         text=True,
         capture_output=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if started.returncode:
         print(started.stdout + started.stderr, file=sys.stderr)
@@ -150,6 +152,8 @@ if os.environ.get("FAKE_CODEX_ACK") == "1":
         [sys.executable, "tools/agentctl.py", "guidance", "ack", packet, "--by", "codex"],
         text=True,
         capture_output=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if acknowledged.returncode:
         print(acknowledged.stdout + acknowledged.stderr, file=sys.stderr)
@@ -161,6 +165,8 @@ if os.environ.get("FAKE_CODEX_FINISH") == "1":
          "--tests", "fake worker acceptance verification"],
         text=True,
         capture_output=True,
+        encoding="utf-8",
+        errors="replace",
     )
     if finished.returncode:
         print(finished.stdout + finished.stderr, file=sys.stderr)
