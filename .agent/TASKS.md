@@ -44,3 +44,4 @@
 | T-031 | done | codex | `tools/, tests/, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-031.md](tasks/T-031.md) | fix Windows dispatch identity and decoding |
 | T-032 | done | codex | `tools/, tests/, .agent/` | [.agent/tasks/T-032.md](tasks/T-032.md) | prevent completion evidence injection |
 | T-033 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-033.md](tasks/T-033.md) | reconcile merged GitHub reviews |
+| T-034 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-034.md](tasks/T-034.md) | harden GitHub reconciliation trust boundary |

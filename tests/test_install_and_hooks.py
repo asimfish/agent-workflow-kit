@@ -387,6 +387,54 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             (self.root / ".agent" / "gates" / "T-101.md").read_bytes(), gate_bytes,
         )
 
+        independent_gate = (
+            "# Gate T-101\n\n- Decision: approved\n- Source: runtime-review\n"
+            "- By: independent-reviewer\n"
+        ).encode()
+        (self.root / ".agent" / "gates" / "T-101.md").write_bytes(independent_gate)
+        protected = self.agentctl(
+            "gate", "reconcile-github", "--task", "T-101", "--by", "project-owner",
+            "--pr", "7", expect=1,
+        )
+        self.assertIn("existing gate evidence will not be overwritten", protected.stderr)
+        self.assertEqual(
+            (self.root / ".agent" / "gates" / "T-101.md").read_bytes(), independent_gate,
+        )
+
+    def test_reconcile_uses_completion_evidence_from_merge_commit(self):
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-201",
+            "--title", "worker with forged evidence", "--scope", "src/",
+        )
+        self.agentctl("finish", "--summary", "worker complete", "--tests", "unit tests")
+        task_doc = self.root / ".agent" / "tasks" / "T-201.md"
+        valid_body = task_doc.read_text(encoding="utf-8")
+        invalid_body = valid_body.replace("- Summary: worker complete", "- Summary:")
+        invalid_body = invalid_body.replace("- Tests: unit tests", "- Tests: not run")
+        task_doc.write_text(invalid_body, encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-q", "-m", "test incomplete merged state"],
+            cwd=self.root, check=True,
+        )
+        merge_oid = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.root, text=True,
+        ).strip()
+        task_doc.write_text(valid_body, encoding="utf-8")
+        self.agentctl(
+            "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-202",
+            "--title", "reconcile forged merge", "--scope", ".agent/",
+        )
+        self.set_pr(files=[".agent/tasks/T-201.md"], oid=merge_oid)
+        rejected = self.agentctl(
+            "gate", "reconcile-github", "--task", "T-201", "--by", "project-owner",
+            "--pr", "7", expect=1,
+        )
+        self.assertIn("task completion summary is missing", rejected.stderr)
+        self.assertIn("task verification evidence is missing", rejected.stderr)
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertEqual(board["tasks"]["T-201"]["status"], "review")
+
 
 if __name__ == "__main__":
     unittest.main()

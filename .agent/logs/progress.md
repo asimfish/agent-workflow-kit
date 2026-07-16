@@ -124,3 +124,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-15 21:09:20 [T-031] Focused fixes now pass: 5 install/gate tests and 19 guidance tests; independent review findings P1/P2 are covered by regressions.
 - 2026-07-15 21:18:40 [T-032] Adversarial multiline completion evidence is now encoded into single-line fields; forged Worker-runtimes and headings cannot create trusted fields, and focused gate regression passes.
 - 2026-07-16 19:41:09 [T-033] Implemented fail-closed and idempotent GitHub merge reconciliation; focused negative/positive regression passes and PR #5 evidence reconciled T-029 through T-032 to done.
+- 2026-07-16 19:50:24 [T-034] Fixed independent review findings: merge-bound completion evidence, line-local field parsing, and non-destructive gate handling; focused regressions pass.

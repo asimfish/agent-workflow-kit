@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-034 - harden GitHub reconciliation trust boundary (owner: supervisor)
 - [ ] T-033 - reconcile merged GitHub reviews (owner: supervisor)
 - [x] T-032 - prevent completion evidence injection (owner: codex)
 - [x] T-031 - fix Windows dispatch identity and decoding (owner: codex)

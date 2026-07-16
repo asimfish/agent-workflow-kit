@@ -1482,9 +1482,28 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
     task_path = f"{WORKFLOW_DIR}/{TASKS_DIR}/{task}.md"
     if evidence and task_path not in changed_paths:
         problems.append(f"GitHub PR did not include {task_path}")
-    completion_ok, completion_problems = _guidance_completion_evidence(root, task, not_before_ns=0)
-    if not completion_ok:
-        problems.extend(completion_problems)
+    merge_oid = str((evidence.get("mergeCommit") or {}).get("oid") or "")
+    merged_task = _git_process(root, "show", f"{merge_oid}:{task_path}") if merge_oid else None
+    if merged_task is None or merged_task.returncode != 0:
+        problems.append(f"unable to read {task_path} from the verified merge commit")
+    else:
+        merged_body = merged_task.stdout
+        merged_status_match = re.search(r"^Status:[ \t]*(\S+)", merged_body, flags=re.M)
+        merged_status = merged_status_match.group(1) if merged_status_match else ""
+        problems.extend(_completion_evidence_problems(
+            merged_body, task=task, status=merged_status, not_before_ns=0,
+        ))
+
+    gate_doc = root / WORKFLOW_DIR / GATES_DIR / f"{task}.md"
+    prior_gate = _read(gate_doc)
+    same_reconciliation = (
+        t.get("status") == "done"
+        and "- Source: github-merge" in prior_gate
+        and f"- Pull request: {evidence.get('url') or ''}" in prior_gate
+        and f"- Merge commit: {merge_oid}" in prior_gate
+    )
+    if t.get("status") == "done" and not same_reconciliation:
+        problems.append(f"task {task} is already done; existing gate evidence will not be overwritten")
     if problems:
         print("agentctl: GitHub merge reconciliation rejected:", file=sys.stderr)
         for problem in problems:
@@ -1492,16 +1511,8 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
         return 1
 
     ts = _now()
-    merge_oid = str((evidence.get("mergeCommit") or {}).get("oid") or "")
     merged_by = str((evidence.get("mergedBy") or {}).get("login") or "")
-    gate_doc = root / WORKFLOW_DIR / GATES_DIR / f"{task}.md"
-    prior_gate = _read(gate_doc)
-    if (
-        t.get("status") == "done"
-        and "- Source: github-merge" in prior_gate
-        and f"- Pull request: {evidence.get('url') or ''}" in prior_gate
-        and f"- Merge commit: {merge_oid}" in prior_gate
-    ):
+    if same_reconciliation:
         print(f"agentctl: {task} already reconciled from this merged GitHub PR")
         return 0
     if t.get("status") != "done":
@@ -2295,19 +2306,13 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
     return 1
 
 
-def _guidance_completion_evidence(
-    root: Path, task: str, *, not_before_ns: int,
-) -> tuple[bool, list[str]]:
+def _completion_evidence_problems(
+    body: str, *, task: str, status: str, not_before_ns: int,
+) -> list[str]:
     problems: list[str] = []
-    status = _task_status(root, task)
     if status not in {"review", "approved", "done"}:
         problems.append(f"task {task} status is {status or 'missing'}, expected review/approved/done")
-    path = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
-    body = _read(path)
-    if not body:
-        problems.append(f"task document is missing: {path.relative_to(root)}")
-        return False, problems
-    doc_status_match = re.search(r"^Status:\s*(\S+)", body, flags=re.M)
+    doc_status_match = re.search(r"^Status:[ \t]*(\S+)", body, flags=re.M)
     doc_status = doc_status_match.group(1) if doc_status_match else ""
     if doc_status != status:
         problems.append(
@@ -2315,10 +2320,10 @@ def _guidance_completion_evidence(
             f"board status is {status or 'missing'}"
         )
     section = _extract_section(body, "## Completion Record")
-    summary = re.search(r"^- Summary:\s*(.+)$", section, flags=re.M)
-    tests = re.search(r"^- Tests:\s*(.+)$", section, flags=re.M)
-    completed = re.search(r"^- Completed-at:\s*(.+)$", section, flags=re.M)
-    completed_ns = re.search(r"^- Completed-at-ns:\s*(\d+)$", section, flags=re.M)
+    summary = re.search(r"^- Summary:[ \t]*(.+)$", section, flags=re.M)
+    tests = re.search(r"^- Tests:[ \t]*(.+)$", section, flags=re.M)
+    completed = re.search(r"^- Completed-at:[ \t]*(.+)$", section, flags=re.M)
+    completed_ns = re.search(r"^- Completed-at-ns:[ \t]*(\d+)$", section, flags=re.M)
     if not summary or not summary.group(1).strip():
         problems.append("task completion summary is missing")
     missing_test_markers = {"", "-", "n/a", "na", "none", "not recorded", "not run"}
@@ -2335,6 +2340,21 @@ def _guidance_completion_evidence(
         problems.append("task completion lacks dispatch-bound nanosecond evidence")
     elif int(completed_ns.group(1)) < not_before_ns:
         problems.append("task completion predates this dispatch attempt")
+    return problems
+
+
+def _guidance_completion_evidence(
+    root: Path, task: str, *, not_before_ns: int,
+) -> tuple[bool, list[str]]:
+    status = _task_status(root, task)
+    path = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    body = _read(path)
+    if not body:
+        problems = [f"task document is missing: {path.relative_to(root)}"]
+        return False, problems
+    problems = _completion_evidence_problems(
+        body, task=task, status=status, not_before_ns=not_before_ns,
+    )
     return not problems, problems
 
 
