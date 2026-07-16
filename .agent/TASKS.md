@@ -39,7 +39,8 @@
 | T-026 | done | codex | `tools/, tests/, templates/project/, README.md, docs/, .agent/` | [.agent/tasks/T-026.md](tasks/T-026.md) | add supervisor dispatch acceptance workflow |
 | T-027 | done | codex | `tools/agentctl.py, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-027.md](tasks/T-027.md) | close PR 3 merge blockers |
 | T-028 | done | codex | `.github/workflows/, tests/, tools/agentctl.py, .agent/` | [.agent/tasks/T-028.md](tasks/T-028.md) | verify windows dispatch process-tree cleanup |
-| T-029 | review | codex | `tools/, tests/, templates/project/, integrations/, docs/, README.md, AGENTS.md, .agent/, .codex/, .claude/, .cursor/, .github/, .githooks/, hooks/` | [.agent/tasks/T-029.md](tasks/T-029.md) | harden installation review gates and native hooks |
-| T-030 | review | codex | `tools/, tests/, templates/project/, README.md, docs/, .agent/` | [.agent/tasks/T-030.md](tasks/T-030.md) | close T-029 independent review findings |
-| T-031 | review | codex | `tools/, tests/, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-031.md](tasks/T-031.md) | fix Windows dispatch identity and decoding |
-| T-032 | review | codex | `tools/, tests/, .agent/` | [.agent/tasks/T-032.md](tasks/T-032.md) | prevent completion evidence injection |
+| T-029 | done | codex | `tools/, tests/, templates/project/, integrations/, docs/, README.md, AGENTS.md, .agent/, .codex/, .claude/, .cursor/, .github/, .githooks/, hooks/` | [.agent/tasks/T-029.md](tasks/T-029.md) | harden installation review gates and native hooks |
+| T-030 | done | codex | `tools/, tests/, templates/project/, README.md, docs/, .agent/` | [.agent/tasks/T-030.md](tasks/T-030.md) | close T-029 independent review findings |
+| T-031 | done | codex | `tools/, tests/, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-031.md](tasks/T-031.md) | fix Windows dispatch identity and decoding |
+| T-032 | done | codex | `tools/, tests/, .agent/` | [.agent/tasks/T-032.md](tasks/T-032.md) | prevent completion evidence injection |
+| T-033 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-033.md](tasks/T-033.md) | reconcile merged GitHub reviews |

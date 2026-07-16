@@ -271,5 +271,122 @@ class IndependentGateRegressionTest(unittest.TestCase):
         self.agentctl("check", "--mode", "manual")
 
 
+class GithubMergeGateRegressionTest(unittest.TestCase):
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="awk-github-gate-regress-"))
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True, timeout=60)
+        subprocess.run(
+            ["git", "config", "user.email", "agent@example.com"],
+            cwd=self.root, check=True, capture_output=True, text=True,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Agent Test"],
+            cwd=self.root, check=True, capture_output=True, text=True,
+        )
+        install = subprocess.run(
+            [sys.executable, str(KIT / "tools" / "agentctl.py"), "init", str(self.root)],
+            cwd=KIT, text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
+        self.env = os.environ.copy()
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        if os.name == "nt":
+            script = fake_bin / "gh.py"
+            script.write_text(
+                "import os\nprint(os.environ['FAKE_GH_PR_JSON'])\n", encoding="utf-8",
+            )
+            wrapper = fake_bin / "gh.cmd"
+            wrapper.write_text(
+                f'@"{sys.executable}" -X utf8 "%~dp0gh.py" %*\n', encoding="utf-8",
+            )
+        else:
+            wrapper = fake_bin / "gh"
+            wrapper.write_text(
+                f"#!{sys.executable}\nimport os\nprint(os.environ['FAKE_GH_PR_JSON'])\n",
+                encoding="utf-8",
+            )
+            wrapper.chmod(0o755)
+        self.env["PATH"] = str(fake_bin) + os.pathsep + self.env.get("PATH", "")
+
+    def agentctl(self, *args, expect=0):
+        proc = subprocess.run(
+            [sys.executable, "tools/agentctl.py", *args], cwd=self.root,
+            text=True, capture_output=True, timeout=120, env=self.env,
+        )
+        self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
+        return proc
+
+    def set_pr(self, *, state="MERGED", files=None, merged_by="project-owner", oid=None):
+        self.env["FAKE_GH_PR_JSON"] = json.dumps({
+            "state": state,
+            "mergedAt": "2026-07-16T00:00:00Z" if state == "MERGED" else None,
+            "mergeCommit": {"oid": oid or "0" * 40},
+            "mergedBy": {"login": merged_by},
+            "url": "https://github.com/example/project/pull/7",
+            "baseRefName": "main",
+            "files": [{"path": path} for path in (files or [])],
+        })
+
+    def test_reconcile_github_requires_authoritative_merge_evidence(self):
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-101",
+            "--title", "merged worker task", "--scope", "src/",
+        )
+        self.agentctl("finish", "--summary", "worker complete", "--tests", "unit tests")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-q", "-m", "test merged state"],
+            cwd=self.root, check=True,
+        )
+        merge_oid = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.root, text=True,
+        ).strip()
+        self.agentctl(
+            "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-102",
+            "--title", "reconcile merge", "--scope", ".agent/",
+        )
+
+        self.set_pr(state="OPEN", files=[".agent/tasks/T-101.md"], oid=merge_oid)
+        self.agentctl(
+            "gate", "reconcile-github", "--task", "T-101", "--by", "project-owner",
+            "--pr", "7", expect=1,
+        )
+        self.set_pr(files=["README.md"], oid=merge_oid)
+        self.agentctl(
+            "gate", "reconcile-github", "--task", "T-101", "--by", "project-owner",
+            "--pr", "7", expect=1,
+        )
+        self.set_pr(files=[".agent/tasks/T-101.md"], oid=merge_oid)
+        mismatch = self.agentctl(
+            "gate", "reconcile-github", "--task", "T-101", "--by", "another-user",
+            "--pr", "7", expect=1,
+        )
+        self.assertIn("does not match GitHub mergedBy", mismatch.stderr)
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertEqual(board["tasks"]["T-101"]["status"], "review")
+
+        self.agentctl(
+            "gate", "reconcile-github", "--task", "T-101", "--by", "project-owner",
+            "--pr", "7",
+        )
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertEqual(board["tasks"]["T-101"]["status"], "done")
+        gate = (self.root / ".agent" / "gates" / "T-101.md").read_text(encoding="utf-8")
+        self.assertIn("Source: github-merge", gate)
+        self.assertIn(f"Merge commit: {merge_oid}", gate)
+        self.assertIn("By: project-owner", gate)
+        gate_bytes = (self.root / ".agent" / "gates" / "T-101.md").read_bytes()
+        repeated = self.agentctl(
+            "gate", "reconcile-github", "--task", "T-101", "--by", "project-owner",
+            "--pr", "7",
+        )
+        self.assertIn("already reconciled", repeated.stdout)
+        self.assertEqual(
+            (self.root / ".agent" / "gates" / "T-101.md").read_bytes(), gate_bytes,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-15 21:20:28",
+  "updated_at": "2026-07-16 19:43:25",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -529,7 +529,7 @@
     },
     "T-029": {
       "title": "harden installation review gates and native hooks",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/",
@@ -549,11 +549,11 @@
       ],
       "deps": [],
       "created_at": "2026-07-15 10:29:18",
-      "updated_at": "2026-07-15 10:42:11"
+      "updated_at": "2026-07-16 19:40:18"
     },
     "T-030": {
       "title": "close T-029 independent review findings",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/",
@@ -565,11 +565,11 @@
       ],
       "deps": [],
       "created_at": "2026-07-15 20:52:36",
-      "updated_at": "2026-07-15 20:59:46"
+      "updated_at": "2026-07-16 19:40:19"
     },
     "T-031": {
       "title": "fix Windows dispatch identity and decoding",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/",
@@ -581,11 +581,11 @@
       ],
       "deps": [],
       "created_at": "2026-07-15 21:03:43",
-      "updated_at": "2026-07-15 21:11:16"
+      "updated_at": "2026-07-16 19:40:21"
     },
     "T-032": {
       "title": "prevent completion evidence injection",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/",
@@ -594,7 +594,23 @@
       ],
       "deps": [],
       "created_at": "2026-07-15 21:18:07",
-      "updated_at": "2026-07-15 21:20:28"
+      "updated_at": "2026-07-16 19:40:22"
+    },
+    "T-033": {
+      "title": "reconcile merged GitHub reviews",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-16 19:36:15",
+      "updated_at": "2026-07-16 19:43:25"
     }
   }
 }
