@@ -49,6 +49,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlparse
 
 WORKFLOW_DIR = ".agent"
 STATE_DIR = "state"
@@ -1417,6 +1418,202 @@ def cmd_finish(args: argparse.Namespace) -> int:
                                            ack_escalations=bool(getattr(args, "ack_escalations", False))))
 
 
+def _github_merge_evidence(root: Path, args: argparse.Namespace) -> tuple[dict, list[str]]:
+    problems: list[str] = []
+    if not getattr(args, "pr", None):
+        return {}, ["GitHub reconciliation requires --pr <number-or-url>"]
+    gh = shutil.which("gh")
+    if not gh:
+        return {}, ["GitHub reconciliation requires the authenticated GitHub CLI (gh)"]
+    remote = _git_process(root, "remote", "get-url", "origin")
+    trusted_identity, trusted_host = _github_repository_identity(remote.stdout.strip())
+    if remote.returncode != 0 or trusted_identity is None:
+        return {}, ["unable to identify the authoritative GitHub repository from remote origin"]
+    command = [
+        gh, "pr", "view", str(args.pr), "--json",
+        "state,mergedAt,mergeCommit,mergedBy,url,baseRefName",
+    ]
+    if getattr(args, "repo", None):
+        repo_arg = str(args.repo).strip()
+        if "://" not in repo_arg and repo_arg.count("/") == 1:
+            repo_arg = f"{trusted_host}/{repo_arg}"
+        command.extend(["--repo", repo_arg])
+    try:
+        result = subprocess.run(
+            command, cwd=str(root), text=True, encoding="utf-8", errors="replace",
+            capture_output=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {}, [f"unable to read GitHub PR evidence: {exc}"]
+    if result.returncode:
+        return {}, ["unable to read GitHub PR evidence: " + (result.stderr or result.stdout).strip()]
+    try:
+        evidence = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return {}, ["GitHub CLI returned invalid PR evidence"]
+    if evidence.get("state") != "MERGED":
+        problems.append(f"GitHub PR is {evidence.get('state') or 'unknown'}, expected MERGED")
+    merge_oid = str((evidence.get("mergeCommit") or {}).get("oid") or "")
+    if not re.fullmatch(r"[0-9a-fA-F]{40}", merge_oid):
+        problems.append("GitHub PR has no valid merge commit")
+    elif _git_process(root, "merge-base", "--is-ancestor", merge_oid, "HEAD").returncode != 0:
+        problems.append("GitHub PR merge commit is not an ancestor of the current HEAD")
+    merged_by = str((evidence.get("mergedBy") or {}).get("login") or "")
+    if not merged_by:
+        problems.append("GitHub PR has no mergedBy identity")
+    elif merged_by.casefold() != str(args.by or "").casefold():
+        problems.append(f"--by {args.by} does not match GitHub mergedBy {merged_by}")
+    evidence_identity, _evidence_host = _github_repository_identity(str(evidence.get("url") or ""))
+    if evidence_identity is None:
+        problems.append("GitHub PR evidence has no parseable repository URL")
+    elif evidence_identity != trusted_identity:
+        problems.append("GitHub PR repository does not match the checkout origin")
+    return evidence, problems
+
+
+def _github_repository_identity(url: str) -> tuple[tuple[str, str, str] | None, str]:
+    value = url.strip()
+    host = ""
+    path = ""
+    if "://" in value:
+        parsed = urlparse(value)
+        host = parsed.netloc.rsplit("@", 1)[-1]
+        path = parsed.path
+    else:
+        match = re.match(r"^(?:[^@]+@)?([^:]+):(.+)$", value)
+        if match:
+            host, path = match.groups()
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) >= 3 and parts[2] == "pull":
+        parts = parts[:2]
+    if len(parts) != 2 or not host:
+        return None, ""
+    owner, repo = parts
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    if not owner or not repo:
+        return None, ""
+    return (host.casefold(), owner.casefold(), repo.casefold()), host
+
+
+def _github_pr_changed_paths(root: Path, evidence: dict) -> tuple[set[str], list[str]]:
+    url = str(evidence.get("url") or "")
+    identity, host = _github_repository_identity(url)
+    parsed = urlparse(url)
+    path_parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if identity is None or len(path_parts) < 4 or path_parts[2] != "pull" or not path_parts[3].isdigit():
+        return set(), ["GitHub PR evidence has no parseable pull request URL"]
+    _normalized_host, owner, repo = identity
+    number = path_parts[3]
+    gh = shutil.which("gh")
+    if not gh:
+        return set(), ["GitHub reconciliation requires the authenticated GitHub CLI (gh)"]
+    try:
+        query = (
+            "query($owner:String!,$name:String!,$number:Int!,$endCursor:String){"
+            "repository(owner:$owner,name:$name){pullRequest(number:$number){"
+            "files(first:100,after:$endCursor){nodes{path}pageInfo{hasNextPage endCursor}}}}}"
+        )
+        result = subprocess.run(
+            [
+                gh, "api", "graphql", "--hostname", host, "--paginate",
+                "-f", f"query={query}", "-F", f"owner={owner}", "-F", f"name={repo}",
+                "-F", f"number={number}",
+                "--jq", ".data.repository.pullRequest.files.nodes[].path",
+            ],
+            cwd=str(root), text=True, encoding="utf-8", errors="replace",
+            capture_output=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return set(), [f"unable to read complete GitHub PR file evidence: {exc}"]
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        return set(), ["unable to read complete GitHub PR file evidence: " + detail]
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}, []
+
+
+def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, task: str, t: dict) -> int:
+    recorder_session = _load_session(root)
+    recorder = str(recorder_session.get("agent") or "")
+    recorder_role = str(_agent_profile(root, recorder).get("role") or "").lower()
+    problems = []
+    if not recorder or not any(label in recorder_role for label in ("supervisor", "planning", "review")):
+        problems.append("GitHub reconciliation requires an active supervisor/planning/review agent")
+    recorder_task = str(recorder_session.get("task") or "")
+    if not recorder_task or _task_status(root, recorder_task) != "in_progress":
+        problems.append("GitHub reconciliation requires a separate active in_progress review task")
+    if recorder_task == task:
+        problems.append("the reconciliation task cannot be the task being approved")
+    if t.get("status") not in {"review", "approved", "done"}:
+        problems.append(f"task {task} is '{t.get('status')}', expected review/approved/done")
+
+    evidence, evidence_problems = _github_merge_evidence(root, args)
+    problems.extend(evidence_problems)
+    changed_paths, changed_path_problems = _github_pr_changed_paths(root, evidence)
+    problems.extend(changed_path_problems)
+    task_path = f"{WORKFLOW_DIR}/{TASKS_DIR}/{task}.md"
+    if evidence and task_path not in changed_paths:
+        problems.append(f"GitHub PR did not include {task_path}")
+    merge_oid = str((evidence.get("mergeCommit") or {}).get("oid") or "")
+    merged_task = _git_process(root, "show", f"{merge_oid}:{task_path}") if merge_oid else None
+    if merged_task is None or merged_task.returncode != 0:
+        problems.append(f"unable to read {task_path} from the verified merge commit")
+    else:
+        merged_body = merged_task.stdout
+        merged_status_match = re.search(r"^Status:[ \t]*(\S+)", merged_body, flags=re.M)
+        merged_status = merged_status_match.group(1) if merged_status_match else ""
+        problems.extend(_completion_evidence_problems(
+            merged_body, task=task, status=merged_status, not_before_ns=0,
+            require_completed_ns=False,
+        ))
+
+    gate_doc = root / WORKFLOW_DIR / GATES_DIR / f"{task}.md"
+    prior_gate = _read(gate_doc)
+    same_reconciliation = (
+        t.get("status") == "done"
+        and "- Source: github-merge" in prior_gate
+        and f"- Pull request: {evidence.get('url') or ''}" in prior_gate
+        and f"- Merge commit: {merge_oid}" in prior_gate
+    )
+    if t.get("status") == "done" and not same_reconciliation:
+        problems.append(f"task {task} is already done; existing gate evidence will not be overwritten")
+    if problems:
+        print("agentctl: GitHub merge reconciliation rejected:", file=sys.stderr)
+        for problem in problems:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
+
+    ts = _now()
+    merged_by = str((evidence.get("mergedBy") or {}).get("login") or "")
+    if same_reconciliation:
+        print(f"agentctl: {task} already reconciled from this merged GitHub PR")
+        return 0
+    if t.get("status") != "done":
+        t["status"] = "done"
+        t["updated_at"] = ts
+        _save_board(root, board)
+        _check_plan_box(root, task)
+        _set_task_doc_status(root, task, "done")
+        _update_tasks_index(
+            root, task, status="done", owner=t.get("owner"), scope=t.get("scope"), title=t.get("title"),
+        )
+    _write(
+        gate_doc,
+        f"# Gate {task}\n\n- Decision: approved\n- Source: github-merge\n"
+        f"- By: {merged_by}\n- Recorded-by: {recorder}\n- Recorder task: {recorder_task}\n"
+        f"- Pull request: {evidence.get('url') or ''}\n- Base branch: {evidence.get('baseRefName') or ''}\n"
+        f"- Merge commit: {merge_oid}\n- Merged at: {evidence.get('mergedAt') or ''}\n"
+        f"- Reconciled at: {ts}\n- Note: {args.note or ''}\n",
+    )
+    recorder_session["last_gate"] = {
+        "task": task, "decision": "approved", "source": "github-merge", "at": ts,
+    }
+    recorder_session["doc_hashes"] = _hash_docs(root, recorder_task)
+    _save_session(root, recorder_session)
+    print(f"agentctl: {task} reconciled from merged GitHub PR -> done")
+    return 0
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     root = _repo_root()
     task = args.task
@@ -1425,6 +1622,8 @@ def cmd_gate(args: argparse.Namespace) -> int:
     if not t:
         print(f"agentctl: task {task} not found on board", file=sys.stderr)
         return 2
+    if args.action == "reconcile-github":
+        return _gate_reconcile_github(root, args, board, task, t)
     reviewer = (args.by or "").strip()
     reviewer_session = _load_session(root)
     reviewer_profile = _agent_profile(root, reviewer)
@@ -2180,19 +2379,14 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
     return 1
 
 
-def _guidance_completion_evidence(
-    root: Path, task: str, *, not_before_ns: int,
-) -> tuple[bool, list[str]]:
+def _completion_evidence_problems(
+    body: str, *, task: str, status: str, not_before_ns: int,
+    require_completed_ns: bool = True,
+) -> list[str]:
     problems: list[str] = []
-    status = _task_status(root, task)
     if status not in {"review", "approved", "done"}:
         problems.append(f"task {task} status is {status or 'missing'}, expected review/approved/done")
-    path = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
-    body = _read(path)
-    if not body:
-        problems.append(f"task document is missing: {path.relative_to(root)}")
-        return False, problems
-    doc_status_match = re.search(r"^Status:\s*(\S+)", body, flags=re.M)
+    doc_status_match = re.search(r"^Status:[ \t]*(\S+)", body, flags=re.M)
     doc_status = doc_status_match.group(1) if doc_status_match else ""
     if doc_status != status:
         problems.append(
@@ -2200,10 +2394,10 @@ def _guidance_completion_evidence(
             f"board status is {status or 'missing'}"
         )
     section = _extract_section(body, "## Completion Record")
-    summary = re.search(r"^- Summary:\s*(.+)$", section, flags=re.M)
-    tests = re.search(r"^- Tests:\s*(.+)$", section, flags=re.M)
-    completed = re.search(r"^- Completed-at:\s*(.+)$", section, flags=re.M)
-    completed_ns = re.search(r"^- Completed-at-ns:\s*(\d+)$", section, flags=re.M)
+    summary = re.search(r"^- Summary:[ \t]*(.+)$", section, flags=re.M)
+    tests = re.search(r"^- Tests:[ \t]*(.+)$", section, flags=re.M)
+    completed = re.search(r"^- Completed-at:[ \t]*(.+)$", section, flags=re.M)
+    completed_ns = re.search(r"^- Completed-at-ns:[ \t]*(\d+)$", section, flags=re.M)
     if not summary or not summary.group(1).strip():
         problems.append("task completion summary is missing")
     missing_test_markers = {"", "-", "n/a", "na", "none", "not recorded", "not run"}
@@ -2216,10 +2410,25 @@ def _guidance_completion_evidence(
         problems.append("task verification evidence is missing")
     if not completed or not completed.group(1).strip():
         problems.append("task completion timestamp is missing")
-    if not completed_ns:
+    if not completed_ns and require_completed_ns:
         problems.append("task completion lacks dispatch-bound nanosecond evidence")
-    elif int(completed_ns.group(1)) < not_before_ns:
+    elif completed_ns and int(completed_ns.group(1)) < not_before_ns:
         problems.append("task completion predates this dispatch attempt")
+    return problems
+
+
+def _guidance_completion_evidence(
+    root: Path, task: str, *, not_before_ns: int,
+) -> tuple[bool, list[str]]:
+    status = _task_status(root, task)
+    path = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    body = _read(path)
+    if not body:
+        problems = [f"task document is missing: {path.relative_to(root)}"]
+        return False, problems
+    problems = _completion_evidence_problems(
+        body, task=task, status=status, not_before_ns=not_before_ns,
+    )
     return not problems, problems
 
 
@@ -6579,10 +6788,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_finish)
 
     sp = sub.add_parser("gate")
-    sp.add_argument("action", choices=["approve", "reject"])
+    sp.add_argument("action", choices=["approve", "reject", "reconcile-github"])
     sp.add_argument("--task", required=True)
     sp.add_argument("--by", required=True)
     sp.add_argument("--note")
+    sp.add_argument("--pr", help="merged GitHub PR number or URL for reconcile-github")
+    sp.add_argument("--repo", help="GitHub OWNER/REPO for reconcile-github")
     sp.set_defaults(func=cmd_gate)
 
     sp = sub.add_parser("refresh")

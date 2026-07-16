@@ -14,4 +14,8 @@ Use:
 ```bash
 python3 tools/agentctl.py gate approve --task T-001 --by reviewer --note "verified"
 python3 tools/agentctl.py gate reject --task T-001 --by reviewer --note "needs fixes"
+python3 tools/agentctl.py gate reconcile-github --task T-001 --by <github-user> --pr <number> --repo <owner/repo>
 ```
+
+Use `reconcile-github` after a human merges the task's PR. It verifies GitHub
+merge evidence and closes durable task state; it never performs the merge.

@@ -525,6 +525,7 @@ agentctl focus                                      reprint current task focus
 agentctl note "..."                                 record progress
 agentctl finish --summary "..." --tests "..."       move task to review
 agentctl gate approve|reject --task --by            review gate
+agentctl gate reconcile-github --task --by --pr     sync a human-merged PR to done
 agentctl guidance create --from-agent --to-agent    send supervisor plan to an agent/session
 agentctl guidance create ... --dispatch             send plan and resume the target Codex session
 agentctl guidance list|show|ack|dispatch|verify      inspect, execute, and accept/reject guidance

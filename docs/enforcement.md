@@ -62,6 +62,15 @@ Run `agentctl focus` manually any time to re-anchor.
   Claude, Cursor, or the hosting agent platform. Gate decisions require the
   current host runtime to match the reviewer session and differ from every
   runtime that participated in the worker task.
+- `gate reconcile-github` — post-merge human-review reconciliation. It reads
+  authoritative PR metadata through authenticated `gh`, requires `MERGED`,
+  verifies the merge commit is in the current history, matches `--by` to
+  GitHub's `mergedBy`, binds the PR repository to the checkout's `origin`, and
+  confirms the complete GraphQL cursor-paginated PR file list changed the task
+  document before moving `review -> done`. GitHub Enterprise queries and
+  unqualified `--repo OWNER/REPO` arguments use the checkout origin's verified
+  host. It records the PR URL, merge commit, actor, and
+  timestamps in `.agent/gates/`; it does not merge a PR.
 - `board` / `task` / `agents` — machine-readable task board, task scaffolding, agent registry.
 - `refresh` — re-record doc hashes after the plan/rules/task docs changed.
 
