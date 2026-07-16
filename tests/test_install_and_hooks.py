@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.parse import urlparse
 
 
 KIT = Path(__file__).resolve().parents[1]
@@ -284,6 +285,10 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             ["git", "config", "user.name", "Agent Test"],
             cwd=self.root, check=True, capture_output=True, text=True,
         )
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/example/project.git"],
+            cwd=self.root, check=True, capture_output=True, text=True,
+        )
         install = subprocess.run(
             [sys.executable, str(KIT / "tools" / "agentctl.py"), "init", str(self.root)],
             cwd=KIT, text=True, capture_output=True, timeout=120,
@@ -297,6 +302,9 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             script.write_text(
                 "import os, sys\n"
                 "if len(sys.argv) > 1 and sys.argv[1] == 'api':\n"
+                "    expected = os.environ.get('FAKE_GH_EXPECT_HOST', '')\n"
+                "    if expected and ('--hostname' not in sys.argv or sys.argv[sys.argv.index('--hostname') + 1] != expected):\n"
+                "        print('wrong API host', file=sys.stderr); raise SystemExit(2)\n"
                 "    print(os.environ.get('FAKE_GH_PR_FILES', ''))\n"
                 "else:\n"
                 "    print(os.environ['FAKE_GH_PR_JSON'])\n",
@@ -311,6 +319,9 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             wrapper.write_text(
                 f"#!{sys.executable}\nimport os, sys\n"
                 "if len(sys.argv) > 1 and sys.argv[1] == 'api':\n"
+                "    expected = os.environ.get('FAKE_GH_EXPECT_HOST', '')\n"
+                "    if expected and ('--hostname' not in sys.argv or sys.argv[sys.argv.index('--hostname') + 1] != expected):\n"
+                "        print('wrong API host', file=sys.stderr); raise SystemExit(2)\n"
                 "    print(os.environ.get('FAKE_GH_PR_FILES', ''))\n"
                 "else:\n"
                 "    print(os.environ['FAKE_GH_PR_JSON'])\n",
@@ -327,15 +338,17 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
         return proc
 
-    def set_pr(self, *, state="MERGED", files=None, merged_by="project-owner", oid=None):
+    def set_pr(self, *, state="MERGED", files=None, merged_by="project-owner", oid=None,
+               url="https://github.com/example/project/pull/7"):
         files = files or []
         self.env["FAKE_GH_PR_FILES"] = "\n".join(files)
+        self.env["FAKE_GH_EXPECT_HOST"] = urlparse(url).netloc
         self.env["FAKE_GH_PR_JSON"] = json.dumps({
             "state": state,
             "mergedAt": "2026-07-16T00:00:00Z" if state == "MERGED" else None,
             "mergeCommit": {"oid": oid or "0" * 40},
             "mergedBy": {"login": merged_by},
-            "url": "https://github.com/example/project/pull/7",
+            "url": url,
             "baseRefName": "main",
             "files": [{"path": path} for path in files[:100]],
         })
@@ -375,9 +388,19 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             "--pr", "7", expect=1,
         )
         self.assertIn("does not match GitHub mergedBy", mismatch.stderr)
+        self.set_pr(
+            files=[".agent/tasks/T-101.md"], oid=merge_oid,
+            url="https://github.com/untrusted/fork/pull/7",
+        )
+        wrong_repo = self.agentctl(
+            "gate", "reconcile-github", "--task", "T-101", "--by", "project-owner",
+            "--pr", "7", expect=1,
+        )
+        self.assertIn("does not match the checkout origin", wrong_repo.stderr)
         board = json.loads(self.agentctl("board", "--json").stdout)
         self.assertEqual(board["tasks"]["T-101"]["status"], "review")
 
+        self.set_pr(files=[".agent/tasks/T-101.md"], oid=merge_oid)
         self.agentctl(
             "gate", "reconcile-github", "--task", "T-101", "--by", "project-owner",
             "--pr", "7",
@@ -473,6 +496,44 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         )
         board = json.loads(self.agentctl("board", "--json").stdout)
         self.assertEqual(board["tasks"]["T-301"]["status"], "done")
+
+    def test_reconcile_supports_enterprise_host_and_legacy_completion(self):
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", "git@git.example.test:team/project.git"],
+            cwd=self.root, check=True,
+        )
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-401",
+            "--title", "legacy enterprise task", "--scope", "src/",
+        )
+        self.agentctl("finish", "--summary", "legacy worker complete", "--tests", "unit tests")
+        task_doc = self.root / ".agent" / "tasks" / "T-401.md"
+        body = task_doc.read_text(encoding="utf-8")
+        task_doc.write_text(
+            re.sub(r"^- Completed-at-ns:.*\n", "", body, flags=re.M), encoding="utf-8",
+        )
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-q", "-m", "test legacy enterprise state"],
+            cwd=self.root, check=True,
+        )
+        merge_oid = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.root, text=True,
+        ).strip()
+        self.agentctl(
+            "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-402",
+            "--title", "reconcile legacy enterprise merge", "--scope", ".agent/",
+        )
+        self.set_pr(
+            files=[".agent/tasks/T-401.md"], oid=merge_oid,
+            url="https://git.example.test/team/project/pull/7",
+        )
+        self.agentctl(
+            "gate", "reconcile-github", "--task", "T-401", "--by", "project-owner",
+            "--pr", "7",
+        )
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertEqual(board["tasks"]["T-401"]["status"], "done")
 
 
 if __name__ == "__main__":

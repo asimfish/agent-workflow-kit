@@ -65,8 +65,10 @@ Run `agentctl focus` manually any time to re-anchor.
 - `gate reconcile-github` — post-merge human-review reconciliation. It reads
   authoritative PR metadata through authenticated `gh`, requires `MERGED`,
   verifies the merge commit is in the current history, matches `--by` to
-  GitHub's `mergedBy`, and confirms the PR changed the task document before
-  moving `review -> done`. It records the PR URL, merge commit, actor, and
+  GitHub's `mergedBy`, binds the PR repository to the checkout's `origin`, and
+  confirms the complete paginated PR file list changed the task document before
+  moving `review -> done`. GitHub Enterprise API calls use the PR's verified
+  host. It records the PR URL, merge commit, actor, and
   timestamps in `.agent/gates/`; it does not merge a PR.
 - `board` / `task` / `agents` — machine-readable task board, task scaffolding, agent registry.
 - `refresh` — re-record doc hashes after the plan/rules/task docs changed.

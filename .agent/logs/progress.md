@@ -126,3 +126,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-16 19:41:09 [T-033] Implemented fail-closed and idempotent GitHub merge reconciliation; focused negative/positive regression passes and PR #5 evidence reconciled T-029 through T-032 to done.
 - 2026-07-16 19:50:24 [T-034] Fixed independent review findings: merge-bound completion evidence, line-local field parsing, and non-destructive gate handling; focused regressions pass.
 - 2026-07-16 19:58:12 [T-035] Added fail-closed paginated GitHub PR file evidence and a regression with the task path beyond the first 100 files.
+- 2026-07-16 20:05:58 [T-036] Bound reconciliation to origin, passed Enterprise host explicitly, and retained compatibility with legacy completion records; four focused regressions pass.

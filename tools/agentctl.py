@@ -49,6 +49,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from urllib.parse import urlparse
 
 WORKFLOW_DIR = ".agent"
 STATE_DIR = "state"
@@ -1455,22 +1456,59 @@ def _github_merge_evidence(root: Path, args: argparse.Namespace) -> tuple[dict, 
         problems.append("GitHub PR has no mergedBy identity")
     elif merged_by.casefold() != str(args.by or "").casefold():
         problems.append(f"--by {args.by} does not match GitHub mergedBy {merged_by}")
+    remote = _git_process(root, "remote", "get-url", "origin")
+    trusted_identity, _trusted_host = _github_repository_identity(remote.stdout.strip())
+    evidence_identity, _evidence_host = _github_repository_identity(str(evidence.get("url") or ""))
+    if remote.returncode != 0 or trusted_identity is None:
+        problems.append("unable to identify the authoritative GitHub repository from remote origin")
+    elif evidence_identity is None:
+        problems.append("GitHub PR evidence has no parseable repository URL")
+    elif evidence_identity != trusted_identity:
+        problems.append("GitHub PR repository does not match the checkout origin")
     return evidence, problems
+
+
+def _github_repository_identity(url: str) -> tuple[tuple[str, str, str] | None, str]:
+    value = url.strip()
+    host = ""
+    path = ""
+    if "://" in value:
+        parsed = urlparse(value)
+        host = parsed.netloc.rsplit("@", 1)[-1]
+        path = parsed.path
+    else:
+        match = re.match(r"^(?:[^@]+@)?([^:]+):(.+)$", value)
+        if match:
+            host, path = match.groups()
+    parts = [part for part in path.strip("/").split("/") if part]
+    if len(parts) >= 3 and parts[2] == "pull":
+        parts = parts[:2]
+    if len(parts) != 2 or not host:
+        return None, ""
+    owner, repo = parts
+    if repo.endswith(".git"):
+        repo = repo[:-4]
+    if not owner or not repo:
+        return None, ""
+    return (host.casefold(), owner.casefold(), repo.casefold()), host
 
 
 def _github_pr_changed_paths(root: Path, evidence: dict) -> tuple[set[str], list[str]]:
     url = str(evidence.get("url") or "")
-    match = re.match(r"^https?://[^/]+/([^/]+)/([^/]+)/pull/(\d+)(?:$|[/?#])", url)
-    if not match:
+    identity, host = _github_repository_identity(url)
+    parsed = urlparse(url)
+    path_parts = [part for part in parsed.path.strip("/").split("/") if part]
+    if identity is None or len(path_parts) < 4 or path_parts[2] != "pull" or not path_parts[3].isdigit():
         return set(), ["GitHub PR evidence has no parseable pull request URL"]
-    owner, repo, number = match.groups()
+    _normalized_host, owner, repo = identity
+    number = path_parts[3]
     gh = shutil.which("gh")
     if not gh:
         return set(), ["GitHub reconciliation requires the authenticated GitHub CLI (gh)"]
     try:
         result = subprocess.run(
             [
-                gh, "api", f"repos/{owner}/{repo}/pulls/{number}/files",
+                gh, "api", "--hostname", host, f"repos/{owner}/{repo}/pulls/{number}/files",
                 "--paginate", "--jq", ".[].filename",
             ],
             cwd=str(root), text=True, encoding="utf-8", errors="replace",
@@ -1516,6 +1554,7 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
         merged_status = merged_status_match.group(1) if merged_status_match else ""
         problems.extend(_completion_evidence_problems(
             merged_body, task=task, status=merged_status, not_before_ns=0,
+            require_completed_ns=False,
         ))
 
     gate_doc = root / WORKFLOW_DIR / GATES_DIR / f"{task}.md"
@@ -2332,6 +2371,7 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
 
 def _completion_evidence_problems(
     body: str, *, task: str, status: str, not_before_ns: int,
+    require_completed_ns: bool = True,
 ) -> list[str]:
     problems: list[str] = []
     if status not in {"review", "approved", "done"}:
@@ -2360,9 +2400,9 @@ def _completion_evidence_problems(
         problems.append("task verification evidence is missing")
     if not completed or not completed.group(1).strip():
         problems.append("task completion timestamp is missing")
-    if not completed_ns:
+    if not completed_ns and require_completed_ns:
         problems.append("task completion lacks dispatch-bound nanosecond evidence")
-    elif int(completed_ns.group(1)) < not_before_ns:
+    elif completed_ns and int(completed_ns.group(1)) < not_before_ns:
         problems.append("task completion predates this dispatch attempt")
     return problems
 

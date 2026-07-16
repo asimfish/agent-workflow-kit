@@ -46,3 +46,4 @@
 | T-033 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-033.md](tasks/T-033.md) | reconcile merged GitHub reviews |
 | T-034 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-034.md](tasks/T-034.md) | harden GitHub reconciliation trust boundary |
 | T-035 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-035.md](tasks/T-035.md) | paginate GitHub reconciliation file evidence |
+| T-036 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-036.md](tasks/T-036.md) | bind GitHub reconciliation authority and compatibility |
