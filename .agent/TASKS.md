@@ -45,3 +45,4 @@
 | T-032 | done | codex | `tools/, tests/, .agent/` | [.agent/tasks/T-032.md](tasks/T-032.md) | prevent completion evidence injection |
 | T-033 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-033.md](tasks/T-033.md) | reconcile merged GitHub reviews |
 | T-034 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-034.md](tasks/T-034.md) | harden GitHub reconciliation trust boundary |
+| T-035 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-035.md](tasks/T-035.md) | paginate GitHub reconciliation file evidence |

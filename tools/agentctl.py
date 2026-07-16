@@ -1426,7 +1426,7 @@ def _github_merge_evidence(root: Path, args: argparse.Namespace) -> tuple[dict, 
         return {}, ["GitHub reconciliation requires the authenticated GitHub CLI (gh)"]
     command = [
         gh, "pr", "view", str(args.pr), "--json",
-        "state,mergedAt,mergeCommit,mergedBy,url,baseRefName,files",
+        "state,mergedAt,mergeCommit,mergedBy,url,baseRefName",
     ]
     if getattr(args, "repo", None):
         command.extend(["--repo", args.repo])
@@ -1458,6 +1458,32 @@ def _github_merge_evidence(root: Path, args: argparse.Namespace) -> tuple[dict, 
     return evidence, problems
 
 
+def _github_pr_changed_paths(root: Path, evidence: dict) -> tuple[set[str], list[str]]:
+    url = str(evidence.get("url") or "")
+    match = re.match(r"^https?://[^/]+/([^/]+)/([^/]+)/pull/(\d+)(?:$|[/?#])", url)
+    if not match:
+        return set(), ["GitHub PR evidence has no parseable pull request URL"]
+    owner, repo, number = match.groups()
+    gh = shutil.which("gh")
+    if not gh:
+        return set(), ["GitHub reconciliation requires the authenticated GitHub CLI (gh)"]
+    try:
+        result = subprocess.run(
+            [
+                gh, "api", f"repos/{owner}/{repo}/pulls/{number}/files",
+                "--paginate", "--jq", ".[].filename",
+            ],
+            cwd=str(root), text=True, encoding="utf-8", errors="replace",
+            capture_output=True, timeout=60,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return set(), [f"unable to read complete GitHub PR file evidence: {exc}"]
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        return set(), ["unable to read complete GitHub PR file evidence: " + detail]
+    return {line.strip() for line in result.stdout.splitlines() if line.strip()}, []
+
+
 def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, task: str, t: dict) -> int:
     recorder_session = _load_session(root)
     recorder = str(recorder_session.get("agent") or "")
@@ -1475,10 +1501,8 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
 
     evidence, evidence_problems = _github_merge_evidence(root, args)
     problems.extend(evidence_problems)
-    changed_paths = {
-        str(item.get("path") or "") for item in evidence.get("files") or []
-        if isinstance(item, dict)
-    }
+    changed_paths, changed_path_problems = _github_pr_changed_paths(root, evidence)
+    problems.extend(changed_path_problems)
     task_path = f"{WORKFLOW_DIR}/{TASKS_DIR}/{task}.md"
     if evidence and task_path not in changed_paths:
         problems.append(f"GitHub PR did not include {task_path}")

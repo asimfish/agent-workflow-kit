@@ -295,7 +295,12 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         if os.name == "nt":
             script = fake_bin / "gh.py"
             script.write_text(
-                "import os\nprint(os.environ['FAKE_GH_PR_JSON'])\n", encoding="utf-8",
+                "import os, sys\n"
+                "if len(sys.argv) > 1 and sys.argv[1] == 'api':\n"
+                "    print(os.environ.get('FAKE_GH_PR_FILES', ''))\n"
+                "else:\n"
+                "    print(os.environ['FAKE_GH_PR_JSON'])\n",
+                encoding="utf-8",
             )
             wrapper = fake_bin / "gh.cmd"
             wrapper.write_text(
@@ -304,7 +309,11 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         else:
             wrapper = fake_bin / "gh"
             wrapper.write_text(
-                f"#!{sys.executable}\nimport os\nprint(os.environ['FAKE_GH_PR_JSON'])\n",
+                f"#!{sys.executable}\nimport os, sys\n"
+                "if len(sys.argv) > 1 and sys.argv[1] == 'api':\n"
+                "    print(os.environ.get('FAKE_GH_PR_FILES', ''))\n"
+                "else:\n"
+                "    print(os.environ['FAKE_GH_PR_JSON'])\n",
                 encoding="utf-8",
             )
             wrapper.chmod(0o755)
@@ -319,6 +328,8 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         return proc
 
     def set_pr(self, *, state="MERGED", files=None, merged_by="project-owner", oid=None):
+        files = files or []
+        self.env["FAKE_GH_PR_FILES"] = "\n".join(files)
         self.env["FAKE_GH_PR_JSON"] = json.dumps({
             "state": state,
             "mergedAt": "2026-07-16T00:00:00Z" if state == "MERGED" else None,
@@ -326,7 +337,7 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             "mergedBy": {"login": merged_by},
             "url": "https://github.com/example/project/pull/7",
             "baseRefName": "main",
-            "files": [{"path": path} for path in (files or [])],
+            "files": [{"path": path} for path in files[:100]],
         })
 
     def test_reconcile_github_requires_authoritative_merge_evidence(self):
@@ -434,6 +445,34 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         self.assertIn("task verification evidence is missing", rejected.stderr)
         board = json.loads(self.agentctl("board", "--json").stdout)
         self.assertEqual(board["tasks"]["T-201"]["status"], "review")
+
+    def test_reconcile_reads_task_path_beyond_first_file_page(self):
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-301",
+            "--title", "large merged worker task", "--scope", "src/",
+        )
+        self.agentctl("finish", "--summary", "large worker complete", "--tests", "unit tests")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-q", "-m", "test large merged state"],
+            cwd=self.root, check=True,
+        )
+        merge_oid = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=self.root, text=True,
+        ).strip()
+        self.agentctl(
+            "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-302",
+            "--title", "reconcile large merge", "--scope", ".agent/",
+        )
+        files = [f"src/generated-{index:03d}.txt" for index in range(100)]
+        files.append(".agent/tasks/T-301.md")
+        self.set_pr(files=files, oid=merge_oid)
+        self.agentctl(
+            "gate", "reconcile-github", "--task", "T-301", "--by", "project-owner",
+            "--pr", "7",
+        )
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertEqual(board["tasks"]["T-301"]["status"], "done")
 
 
 if __name__ == "__main__":
