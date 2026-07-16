@@ -1425,12 +1425,19 @@ def _github_merge_evidence(root: Path, args: argparse.Namespace) -> tuple[dict, 
     gh = shutil.which("gh")
     if not gh:
         return {}, ["GitHub reconciliation requires the authenticated GitHub CLI (gh)"]
+    remote = _git_process(root, "remote", "get-url", "origin")
+    trusted_identity, trusted_host = _github_repository_identity(remote.stdout.strip())
+    if remote.returncode != 0 or trusted_identity is None:
+        return {}, ["unable to identify the authoritative GitHub repository from remote origin"]
     command = [
         gh, "pr", "view", str(args.pr), "--json",
         "state,mergedAt,mergeCommit,mergedBy,url,baseRefName",
     ]
     if getattr(args, "repo", None):
-        command.extend(["--repo", args.repo])
+        repo_arg = str(args.repo).strip()
+        if "://" not in repo_arg and repo_arg.count("/") == 1:
+            repo_arg = f"{trusted_host}/{repo_arg}"
+        command.extend(["--repo", repo_arg])
     try:
         result = subprocess.run(
             command, cwd=str(root), text=True, encoding="utf-8", errors="replace",
@@ -1456,12 +1463,8 @@ def _github_merge_evidence(root: Path, args: argparse.Namespace) -> tuple[dict, 
         problems.append("GitHub PR has no mergedBy identity")
     elif merged_by.casefold() != str(args.by or "").casefold():
         problems.append(f"--by {args.by} does not match GitHub mergedBy {merged_by}")
-    remote = _git_process(root, "remote", "get-url", "origin")
-    trusted_identity, _trusted_host = _github_repository_identity(remote.stdout.strip())
     evidence_identity, _evidence_host = _github_repository_identity(str(evidence.get("url") or ""))
-    if remote.returncode != 0 or trusted_identity is None:
-        problems.append("unable to identify the authoritative GitHub repository from remote origin")
-    elif evidence_identity is None:
+    if evidence_identity is None:
         problems.append("GitHub PR evidence has no parseable repository URL")
     elif evidence_identity != trusted_identity:
         problems.append("GitHub PR repository does not match the checkout origin")
@@ -1506,10 +1509,17 @@ def _github_pr_changed_paths(root: Path, evidence: dict) -> tuple[set[str], list
     if not gh:
         return set(), ["GitHub reconciliation requires the authenticated GitHub CLI (gh)"]
     try:
+        query = (
+            "query($owner:String!,$name:String!,$number:Int!,$endCursor:String){"
+            "repository(owner:$owner,name:$name){pullRequest(number:$number){"
+            "files(first:100,after:$endCursor){nodes{path}pageInfo{hasNextPage endCursor}}}}}"
+        )
         result = subprocess.run(
             [
-                gh, "api", "--hostname", host, f"repos/{owner}/{repo}/pulls/{number}/files",
-                "--paginate", "--jq", ".[].filename",
+                gh, "api", "graphql", "--hostname", host, "--paginate",
+                "-f", f"query={query}", "-F", f"owner={owner}", "-F", f"name={repo}",
+                "-F", f"number={number}",
+                "--jq", ".data.repository.pullRequest.files.nodes[].path",
             ],
             cwd=str(root), text=True, encoding="utf-8", errors="replace",
             capture_output=True, timeout=60,

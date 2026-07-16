@@ -305,8 +305,13 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
                 "    expected = os.environ.get('FAKE_GH_EXPECT_HOST', '')\n"
                 "    if expected and ('--hostname' not in sys.argv or sys.argv[sys.argv.index('--hostname') + 1] != expected):\n"
                 "        print('wrong API host', file=sys.stderr); raise SystemExit(2)\n"
+                "    if 'graphql' not in sys.argv or '--paginate' not in sys.argv:\n"
+                "        print('file evidence is not GraphQL-paginated', file=sys.stderr); raise SystemExit(2)\n"
                 "    print(os.environ.get('FAKE_GH_PR_FILES', ''))\n"
                 "else:\n"
+                "    expected_repo = os.environ.get('FAKE_GH_EXPECT_REPO', '')\n"
+                "    if expected_repo and ('--repo' not in sys.argv or sys.argv[sys.argv.index('--repo') + 1] != expected_repo):\n"
+                "        print('wrong PR repository', file=sys.stderr); raise SystemExit(2)\n"
                 "    print(os.environ['FAKE_GH_PR_JSON'])\n",
                 encoding="utf-8",
             )
@@ -322,8 +327,13 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
                 "    expected = os.environ.get('FAKE_GH_EXPECT_HOST', '')\n"
                 "    if expected and ('--hostname' not in sys.argv or sys.argv[sys.argv.index('--hostname') + 1] != expected):\n"
                 "        print('wrong API host', file=sys.stderr); raise SystemExit(2)\n"
+                "    if 'graphql' not in sys.argv or '--paginate' not in sys.argv:\n"
+                "        print('file evidence is not GraphQL-paginated', file=sys.stderr); raise SystemExit(2)\n"
                 "    print(os.environ.get('FAKE_GH_PR_FILES', ''))\n"
                 "else:\n"
+                "    expected_repo = os.environ.get('FAKE_GH_EXPECT_REPO', '')\n"
+                "    if expected_repo and ('--repo' not in sys.argv or sys.argv[sys.argv.index('--repo') + 1] != expected_repo):\n"
+                "        print('wrong PR repository', file=sys.stderr); raise SystemExit(2)\n"
                 "    print(os.environ['FAKE_GH_PR_JSON'])\n",
                 encoding="utf-8",
             )
@@ -339,10 +349,11 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         return proc
 
     def set_pr(self, *, state="MERGED", files=None, merged_by="project-owner", oid=None,
-               url="https://github.com/example/project/pull/7"):
+               url="https://github.com/example/project/pull/7", expected_repo=""):
         files = files or []
         self.env["FAKE_GH_PR_FILES"] = "\n".join(files)
         self.env["FAKE_GH_EXPECT_HOST"] = urlparse(url).netloc
+        self.env["FAKE_GH_EXPECT_REPO"] = expected_repo
         self.env["FAKE_GH_PR_JSON"] = json.dumps({
             "state": state,
             "mergedAt": "2026-07-16T00:00:00Z" if state == "MERGED" else None,
@@ -527,10 +538,11 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         self.set_pr(
             files=[".agent/tasks/T-401.md"], oid=merge_oid,
             url="https://git.example.test/team/project/pull/7",
+            expected_repo="git.example.test/team/project",
         )
         self.agentctl(
             "gate", "reconcile-github", "--task", "T-401", "--by", "project-owner",
-            "--pr", "7",
+            "--pr", "7", "--repo", "team/project",
         )
         board = json.loads(self.agentctl("board", "--json").stdout)
         self.assertEqual(board["tasks"]["T-401"]["status"], "done")
