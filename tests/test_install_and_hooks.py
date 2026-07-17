@@ -210,9 +210,11 @@ class IndependentGateRegressionTest(unittest.TestCase):
         )
         self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
 
-    def agentctl(self, *args, expect=0, runtime="worker-runtime"):
+    def agentctl(self, *args, expect=0, runtime="worker-runtime",
+                 workflow_session="worker-session"):
         env = os.environ.copy()
         env["CODEX_THREAD_ID"] = runtime
+        env["AGENT_WORKFLOW_SESSION_ID"] = workflow_session
         proc = subprocess.run(
             [sys.executable, "tools/agentctl.py", *args], cwd=self.root,
             text=True, capture_output=True, timeout=120, env=env,
@@ -246,30 +248,44 @@ class IndependentGateRegressionTest(unittest.TestCase):
         self.agentctl(
             "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-102",
             "--title", "review worker change", "--scope", ".agent/gates/",
-            runtime="worker-finish-runtime",
+            runtime="worker-finish-runtime", workflow_session="reviewer-session",
         )
         same_runtime = self.agentctl(
             "gate", "approve", "--task", "T-101", "--by", "supervisor",
-            expect=1, runtime="worker-finish-runtime",
+            expect=1, runtime="worker-finish-runtime", workflow_session="reviewer-session",
         )
         self.assertIn("participated in the worker task", same_runtime.stderr)
         self_review = self.agentctl(
             "gate", "approve", "--task", "T-102", "--by", "supervisor",
-            expect=1, runtime="worker-finish-runtime",
+            expect=1, runtime="worker-finish-runtime", workflow_session="reviewer-session",
         )
         self.assertIn("cannot own the task", self_review.stderr)
 
-        self.agentctl("refresh", runtime="reviewer-runtime")
+        self.agentctl(
+            "refresh", runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+        self.agentctl(
+            "refresh", runtime="reviewer-hook-runtime", workflow_session="reviewer-session",
+        )
+        unrecorded = self.agentctl(
+            "gate", "approve", "--task", "T-101", "--by", "supervisor",
+            expect=1, runtime="unrecorded-reviewer-runtime",
+            workflow_session="reviewer-session",
+        )
+        self.assertIn("not bound to the current host runtime", unrecorded.stderr)
         self.agentctl(
             "gate", "approve", "--task", "T-101", "--by", "supervisor",
-            runtime="reviewer-runtime",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
         )
         board = json.loads(self.agentctl("board", "--json").stdout)
         self.assertEqual(board["tasks"]["T-101"]["status"], "done")
         gate = (self.root / ".agent" / "gates" / "T-101.md").read_text(encoding="utf-8")
         self.assertIn("Reviewer task: T-102", gate)
         self.assertIn("Reviewer runtime: host-runtime:", gate)
-        self.agentctl("check", "--mode", "manual")
+        self.agentctl(
+            "check", "--mode", "manual", runtime="reviewer-runtime",
+            workflow_session="reviewer-session",
+        )
 
 
 class GithubMergeGateRegressionTest(unittest.TestCase):

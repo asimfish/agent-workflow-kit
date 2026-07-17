@@ -57,8 +57,15 @@ Every worker update must include:
 
 ## Concurrency Rules
 
+- Every conversation owns a distinct runtime session even when several
+  conversations use the same agent name in the same project directory.
+- Read `.agent/state/SESSIONS.md` when starting or resuming. It is a generated
+  presence view; durable goals and decisions remain in committed `.agent` docs.
 - Prefer separate branches or worktrees for parallel implementation; assign each
   parallel agent a dedicated worktree + branch to avoid index/HEAD contention.
 - Do not assign overlapping write scopes to different agents.
 - If two tasks must touch the same file, serialize them in the dependency map.
 - If an agent finds scope drift, update the task doc before editing outside scope.
+- Never force-release an active session. A stale session may be released only
+  after its task document, status, and working files have been inspected; resume
+  the existing task rather than creating a competing duplicate.

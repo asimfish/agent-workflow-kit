@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-16 20:19:29",
+  "updated_at": "2026-07-18 03:18:34",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -669,6 +669,149 @@
       "deps": [],
       "created_at": "2026-07-16 20:16:02",
       "updated_at": "2026-07-16 20:19:29"
+    },
+    "T-038": {
+      "title": "coordinate concurrent sessions in one project",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/",
+        "README.md",
+        "templates/project/",
+        ".agent/",
+        "integrations/",
+        ".codex/",
+        ".claude/",
+        ".cursor/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-17 23:59:01",
+      "updated_at": "2026-07-18 01:43:03"
+    },
+    "T-039": {
+      "title": "independent review T-038 multi-session coordination",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 01:07:29",
+      "updated_at": "2026-07-18 01:43:40"
+    },
+    "T-040": {
+      "title": "close T-038 multi-session review follow-ups",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 01:45:40",
+      "updated_at": "2026-07-18 02:03:28"
+    },
+    "T-041": {
+      "title": "independent review T-040 multi-session follow-up fixes",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 01:56:17",
+      "updated_at": "2026-07-18 02:03:39"
+    },
+    "T-042": {
+      "title": "package approved multi-session release",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "README.md",
+        "tools/",
+        "tests/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:05:38",
+      "updated_at": "2026-07-18 02:06:33"
+    },
+    "T-043": {
+      "title": "fix Windows guidance receipt integrity CI",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:16:07",
+      "updated_at": "2026-07-18 02:44:52"
+    },
+    "T-044": {
+      "title": "Review T-043 signing-key binary write",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:33:00",
+      "updated_at": "2026-07-18 02:45:08"
+    },
+    "T-045": {
+      "title": "accept recorded reviewer runtime identities",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:46:26",
+      "updated_at": "2026-07-18 02:59:55"
+    },
+    "T-046": {
+      "title": "T-046 independent review T-045 recorded runtime identities",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:53:42",
+      "updated_at": "2026-07-18 03:00:04"
+    },
+    "T-047": {
+      "title": "fix Windows binary signing regression mock",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 03:05:19",
+      "updated_at": "2026-07-18 03:18:12"
+    },
+    "T-048": {
+      "title": "review T-047 binary signing mock fix",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 03:14:25",
+      "updated_at": "2026-07-18 03:18:34"
     }
   }
 }

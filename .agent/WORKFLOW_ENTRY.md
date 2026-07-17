@@ -42,12 +42,20 @@ When working in this repository, do this before any edit or mutating command:
 
 4. Follow the focus printed by `agentctl work`.
 
+`agentctl work` identifies the current Codex, Claude Code, or Cursor
+conversation from its host runtime, updates its own heartbeat, and prints other
+active conversations in the same checkout. The generated local view is
+`.agent/state/SESSIONS.md`; it is runtime awareness, not durable project truth.
+
 Use the backend name as `<agent-name>` when no project-specific agent ID is
 assigned, for example `codex`, `claude`, `cursor`, or `agent`.
 
 ## During Work
 
 - Keep edits inside the active task write scope.
+- Treat another conversation's active or stale task/scope/file claim as owned.
+  Native hooks refresh heartbeats and register structured file writes
+  automatically. Do not bypass a session guard.
 - If the workflow entry, plan, task index, task doc, agent registry, rules, or
   checkpoint policy changed, re-read them and run:
 
@@ -93,6 +101,28 @@ assigned, for example `codex`, `claude`, `cursor`, or `agent`.
 
   The runner is bounded and cooperative. Never bypass an escalated follow-up or
   start a competing runtime to hide an interrupted one.
+
+## Concurrent Conversations
+
+- Multiple conversations may share one checkout only while their task scopes
+  are disjoint. Each conversation gets an independent session record under the
+  Git common directory; one conversation never resumes another conversation's
+  task merely because the agent name is the same.
+- Task creation, start, note, finish, and the generated session view use atomic
+  writes and an advisory coordination lock. Hooks reject writes outside the
+  active scope and reject a path already claimed by another live session.
+- Git index, HEAD, branch, merge, and push mutations require exclusive use of a
+  checkout. If another conversation is active, allocate a task-scoped worktree
+  instead of bypassing the guard.
+- A stale session remains visible and keeps its claims. After inspecting its
+  task document and working tree, an agent may transfer that task by running:
+
+  ```bash
+  python3 tools/agentctl.py sessions release <session-key> --reason "<verified reason>"
+  python3 tools/agentctl.py start --task <existing-task> --agent <agent-name>
+  ```
+
+  Releasing presence does not erase the task, plan, notes, or working files.
 
 ## Supervisor Dispatch
 

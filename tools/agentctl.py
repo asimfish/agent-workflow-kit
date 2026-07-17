@@ -18,12 +18,13 @@ Commands:
   worktree   create/list/release task-scoped worktree leases
   eval       run and compare deterministic baseline/candidate verifier suites
   loop       run/status/resume/stop bounded project loops and checkpoints
+  sessions   list/heartbeat/guard/release concurrent conversation claims
   refresh    re-record doc hashes after plan/rules/task docs changed
   board      print the task board (human or --json)
   task       create / show task documents and board entries
   agents     add / list agent profiles
   check      verify workflow state (--mode manual|pre-commit|commit-msg|pre-push|ci)
-  status     print the current session (human or --json)
+  status     print this conversation's current session (human or --json)
 
 Exit codes: 0 = ok, 1 = violations found, 2 = usage/internal error, 3 = no session.
 """
@@ -54,6 +55,10 @@ from urllib.parse import urlparse
 WORKFLOW_DIR = ".agent"
 STATE_DIR = "state"
 SESSION_FILE = "current_session.json"
+SESSION_RUNTIME_DIR = "sessions"
+SESSION_COORDINATION_LOCK = "sessions.lock"
+SESSION_VIEW_FILE = "SESSIONS.md"
+SESSION_STALE_SECONDS = 30 * 60
 LOCKS_DIR = "locks"
 BOARD_FILE = "board.json"
 AGENTS_FILE = "agents.json"
@@ -248,22 +253,226 @@ def _state_dir(root: Path) -> Path:
     return root / WORKFLOW_DIR / STATE_DIR
 
 
-def _session_path(root: Path) -> Path:
-    return _state_dir(root) / SESSION_FILE
+def _workflow_session_key() -> str:
+    forced = (os.environ.get("AGENT_WORKFLOW_SESSION_KEY") or "").strip()
+    if forced == "default" or re.fullmatch(r"session-[0-9a-f]{24}", forced):
+        return forced
+    explicit = (os.environ.get("AGENT_WORKFLOW_SESSION_ID") or "").strip()
+    identity = explicit or _runtime_identity()
+    if not identity:
+        for name in ("WHALENT_COMPOSER_ID", "AGENT_SESSION_ID", "TERM_SESSION_ID"):
+            value = (os.environ.get(name) or "").strip()
+            if value:
+                identity = f"{name}={value}"
+                break
+    if not identity:
+        return "default"
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
+    return f"session-{digest}"
+
+
+def _session_runtime_dir(root: Path) -> Path:
+    common = _git_common_dir(root)
+    if common is not None:
+        return common / WORKTREE_LEASES_DIR / SESSION_RUNTIME_DIR
+    return _state_dir(root) / SESSION_RUNTIME_DIR
+
+
+def _session_coordination_lock_path(root: Path) -> Path:
+    common = _git_common_dir(root)
+    if common is not None:
+        return common / WORKTREE_LEASES_DIR / SESSION_COORDINATION_LOCK
+    return _state_dir(root) / LOCKS_DIR / SESSION_COORDINATION_LOCK
+
+
+def _checkout_fingerprint(root: Path) -> str:
+    return hashlib.sha256(str(root.resolve()).encode("utf-8")).hexdigest()[:12]
+
+
+def _session_path(root: Path, session_key: str | None = None) -> Path:
+    key = session_key or _workflow_session_key()
+    if key == "default":
+        return _state_dir(root) / SESSION_FILE
+    return _session_runtime_dir(root) / f"{key}-{_checkout_fingerprint(root)}.json"
+
+
+def _legacy_shared_session_path(root: Path, session_key: str) -> Path:
+    return _session_runtime_dir(root) / f"{session_key}.json"
+
+
+def _session_matches_current_runtime(st: dict, session_key: str) -> bool:
+    if st.get("workflow_session_key") == session_key:
+        return True
+    runtime = _runtime_identity()
+    return bool(runtime and runtime in (st.get("runtime_identities") or []))
 
 
 def _load_session(root: Path) -> dict:
-    return _load_json(_session_path(root), {})
+    key = _workflow_session_key()
+    path = _session_path(root, key)
+    st = _load_json(path, {})
+    if st or key == "default":
+        return st if isinstance(st, dict) else {}
+    shared_legacy_path = _legacy_shared_session_path(root, key)
+    shared_legacy = _load_json(shared_legacy_path, {})
+    if isinstance(shared_legacy, dict) and shared_legacy.get("task"):
+        legacy_checkout = shared_legacy.get("checkout")
+        if ((legacy_checkout and _same_checkout(root, shared_legacy))
+                or (not legacy_checkout and _session_matches_current_runtime(shared_legacy, key))):
+            shared_legacy["workflow_session_key"] = key
+            _save_session(root, shared_legacy)
+            try:
+                shared_legacy_path.unlink()
+            except FileNotFoundError:
+                pass
+            _render_sessions_view(root)
+            return shared_legacy
+    legacy = _load_json(_session_path(root, "default"), {})
+    if not isinstance(legacy, dict) or not legacy.get("task"):
+        return {}
+    if not _session_matches_current_runtime(legacy, key):
+        return {}
+    legacy["workflow_session_key"] = key
+    _save_session(root, legacy)
+    try:
+        _session_path(root, "default").unlink()
+    except FileNotFoundError:
+        pass
+    _render_sessions_view(root)
+    return legacy
 
 
 def _save_session(root: Path, st: dict) -> None:
-    _save_json(_session_path(root), st)
+    key = st.get("workflow_session_key") or _workflow_session_key()
+    st["workflow_session_key"] = key
+    st["checkout"] = str(root.resolve())
+    st["branch"] = _git(root, "branch", "--show-current")
+    st["heartbeat_at"] = _now()
+    st["heartbeat_ns"] = time.time_ns()
+    st["revision"] = int(st.get("revision") or 0) + 1
+    if st.get("status") in {"review", "approved", "done", "released"}:
+        st["presence_status"] = st.get("status")
+    else:
+        st["presence_status"] = "working"
+    _save_json(_session_path(root, key), st)
+    _render_sessions_view(root)
 
 
 def _clear_session(root: Path) -> None:
     p = _session_path(root)
     if p.is_file():
         p.unlink()
+    _render_sessions_view(root)
+
+
+def _session_age_seconds(st: dict) -> float | None:
+    try:
+        heartbeat_ns = int(st.get("heartbeat_ns") or 0)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if heartbeat_ns <= 0:
+        return None
+    return max(0.0, (time.time_ns() - heartbeat_ns) / 1_000_000_000)
+
+
+def _session_observed_status(st: dict) -> str:
+    presence = st.get("presence_status") or st.get("status") or "working"
+    if presence in {"review", "approved", "done", "released"}:
+        return presence
+    age = _session_age_seconds(st)
+    if age is None or age > SESSION_STALE_SECONDS:
+        return "stale"
+    return "active"
+
+
+def _session_rows_unlocked(root: Path) -> list[dict]:
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    paths = sorted(_session_runtime_dir(root).glob("session-*.json"))
+    legacy = _session_path(root, "default")
+    if legacy.is_file():
+        paths.append(legacy)
+    for path in paths:
+        st = _load_json(path, {})
+        if not isinstance(st, dict) or not st.get("task"):
+            continue
+        row = dict(st)
+        key = row.get("workflow_session_key") or (
+            "default" if path == legacy else path.stem
+        )
+        checkout = str(row.get("checkout") or root.resolve())
+        identity = (str(key), checkout)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        row["workflow_session_key"] = key
+        row["observed_status"] = _session_observed_status(row)
+        age = _session_age_seconds(row)
+        row["heartbeat_age_seconds"] = None if age is None else round(age, 3)
+        row["_record_path"] = str(path)
+        rows.append(row)
+    rows.sort(key=lambda row: (
+        str(row.get("checkout") or ""), str(row.get("task") or ""),
+        str(row.get("workflow_session_key") or ""),
+    ))
+    return rows
+
+
+def _public_session_row(row: dict) -> dict:
+    return {key: value for key, value in row.items() if not key.startswith("_")}
+
+
+def _write_atomic_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.parent / f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp"
+    try:
+        with temp.open("w", encoding="utf-8") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _render_sessions_view(root: Path, rows: list[dict] | None = None) -> None:
+    rows = rows if rows is not None else _session_rows_unlocked(root)
+    lines = [
+        "# Agent Sessions",
+        "",
+        f"Generated: {_now()}",
+        "",
+        "This local, gitignored view is generated from per-conversation records. ",
+        "Do not edit it; use the task documents for durable project decisions.",
+        "",
+        "| Session | State | Agent | Task | Scope | Branch | Checkout | Heartbeat |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for row in rows:
+        values = [
+            row.get("workflow_session_key") or "default",
+            row.get("observed_status") or "unknown",
+            row.get("agent") or "-",
+            row.get("task") or "-",
+            ", ".join(row.get("scope") or []) or "-",
+            row.get("branch") or "-",
+            row.get("checkout") or "-",
+            row.get("heartbeat_at") or "-",
+        ]
+        escaped = [str(value).replace("|", "\\|").replace("\n", " ") for value in values]
+        lines.append("| " + " | ".join(escaped) + " |")
+    if not rows:
+        lines.append("| - | none | - | - | - | - | - | - |")
+    lines.extend([
+        "",
+        "States `active` and `stale` keep their task/file claims. A stale claim must be ",
+        "inspected and explicitly released before overlapping work starts.",
+        "",
+    ])
+    _write_atomic_text(_state_dir(root) / SESSION_VIEW_FILE, "\n".join(lines))
 
 
 def _require_session(root: Path) -> dict:
@@ -602,6 +811,112 @@ def _scopes_overlap(a, b) -> bool:
             if xn == yn or xn.startswith(yn + "/") or yn.startswith(xn + "/"):
                 return True
     return False
+
+
+def _same_checkout(root: Path, st: dict) -> bool:
+    try:
+        return Path(st.get("checkout") or root).resolve() == root.resolve()
+    except (OSError, TypeError, ValueError):
+        return False
+
+
+def _blocking_session_rows(root: Path, current_key: str | None = None) -> list[dict]:
+    rows = []
+    for row in _session_rows_unlocked(root):
+        if current_key and row.get("workflow_session_key") == current_key:
+            continue
+        if not _same_checkout(root, row):
+            continue
+        if row.get("observed_status") not in {"active", "stale"}:
+            continue
+        rows.append(row)
+    return rows
+
+
+def _session_start_conflicts(root: Path, session_key: str, task: str,
+                             scope: list[str]) -> list[str]:
+    conflicts = []
+    for row in _session_rows_unlocked(root):
+        if not _same_checkout(root, row):
+            continue
+        if row.get("observed_status") not in {"active", "stale"}:
+            continue
+        other_key = row.get("workflow_session_key") or "default"
+        other_task = row.get("task") or "unknown"
+        if other_key == session_key:
+            if other_task != task:
+                conflicts.append(
+                    f"this conversation already owns active task {other_task}; finish or release it first"
+                )
+            continue
+        if other_task == task:
+            conflicts.append(
+                f"task {task} is already claimed by session {other_key} ({row.get('observed_status')})"
+            )
+        elif not scope or not (row.get("scope") or []):
+            conflicts.append(
+                f"write scopes cannot be proven disjoint from session {other_key} "
+                f"task={other_task}; every concurrent task needs a bounded scope"
+            )
+        elif _scopes_overlap(scope, row.get("scope") or []):
+            conflicts.append(
+                f"write scope overlaps session {other_key} task={other_task} "
+                f"scope={row.get('scope') or []} ({row.get('observed_status')})"
+            )
+    return conflicts
+
+
+def _normalize_claim_path(root: Path, value: str) -> tuple[str | None, str | None]:
+    raw = str(value or "").strip()
+    if not raw:
+        return None, None
+    candidate = Path(raw).expanduser()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    try:
+        relative = candidate.resolve().relative_to(root.resolve())
+    except (OSError, ValueError):
+        return None, f"path is outside the task checkout: {raw}"
+    rel = relative.as_posix()
+    if rel in {"", "."}:
+        return None, f"path must name a file or directory inside the checkout: {raw}"
+    return rel, None
+
+
+def _path_in_scope(path: str, scope: list[str]) -> bool:
+    return any(_scopes_overlap([path], [item]) for item in scope)
+
+
+def _session_awareness(root: Path, current_key: str | None = None) -> str:
+    current_key = current_key or _workflow_session_key()
+    rows = _blocking_session_rows(root, current_key)
+    if not rows:
+        return ""
+    lines = ["Other active/stale conversations in this checkout:"]
+    for row in rows:
+        lines.append(
+            f"  {row.get('workflow_session_key')} {row.get('observed_status')} "
+            f"task={row.get('task')} agent={row.get('agent')} "
+            f"scope={','.join(row.get('scope') or []) or '-'}"
+        )
+    lines.append(f"Live view: {WORKFLOW_DIR}/{STATE_DIR}/{SESSION_VIEW_FILE}")
+    return "\n".join(lines)
+
+
+def _peer_session_snapshot(rows: list[dict]) -> str:
+    payload = [
+        {
+            "session": row.get("workflow_session_key"),
+            "state": row.get("observed_status"),
+            "task": row.get("task"),
+            "agent": row.get("agent"),
+            "scope": row.get("scope") or [],
+            "claimed_files": row.get("claimed_files") or [],
+        }
+        for row in rows
+    ]
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def _doc_hash_targets(root: Path, task: str | None):
@@ -1071,26 +1386,58 @@ def cmd_work(args: argparse.Namespace) -> int:
     st = _load_session(root)
     active = st.get("task")
     if active and _task_status(root, active) == "in_progress" and not args.force:
-        resume_agent = st.get("agent") or agent
-        resume_meta = _resolve_worker_metadata(root, resume_agent, args)
-        effective_meta = {
-            key: resume_meta[key] or st.get(key) or ""
-            for key in ("session_id", "model", "reasoning_effort")
-        }
-        runtime_before = list(st.get("runtime_identities") or [])
-        current_runtime_before = st.get("runtime_identity")
-        _record_runtime_identity(st)
-        if (any(st.get(key, "") != value for key, value in effective_meta.items())
-                or runtime_before != st.get("runtime_identities")
-                or current_runtime_before != st.get("runtime_identity")):
-            st.update(effective_meta)
-            _save_session(root, st)
-            st["doc_hashes"] = _hash_docs(root, active)
-            _save_session(root, st)
-        print(f"agentctl: resuming active task {active} (agent={resume_agent})")
-        _print_focus(root, active, resume_agent, **effective_meta)
-        _run_loop_checkpoint(root, "work-start", once=True, trigger="work-resume", strict=False)
-        return 0
+        try:
+            coordination_fd = _acquire_lock_file(_session_coordination_lock_path(root))
+        except TimeoutError as exc:
+            print(f"agentctl: {exc}", file=sys.stderr)
+            return 2
+        resumed = False
+        try:
+            st = _load_session(root)
+            active = st.get("task")
+            if active and _task_status(root, active) == "in_progress":
+                session_key = st.get("workflow_session_key") or _workflow_session_key()
+                conflicts = _session_start_conflicts(
+                    root, session_key, active, st.get("scope") or [],
+                )
+                if conflicts:
+                    for conflict in conflicts:
+                        print(f"agentctl: session conflict: {conflict}", file=sys.stderr)
+                    print(
+                        "agentctl: this task was transferred to another conversation; "
+                        "select different work instead of reviving the old session.",
+                        file=sys.stderr,
+                    )
+                    return 1
+                resume_agent = st.get("agent") or agent
+                resume_meta = _resolve_worker_metadata(root, resume_agent, args)
+                effective_meta = {
+                    key: resume_meta[key] or st.get(key) or ""
+                    for key in ("session_id", "model", "reasoning_effort")
+                }
+                runtime_before = list(st.get("runtime_identities") or [])
+                current_runtime_before = st.get("runtime_identity")
+                _record_runtime_identity(st)
+                if (any(st.get(key, "") != value for key, value in effective_meta.items())
+                        or runtime_before != st.get("runtime_identities")
+                        or current_runtime_before != st.get("runtime_identity")):
+                    st.update(effective_meta)
+                    st["doc_hashes"] = _hash_docs(root, active)
+                st["presence_status"] = "working"
+                st.pop("released_at", None)
+                st.pop("release_reason", None)
+                _save_session(root, st)
+                resumed = True
+        finally:
+            _release_lock_file(_session_coordination_lock_path(root), coordination_fd)
+        if resumed:
+            print(f"agentctl: resuming active task {active} (agent={resume_agent})")
+            _print_focus(root, active, resume_agent, **effective_meta)
+            awareness = _session_awareness(root, st.get("workflow_session_key"))
+            if awareness:
+                print("\n" + awareness)
+            _run_loop_checkpoint(root, "work-start", once=True, trigger="work-resume", strict=False)
+            return 0
     meta = _resolve_worker_metadata(root, agent, args)
     task = _select_next_task(root, agent)
     if not task:
@@ -1137,86 +1484,125 @@ def cmd_start(args: argparse.Namespace) -> int:
     task = args.task
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
     meta = _resolve_worker_metadata(root, agent, args)
-    board = _load_board(root)
-    tasks = board.setdefault("tasks", {})
-    entry = tasks.get(task, {})
-    scope = entry.get("scope") or []
-    if args.scope:
-        scope = [s.strip() for s in args.scope.split(",") if s.strip()]
     try:
-        managed_lease = _managed_worktree_lease(root)
-    except RuntimeError as exc:
+        coordination_fd = _acquire_lock_file(_session_coordination_lock_path(root))
+    except TimeoutError as exc:
         print(f"agentctl: {exc}", file=sys.stderr)
         return 2
-    if managed_lease:
-        observed = managed_lease.get("observed_status")
-        if observed != "active":
-            print(
-                f"agentctl: this managed worktree lease is {observed}; "
-                "inspect or release it from the primary checkout before starting work",
-                file=sys.stderr,
-            )
-            return 1
-        lease_scope = managed_lease.get("scope") or []
-        if task != managed_lease.get("task") or agent != managed_lease.get("agent"):
-            print(
-                f"agentctl: this managed worktree is leased to task={managed_lease.get('task')} "
-                f"agent={managed_lease.get('agent')}",
-                file=sys.stderr,
-            )
-            return 1
-        if args.scope and sorted(set(scope)) != sorted(set(lease_scope)):
-            print(
-                "agentctl: --scope cannot change a managed worktree lease; "
-                "release it and allocate a new task scope",
-                file=sys.stderr,
-            )
-            return 1
-        scope = lease_scope
-    # write-scope conflict vs other in_progress tasks owned by others
-    if scope:
-        for tid, t in tasks.items():
-            if tid == task or t.get("status") not in ACTIVE_STATUSES:
-                continue
-            if t.get("owner") in (None, "", agent):
-                continue
-            if _scopes_overlap(scope, t.get("scope") or []) and not args.force:
-                print(f"agentctl: write-scope conflict with {tid} (owner={t.get('owner')}, "
-                      f"scope={t.get('scope')}). use --force to override.", file=sys.stderr)
+    try:
+        board = _load_board(root)
+        tasks = board.setdefault("tasks", {})
+        entry = tasks.get(task, {})
+        scope = entry.get("scope") or []
+        if args.scope:
+            scope = [s.strip() for s in args.scope.split(",") if s.strip()]
+        try:
+            managed_lease = _managed_worktree_lease(root)
+        except RuntimeError as exc:
+            print(f"agentctl: {exc}", file=sys.stderr)
+            return 2
+        if managed_lease:
+            observed = managed_lease.get("observed_status")
+            if observed != "active":
+                print(
+                    f"agentctl: this managed worktree lease is {observed}; "
+                    "inspect or release it from the primary checkout before starting work",
+                    file=sys.stderr,
+                )
                 return 1
-    # acquire lock
-    lp = _lock_path(root, task)
-    existing = _load_json(lp, {})
-    if existing and existing.get("agent") not in (None, "", agent):
-        if _pid_alive(existing.get("pid")) and not args.force:
-            print(f"agentctl: {task} locked by agent={existing.get('agent')} pid={existing.get('pid')} "
-                  f"since {existing.get('acquired_at')}. use --force to steal.", file=sys.stderr)
+            lease_scope = managed_lease.get("scope") or []
+            if task != managed_lease.get("task") or agent != managed_lease.get("agent"):
+                print(
+                    f"agentctl: this managed worktree is leased to task={managed_lease.get('task')} "
+                    f"agent={managed_lease.get('agent')}",
+                    file=sys.stderr,
+                )
+                return 1
+            if args.scope and sorted(set(scope)) != sorted(set(lease_scope)):
+                print(
+                    "agentctl: --scope cannot change a managed worktree lease; "
+                    "release it and allocate a new task scope",
+                    file=sys.stderr,
+                )
+                return 1
+            scope = lease_scope
+        session_key = _workflow_session_key()
+        presence_conflicts = _session_start_conflicts(root, session_key, task, scope)
+        if presence_conflicts:
+            for conflict in presence_conflicts:
+                print(f"agentctl: session conflict: {conflict}", file=sys.stderr)
+            print(
+                "agentctl: inspect '.agent/state/SESSIONS.md' or run 'agentctl sessions list'; "
+                "release an inspected stale session or allocate a worktree. --force does not "
+                "override live session ownership.",
+                file=sys.stderr,
+            )
             return 1
-    _save_json(lp, {"task": task, "agent": agent, "pid": os.getpid(),
-                    "scope": scope, "session_id": meta["session_id"], "model": meta["model"],
-                    "reasoning_effort": meta["reasoning_effort"],
-                    "acquired_at": _now()})
-    # board -> in_progress
-    now = _now()
-    e = tasks.setdefault(task, {"title": task, "status": "todo", "owner": agent,
-                                "scope": scope, "deps": [], "created_at": now, "updated_at": now})
-    e["status"] = "in_progress"
-    e["owner"] = agent
-    if scope:
-        e["scope"] = scope
-    e["updated_at"] = now
-    _save_board(root, board)
-    _update_tasks_index(root, task, status="in_progress", owner=agent, scope=e.get("scope"), title=e.get("title"))
-    _set_task_doc_status(root, task, "in_progress")
-    # Save the read receipt after all start-side document/status writes.
-    session = {"task": task, "agent": agent, "started_at": now,
-               "scope": scope, "session_id": meta["session_id"], "model": meta["model"],
-               "reasoning_effort": meta["reasoning_effort"],
-               "notes": [], "doc_hashes": {}}
-    _record_runtime_identity(session)
-    _save_session(root, session)
-    session["doc_hashes"] = _hash_docs(root, task)
-    _save_session(root, session)
+        if scope:
+            for tid, other_task in tasks.items():
+                if tid == task or other_task.get("status") not in ACTIVE_STATUSES:
+                    continue
+                if _scopes_overlap(scope, other_task.get("scope") or []) and not args.force:
+                    print(
+                        f"agentctl: write-scope conflict with {tid} "
+                        f"(owner={other_task.get('owner')}, scope={other_task.get('scope')}). "
+                        "use a disjoint scope or task worktree.",
+                        file=sys.stderr,
+                    )
+                    return 1
+        lp = _lock_path(root, task)
+        existing = _load_json(lp, {})
+        if existing and existing.get("workflow_session_key") not in (None, "", session_key):
+            if not args.force:
+                print(
+                    f"agentctl: {task} locked by session={existing.get('workflow_session_key')} "
+                    f"agent={existing.get('agent')} since {existing.get('acquired_at')}",
+                    file=sys.stderr,
+                )
+                return 1
+        if existing and existing.get("agent") not in (None, "", agent):
+            if _pid_alive(existing.get("pid")) and not args.force:
+                print(
+                    f"agentctl: {task} locked by agent={existing.get('agent')} "
+                    f"pid={existing.get('pid')} since {existing.get('acquired_at')}",
+                    file=sys.stderr,
+                )
+                return 1
+        _save_json(lp, {
+            "task": task, "agent": agent, "pid": os.getpid(), "scope": scope,
+            "workflow_session_key": session_key,
+            "session_id": meta["session_id"], "model": meta["model"],
+            "reasoning_effort": meta["reasoning_effort"], "acquired_at": _now(),
+        })
+        now = _now()
+        e = tasks.setdefault(task, {
+            "title": task, "status": "todo", "owner": agent, "scope": scope,
+            "deps": [], "created_at": now, "updated_at": now,
+        })
+        e["status"] = "in_progress"
+        e["owner"] = agent
+        if scope:
+            e["scope"] = scope
+        e["updated_at"] = now
+        _save_board(root, board)
+        _update_tasks_index(
+            root, task, status="in_progress", owner=agent,
+            scope=e.get("scope"), title=e.get("title"),
+        )
+        _set_task_doc_status(root, task, "in_progress")
+        session = {
+            "task": task, "agent": agent, "started_at": now, "scope": scope,
+            "workflow_session_key": session_key,
+            "session_id": meta["session_id"], "model": meta["model"],
+            "reasoning_effort": meta["reasoning_effort"],
+            "notes": [], "claimed_files": [], "doc_hashes": {},
+        }
+        _record_runtime_identity(session)
+        _save_session(root, session)
+        session["doc_hashes"] = _hash_docs(root, task)
+        _save_session(root, session)
+    finally:
+        _release_lock_file(_session_coordination_lock_path(root), coordination_fd)
     label = f"agent={agent}"
     if meta["model"]:
         label += f" model={meta['model']}"
@@ -1229,6 +1615,9 @@ def cmd_start(args: argparse.Namespace) -> int:
         root, task, agent, session_id=meta["session_id"], model=meta["model"],
         reasoning_effort=meta["reasoning_effort"],
     )
+    awareness = _session_awareness(root, session.get("workflow_session_key"))
+    if awareness:
+        print("\n" + awareness)
     _run_loop_checkpoint(root, "work-start", once=True, trigger="work-start", strict=False)
     return 0
 
@@ -1255,38 +1644,43 @@ def cmd_focus(args: argparse.Namespace) -> int:
 
 def cmd_progress(args: argparse.Namespace) -> int:
     root = _repo_root()
-    st = _require_session(root)
-    _record_runtime_identity(st)
-    _save_session(root, st)
-    changed = _check_receipt(root)
-    if changed:
-        print("agentctl: progress blocked because required workflow documents changed:", file=sys.stderr)
-        for problem in changed:
-            print(f"  - {problem}", file=sys.stderr)
-        return 1
     note = args.note or ""
     if not note:
         print("agentctl: --note is required", file=sys.stderr)
         return 2
-    ts = _now()
-    log = root / WORKFLOW_DIR / LOG_DIR / PROGRESS_LOG
-    _write(log, _read(log) + f"- {ts} [{st['task']}] {note}\n")
-    task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{st['task']}.md"
-    if task_doc.is_file():
-        body = _read(task_doc).replace("- No updates yet.\n", "", 1)
-        i = body.find("## Stage Log")
-        if i >= 0:
-            j = body.find("\n", i) + 1
-            body = body[:j] + f"- {ts} {note}\n" + body[j:]
-        _write(task_doc, body)
-    board = _load_board(root)
-    t = board.get("tasks", {}).get(st["task"])
-    if t:
-        t["updated_at"] = ts
-        _save_board(root, board)
-    st.setdefault("notes", []).append({"at": ts, "note": note})
-    st["doc_hashes"] = _hash_docs(root, st["task"])
-    _save_session(root, st)
+    lock = _session_coordination_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        st = _require_session(root)
+        _record_runtime_identity(st)
+        _save_session(root, st)
+        changed = _check_receipt(root)
+        if changed:
+            print("agentctl: progress blocked because required workflow documents changed:", file=sys.stderr)
+            for problem in changed:
+                print(f"  - {problem}", file=sys.stderr)
+            return 1
+        ts = _now()
+        log = root / WORKFLOW_DIR / LOG_DIR / PROGRESS_LOG
+        _write(log, _read(log) + f"- {ts} [{st['task']}] {note}\n")
+        task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{st['task']}.md"
+        if task_doc.is_file():
+            body = _read(task_doc).replace("- No updates yet.\n", "", 1)
+            i = body.find("## Stage Log")
+            if i >= 0:
+                j = body.find("\n", i) + 1
+                body = body[:j] + f"- {ts} {note}\n" + body[j:]
+            _write(task_doc, body)
+        board = _load_board(root)
+        t = board.get("tasks", {}).get(st["task"])
+        if t:
+            t["updated_at"] = ts
+            _save_board(root, board)
+        st.setdefault("notes", []).append({"at": ts, "note": note})
+        st["doc_hashes"] = _hash_docs(root, st["task"])
+        _save_session(root, st)
+    finally:
+        _release_lock_file(lock, fd)
     print(f"agentctl: progress recorded for {st['task']}")
     return 0
 
@@ -1364,39 +1758,66 @@ def cmd_complete(args: argparse.Namespace) -> int:
     rc = _run_loop_checkpoint(root, "pre-finish", once=True, trigger="pre-finish", strict=True)
     if rc:
         return rc
-    ts = _now()
-    task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
-    if task_doc.is_file():
-        body = _read(task_doc)
-        record = f"- Summary: {summary}\n"
-        if tests:
-            record += f"- Tests: {tests}\n"
-        worker_runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item)]
-        if worker_runtimes:
-            record += f"- Worker-runtimes: {', '.join(worker_runtimes)}\n"
-        record += f"- Completed-at: {ts}\n"
-        record += f"- Completed-at-ns: {time.time_ns()}\n"
-        i = body.find("## Completion Record")
-        if i >= 0:
-            body = body[:i] + "## Completion Record\n" + record
-        else:
-            body += "\n## Completion Record\n" + record
-        body = re.sub(r"^Status: .*$", "Status: review", body, count=1, flags=re.M)
-        _write(task_doc, body)
-    board = _load_board(root)
-    t = board.get("tasks", {}).get(task)
-    if t:
-        t["status"] = "review"
-        t["updated_at"] = ts
-        _save_board(root, board)
-        _update_tasks_index(root, task, status="review", owner=t.get("owner"), scope=t.get("scope"), title=t.get("title"))
-    lp = _lock_path(root, task)
-    if lp.is_file():
-        lp.unlink()
-    st["status"] = "review"
-    st["completed_at"] = ts
-    st["doc_hashes"] = _hash_docs(root, task)
-    _save_session(root, st)
+    lock = _session_coordination_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        current = _require_session(root)
+        if current.get("task") != task:
+            print(
+                f"agentctl: active session changed from {task} to {current.get('task')}; finish aborted",
+                file=sys.stderr,
+            )
+            return 1
+        changed = _check_receipt(root)
+        if changed:
+            print(
+                "agentctl: finish blocked because required workflow documents changed "
+                "while finalization was waiting:",
+                file=sys.stderr,
+            )
+            for problem in changed:
+                print(f"  - {problem}", file=sys.stderr)
+            return 1
+        st = current
+        _record_runtime_identity(st)
+        ts = _now()
+        task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+        if task_doc.is_file():
+            body = _read(task_doc)
+            record = f"- Summary: {summary}\n"
+            if tests:
+                record += f"- Tests: {tests}\n"
+            worker_runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item)]
+            if worker_runtimes:
+                record += f"- Worker-runtimes: {', '.join(worker_runtimes)}\n"
+            record += f"- Completed-at: {ts}\n"
+            record += f"- Completed-at-ns: {time.time_ns()}\n"
+            i = body.find("## Completion Record")
+            if i >= 0:
+                body = body[:i] + "## Completion Record\n" + record
+            else:
+                body += "\n## Completion Record\n" + record
+            body = re.sub(r"^Status: .*$", "Status: review", body, count=1, flags=re.M)
+            _write(task_doc, body)
+        board = _load_board(root)
+        t = board.get("tasks", {}).get(task)
+        if t:
+            t["status"] = "review"
+            t["updated_at"] = ts
+            _save_board(root, board)
+            _update_tasks_index(
+                root, task, status="review", owner=t.get("owner"),
+                scope=t.get("scope"), title=t.get("title"),
+            )
+        lp = _lock_path(root, task)
+        if lp.is_file():
+            lp.unlink()
+        st["status"] = "review"
+        st["completed_at"] = ts
+        st["doc_hashes"] = _hash_docs(root, task)
+        _save_session(root, st)
+    finally:
+        _release_lock_file(lock, fd)
     print(
         f"agentctl: {task} -> review. independent reviewer gate: start a separate review task, "
         f"then run agentctl gate approve --task {task} --by <reviewer>"
@@ -1616,6 +2037,24 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
 
 def cmd_gate(args: argparse.Namespace) -> int:
     root = _repo_root()
+    try:
+        coordination_fd = _acquire_lock_file(_session_coordination_lock_path(root))
+    except TimeoutError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
+    try:
+        return _cmd_gate_unlocked(root, args)
+    finally:
+        _release_lock_file(_session_coordination_lock_path(root), coordination_fd)
+
+
+def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
+    changed = _check_receipt(root)
+    if changed:
+        print("agentctl: gate blocked because required workflow documents changed:", file=sys.stderr)
+        for problem in changed:
+            print(f"  - {problem}", file=sys.stderr)
+        return 1
     task = args.task
     board = _load_board(root)
     t = board.get("tasks", {}).get(task)
@@ -1630,7 +2069,15 @@ def cmd_gate(args: argparse.Namespace) -> int:
     reviewer_role = str(reviewer_profile.get("role") or "").lower()
     reviewer_task = str(reviewer_session.get("task") or "")
     reviewer_runtime = _runtime_identity()
-    session_runtime = str(reviewer_session.get("runtime_identity") or "")
+    recorded_runtimes = reviewer_session.get("runtime_identities")
+    if not isinstance(recorded_runtimes, list):
+        recorded_runtimes = []
+    session_runtimes = {
+        str(item) for item in recorded_runtimes if str(item).strip()
+    }
+    legacy_session_runtime = str(reviewer_session.get("runtime_identity") or "")
+    if legacy_session_runtime:
+        session_runtimes.add(legacy_session_runtime)
     completion = _extract_section(
         _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"), "## Completion Record",
     )
@@ -1652,7 +2099,7 @@ def cmd_gate(args: argparse.Namespace) -> int:
         review_problems.append("task owner cannot approve or reject their own task")
     if not reviewer_runtime:
         review_problems.append("reviewer host runtime identity is unavailable")
-    elif session_runtime != reviewer_runtime:
+    elif reviewer_runtime not in session_runtimes:
         review_problems.append("active reviewer session is not bound to the current host runtime")
     if not worker_runtimes:
         review_problems.append("worker completion has no host runtime evidence; finish it with the current kit")
@@ -1752,6 +2199,15 @@ def cmd_board(args: argparse.Namespace) -> int:
 
 
 def _task_create(root: Path, args: argparse.Namespace) -> int:
+    lock = _session_coordination_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        return _task_create_unlocked(root, args)
+    finally:
+        _release_lock_file(lock, fd)
+
+
+def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
     task = args.id
     title = args.title or task
     owner = args.owner or ""
@@ -2007,6 +2463,26 @@ def _guidance_acceptance_dir(root: Path) -> Path:
     return common / WORKTREE_LEASES_DIR / GUIDANCE_ACCEPTANCE_DIR
 
 
+def _create_binary_secret(path: Path, payload: bytes) -> bool:
+    """Create one private secret without Windows text-mode byte translation."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        return False
+    try:
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(fd, remaining)
+            if written <= 0:
+                raise OSError("unable to write complete secret")
+            remaining = remaining[written:]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return True
+
+
 def _guidance_signing_key(root: Path, *, create: bool) -> bytes:
     common = _git_common_dir(root)
     if common is None:
@@ -2019,17 +2495,7 @@ def _guidance_signing_key(root: Path, *, create: bool) -> bytes:
             raise ValueError("guidance signing key is unavailable; rerun dispatch from this checkout")
         path.parent.mkdir(parents=True, exist_ok=True)
         generated = secrets.token_bytes(32)
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            key = path.read_bytes()
-        else:
-            try:
-                os.write(fd, generated)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            key = generated
+        key = generated if _create_binary_secret(path, generated) else path.read_bytes()
     except OSError as exc:
         raise ValueError(f"unable to read guidance signing key: {exc}") from exc
     if len(key) < 32:
@@ -3329,8 +3795,6 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
     for other_task, other_entry in (committed_board.get("tasks") or {}).items():
         if other_task == task or other_entry.get("status") not in ACTIVE_STATUSES:
             continue
-        if other_entry.get("owner") in (None, "", agent):
-            continue
         if _scopes_overlap(task_scope, other_entry.get("scope") or []):
             print(
                 f"agentctl: task {task} has a write-scope conflict with {other_task} "
@@ -3790,17 +4254,7 @@ def _eval_signing_key(root: Path, *, create: bool) -> bytes:
             raise ValueError("eval signing key is unavailable; rerun the suite from this policy checkout")
         path.parent.mkdir(parents=True, exist_ok=True)
         generated = secrets.token_bytes(32)
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            key = path.read_bytes()
-        else:
-            try:
-                os.write(fd, generated)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            key = generated
+        key = generated if _create_binary_secret(path, generated) else path.read_bytes()
     except OSError as exc:
         raise ValueError(f"unable to read eval signing key: {exc}") from exc
     if len(key) < 32:
@@ -6308,8 +6762,23 @@ def _scan_secrets_staged(root: Path, files: list) -> list:
     return leaks
 
 
+def _check_git_exclusive(root: Path) -> list[str]:
+    current = _workflow_session_key()
+    blockers = _blocking_session_rows(root, current)
+    if not blockers:
+        return []
+    owners = ", ".join(
+        f"{row.get('workflow_session_key')}:{row.get('task')}"
+        for row in blockers
+    )
+    return [
+        "Git commit/push requires exclusive use of this checkout; "
+        f"other active or stale sessions: {owners}. Use task worktrees or finish/release them."
+    ]
+
+
 def _check_precommit(root: Path) -> list:
-    p = []
+    p = _check_git_exclusive(root)
     st = _load_session(root)
     staged = [f for f in _git(root, "diff", "--cached", "--name-only").splitlines() if f.strip()]
     if staged and not st.get("task"):
@@ -6319,6 +6788,18 @@ def _check_precommit(root: Path) -> list:
         nondoc = [f for f in staged if not (f.startswith(".agent/") or f == "AGENTS.md")]
         if nondoc and not agent_docs:
             p.append("code/data staged but no .agent task/plan/log update staged; run agentctl note.")
+        if st.get("task") and nondoc:
+            scope = st.get("scope") or []
+            outside = sorted(path for path in nondoc if not _path_in_scope(path, scope))
+            if not scope:
+                p.append(
+                    f"active task {st.get('task')} has no bounded write scope for staged code/data"
+                )
+            elif outside:
+                p.append(
+                    f"staged paths outside active task {st.get('task')} scope {scope}: "
+                    + ", ".join(outside)
+                )
     p += _scan_secrets_staged(root, staged)
     return p
 
@@ -6340,14 +6821,14 @@ def _check_commit_msg(root: Path, msg_file: str | None) -> list:
 def _check_prepush(root: Path, commit_range: str | None) -> list:
     if not commit_range:
         return ["pre-push mode requires --commit-range"]
+    p = _check_git_exclusive(root)
     rev_args = [commit_range]
     baseline = _load_json(_adoption_path(root), {}).get("ignore_commits_through")
     if baseline and _git(root, "rev-parse", "--verify", f"{baseline}^{{commit}}").strip():
         rev_args.append(f"^{baseline}")
     log = _git(root, "log", "--format=%H%x1f%s%x1f%b%x1e", *rev_args)
     if not log:
-        return []
-    p = []
+        return p
     tasks = _load_board(root).get("tasks", {})
     seen = set()
     for rec in log.split("\x1e"):
@@ -6651,6 +7132,37 @@ def _doctor_report(root: Path) -> dict:
             "detail": f"active={len(active_worktrees)}, stale={len(stale_worktrees)}",
         })
 
+    session_rows = [row for row in _session_rows_unlocked(root) if _same_checkout(root, row)]
+    active_sessions = [row for row in session_rows if row.get("observed_status") == "active"]
+    stale_sessions = [row for row in session_rows if row.get("observed_status") == "stale"]
+    overlaps = []
+    blocking = active_sessions + stale_sessions
+    for index, left in enumerate(blocking):
+        for right in blocking[index + 1:]:
+            if (left.get("task") == right.get("task")
+                    or not (left.get("scope") or [])
+                    or not (right.get("scope") or [])
+                    or _scopes_overlap(left.get("scope") or [], right.get("scope") or [])):
+                overlaps.append(
+                    f"{left.get('workflow_session_key')}:{left.get('task')} <-> "
+                    f"{right.get('workflow_session_key')}:{right.get('task')}"
+                )
+    if stale_sessions:
+        warnings.append(
+            "stale agent session claim(s): "
+            + ", ".join(str(row.get("workflow_session_key")) for row in stale_sessions)
+        )
+    if overlaps:
+        problems.append("overlapping agent session claims: " + ", ".join(overlaps))
+    checks.append({
+        "name": "agent sessions",
+        "status": "fail" if overlaps else ("warn" if stale_sessions else "ok"),
+        "detail": (
+            f"active={len(active_sessions)}, stale={len(stale_sessions)}, "
+            f"overlaps={len(overlaps)}"
+        ),
+    })
+
     return {
         "root": str(root),
         "ok": not problems,
@@ -6707,6 +7219,216 @@ def cmd_check(args: argparse.Namespace) -> int:
     else:
         print(f"agentctl check ({mode}): OK")
     return 1 if problems else 0
+
+
+def _sessions_list(root: Path, args: argparse.Namespace) -> int:
+    lock = _session_coordination_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        rows = _session_rows_unlocked(root)
+        _render_sessions_view(root, rows)
+    finally:
+        _release_lock_file(lock, fd)
+    public = [_public_session_row(row) for row in rows]
+    if args.json:
+        print(json.dumps({"current": _workflow_session_key(), "sessions": public},
+                         indent=2, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("agentctl: no recorded sessions")
+        return 0
+    current = _workflow_session_key()
+    for row in rows:
+        marker = "*" if (
+            row.get("workflow_session_key") == current and _same_checkout(root, row)
+        ) else " "
+        print(
+            f"{marker} {row.get('workflow_session_key'):<32} "
+            f"{row.get('observed_status'):<9} task={row.get('task') or '-'} "
+            f"agent={row.get('agent') or '-'} scope={','.join(row.get('scope') or []) or '-'}"
+        )
+    print(f"Live view: {WORKFLOW_DIR}/{STATE_DIR}/{SESSION_VIEW_FILE}")
+    return 0
+
+
+def _sessions_heartbeat(root: Path) -> int:
+    lock = _session_coordination_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        st = _load_session(root)
+        if not st.get("task"):
+            print("agentctl: no active session to heartbeat", file=sys.stderr)
+            return 3
+        if st.get("presence_status") == "released":
+            print(
+                "agentctl: this session was released for handoff; run 'agentctl work' "
+                "to reclaim it only if no other conversation owns the task",
+                file=sys.stderr,
+            )
+            return 1
+        session_key = st.get("workflow_session_key") or _workflow_session_key()
+        conflicts = _session_start_conflicts(
+            root, session_key, str(st.get("task")), st.get("scope") or [],
+        )
+        if conflicts:
+            for conflict in conflicts:
+                print(f"agentctl: session heartbeat blocked: {conflict}", file=sys.stderr)
+            return 1
+        _record_runtime_identity(st)
+        _save_session(root, st)
+    finally:
+        _release_lock_file(lock, fd)
+    return 0
+
+
+def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
+    lock = _session_coordination_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        st = _load_session(root)
+        if not st.get("task"):
+            print("agentctl: no active task session for this conversation", file=sys.stderr)
+            return 3
+        if st.get("presence_status") == "released":
+            print(
+                "agentctl: no active task session; this conversation released its claim for handoff",
+                file=sys.stderr,
+            )
+            return 3
+        current_key = st.get("workflow_session_key") or _workflow_session_key()
+        blockers = _blocking_session_rows(root, current_key)
+        prior_peer_snapshot = st.get("peer_snapshot") or ""
+        peer_snapshot = _peer_session_snapshot(blockers)
+        problems = []
+        for other in blockers:
+            if other.get("task") == st.get("task"):
+                problems.append(
+                    f"task {st.get('task')} is owned by session "
+                    f"{other.get('workflow_session_key')} ({other.get('observed_status')})"
+                )
+            elif not (st.get("scope") or []) or not (other.get("scope") or []):
+                problems.append(
+                    f"write scopes cannot be proven disjoint from session "
+                    f"{other.get('workflow_session_key')} task={other.get('task')}"
+                )
+            elif _scopes_overlap(st.get("scope") or [], other.get("scope") or []):
+                problems.append(
+                    f"scope conflicts with session {other.get('workflow_session_key')} "
+                    f"task={other.get('task')} ({other.get('observed_status')})"
+                )
+        if args.git_write and blockers:
+            owners = ", ".join(
+                f"{row.get('workflow_session_key')}:{row.get('task')}"
+                for row in blockers
+            )
+            problems.append(
+                "Git index/HEAD/remote mutation requires an exclusive checkout; "
+                f"other sessions are present: {owners}. Use a task worktree or finish/release them."
+            )
+        claims = []
+        for raw in args.path or []:
+            path, error = _normalize_claim_path(root, raw)
+            if error:
+                problems.append(error)
+                continue
+            if not path:
+                continue
+            if not _path_in_scope(path, st.get("scope") or []):
+                problems.append(
+                    f"path {path} is outside active task scope {st.get('scope') or []}"
+                )
+                continue
+            for other in blockers:
+                for claimed in other.get("claimed_files") or []:
+                    if _scopes_overlap([path], [claimed]):
+                        problems.append(
+                            f"path {path} is claimed by session "
+                            f"{other.get('workflow_session_key')} task={other.get('task')}"
+                        )
+            claims.append(path)
+        if problems:
+            for problem in sorted(set(problems)):
+                print(f"agentctl: session guard blocked: {problem}", file=sys.stderr)
+            return 1
+        existing = {str(item) for item in st.get("claimed_files") or [] if str(item)}
+        existing.update(claims)
+        st["claimed_files"] = sorted(existing)
+        st["last_action"] = "git-write" if args.git_write else "write"
+        st["peer_snapshot"] = peer_snapshot
+        _record_runtime_identity(st)
+        _save_session(root, st)
+        if prior_peer_snapshot and prior_peer_snapshot != peer_snapshot:
+            if blockers:
+                print(_session_awareness(root, current_key))
+            else:
+                print(
+                    "Other active/stale conversations changed; none remain in this checkout.\n"
+                    f"Live view: {WORKFLOW_DIR}/{STATE_DIR}/{SESSION_VIEW_FILE}"
+                )
+        elif not prior_peer_snapshot and blockers:
+            print(_session_awareness(root, current_key))
+    finally:
+        _release_lock_file(lock, fd)
+    return 0
+
+
+def _sessions_release(root: Path, args: argparse.Namespace) -> int:
+    lock = _session_coordination_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        rows = _session_rows_unlocked(root)
+        target = args.session or _workflow_session_key()
+        row = next(
+            (item for item in rows
+             if item.get("workflow_session_key") == target and _same_checkout(root, item)),
+            None,
+        )
+        if not row:
+            print(f"agentctl: session not found: {target}", file=sys.stderr)
+            return 2
+        current = _workflow_session_key()
+        if target != current and row.get("observed_status") == "active":
+            print(
+                f"agentctl: session {target} is active and cannot be released by another conversation",
+                file=sys.stderr,
+            )
+            return 1
+        row.pop("_record_path", None)
+        row.pop("observed_status", None)
+        row.pop("heartbeat_age_seconds", None)
+        row["presence_status"] = "released"
+        row["released_at"] = _now()
+        row["release_reason"] = args.reason
+        row["heartbeat_at"] = _now()
+        row["heartbeat_ns"] = time.time_ns()
+        row["revision"] = int(row.get("revision") or 0) + 1
+        _save_json(_session_path(root, target), row)
+        task_lock = _lock_path(root, str(row.get("task") or ""))
+        lock_record = _load_json(task_lock, {})
+        if lock_record.get("workflow_session_key") == target:
+            try:
+                task_lock.unlink()
+            except FileNotFoundError:
+                pass
+        _render_sessions_view(root)
+    finally:
+        _release_lock_file(lock, fd)
+    print(f"agentctl: released session {target}; task state was preserved for handoff")
+    return 0
+
+
+def cmd_sessions(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    if args.sessions_action == "list":
+        return _sessions_list(root, args)
+    if args.sessions_action == "heartbeat":
+        return _sessions_heartbeat(root)
+    if args.sessions_action == "guard":
+        return _sessions_guard(root, args)
+    if args.sessions_action == "release":
+        return _sessions_release(root, args)
+    print("agentctl: unknown sessions action", file=sys.stderr)
+    return 2
 
 
 def cmd_status(args: argparse.Namespace) -> int:
@@ -7003,6 +7725,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("doctor")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser("sessions")
+    ssub = sp.add_subparsers(dest="sessions_action", required=True)
+    sl = ssub.add_parser("list")
+    sl.add_argument("--json", action="store_true")
+    ssub.add_parser("heartbeat")
+    sg = ssub.add_parser("guard")
+    sg.add_argument("--path", action="append", default=[])
+    sg.add_argument("--git-write", action="store_true")
+    sr = ssub.add_parser("release")
+    sr.add_argument("session", nargs="?")
+    sr.add_argument("--reason", required=True)
+    sp.set_defaults(func=cmd_sessions)
 
     sp = sub.add_parser("status")
     sp.add_argument("--json", action="store_true")

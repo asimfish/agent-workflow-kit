@@ -84,7 +84,7 @@ tools/agent_workflow_hook.py
   handoffs/
   decisions/
   gates/
-  state/          # local only, gitignored
+  state/          # local only, gitignored; includes generated SESSIONS.md
 ```
 
 The installed `.agent/` directory belongs to that project. It is not a global
@@ -112,6 +112,36 @@ The shortest normal prompt remains:
 ```text
 按 .agent 规范开始工作。
 ```
+
+## Multiple Conversations In One Project
+
+You may open several Codex, Claude Code, or Cursor conversations in the same
+project directory and give each one the same short prompt. No session-management
+command is required from the human.
+
+The kit derives a private session key from the client runtime, so a second
+conversation does not silently resume the first conversation's task. Each
+conversation atomically publishes its task, scope, heartbeat, and claimed files
+under the Git common directory. Hooks aggregate that state into the local
+gitignored file `.agent/state/SESSIONS.md`, show it at session start, and refresh
+it during work.
+
+The coordination policy is deliberately small:
+
+- Disjoint task scopes may work concurrently in one checkout.
+- The same task, overlapping scopes, an out-of-scope path, or a file claimed by
+  another session is blocked.
+- Git index, HEAD, branch, merge, and push operations are exclusive per checkout.
+  Parallel commit-producing work should use `agentctl worktree create`.
+- A missing heartbeat marks a session stale but does not discard its claim.
+  After inspection, an agent can explicitly release it and resume the existing
+  task; task docs and working files are preserved.
+- Task/plan/log transitions are serialized with an OS advisory lock, and each
+  session writes only its own atomically replaced JSON record.
+
+Committed `.agent` plans and task docs remain the durable memory. The generated
+session view is only live coordination, avoiding constant Git conflicts in a
+shared Markdown file.
 
 ## Agent Work Cycle
 
