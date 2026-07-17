@@ -643,6 +643,40 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         taskkill.assert_called_once()
         self.assertIn("/T", taskkill.call_args.args[0])
 
+    def test_signing_keys_use_binary_mode_and_preserve_exact_bytes(self):
+        spec = importlib.util.spec_from_file_location(
+            "agentctl_binary_signing_keys", self.root / "tools" / "agentctl.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_open = os.open
+        synthetic_binary_flag = 1 << 29
+        opened_flags = []
+        secrets_to_write = [b"\n" * 32, (b"\r\n\x1a\x00" * 8)[:32]]
+        common_dir = self.root / ".git"
+
+        def binary_open(path, flags, mode):
+            opened_flags.append(flags)
+            return real_open(path, flags & ~synthetic_binary_flag, mode)
+
+        with mock.patch.object(
+                module.os, "O_BINARY", synthetic_binary_flag, create=True), \
+                mock.patch.object(module.os, "open", side_effect=binary_open), \
+                mock.patch.object(module, "_git_common_dir", return_value=common_dir), \
+                mock.patch.object(
+                    module.secrets, "token_bytes", side_effect=secrets_to_write):
+            guidance_key = module._guidance_signing_key(self.root, create=True)
+            eval_key = module._eval_signing_key(self.root, create=True)
+
+        self.assertEqual(guidance_key, secrets_to_write[0])
+        self.assertEqual(eval_key, secrets_to_write[1])
+        self.assertEqual(len(opened_flags), 2)
+        self.assertTrue(all(flags & synthetic_binary_flag for flags in opened_flags))
+        key_dir = common_dir / "agent-workflow"
+        self.assertEqual(
+            (key_dir / "guidance-hmac.key").read_bytes(), secrets_to_write[0])
+        self.assertEqual(
+            (key_dir / "eval-hmac.key").read_bytes(), secrets_to_write[1])
+
     def test_dispatch_refuses_source_session_recursion(self):
         created = self.agentctl(
             "guidance", "create",

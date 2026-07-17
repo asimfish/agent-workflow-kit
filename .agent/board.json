@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-18 02:06:33",
+  "updated_at": "2026-07-18 03:00:04",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -740,6 +740,55 @@
       "deps": [],
       "created_at": "2026-07-18 02:05:38",
       "updated_at": "2026-07-18 02:06:33"
+    },
+    "T-043": {
+      "title": "fix Windows guidance receipt integrity CI",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:16:07",
+      "updated_at": "2026-07-18 02:44:52"
+    },
+    "T-044": {
+      "title": "Review T-043 signing-key binary write",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:33:00",
+      "updated_at": "2026-07-18 02:45:08"
+    },
+    "T-045": {
+      "title": "accept recorded reviewer runtime identities",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:46:26",
+      "updated_at": "2026-07-18 02:59:55"
+    },
+    "T-046": {
+      "title": "T-046 independent review T-045 recorded runtime identities",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:53:42",
+      "updated_at": "2026-07-18 03:00:04"
     }
   }
 }

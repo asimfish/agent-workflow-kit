@@ -265,6 +265,15 @@ class IndependentGateRegressionTest(unittest.TestCase):
             "refresh", runtime="reviewer-runtime", workflow_session="reviewer-session",
         )
         self.agentctl(
+            "refresh", runtime="reviewer-hook-runtime", workflow_session="reviewer-session",
+        )
+        unrecorded = self.agentctl(
+            "gate", "approve", "--task", "T-101", "--by", "supervisor",
+            expect=1, runtime="unrecorded-reviewer-runtime",
+            workflow_session="reviewer-session",
+        )
+        self.assertIn("not bound to the current host runtime", unrecorded.stderr)
+        self.agentctl(
             "gate", "approve", "--task", "T-101", "--by", "supervisor",
             runtime="reviewer-runtime", workflow_session="reviewer-session",
         )

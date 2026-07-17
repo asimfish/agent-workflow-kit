@@ -2069,7 +2069,15 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
     reviewer_role = str(reviewer_profile.get("role") or "").lower()
     reviewer_task = str(reviewer_session.get("task") or "")
     reviewer_runtime = _runtime_identity()
-    session_runtime = str(reviewer_session.get("runtime_identity") or "")
+    recorded_runtimes = reviewer_session.get("runtime_identities")
+    if not isinstance(recorded_runtimes, list):
+        recorded_runtimes = []
+    session_runtimes = {
+        str(item) for item in recorded_runtimes if str(item).strip()
+    }
+    legacy_session_runtime = str(reviewer_session.get("runtime_identity") or "")
+    if legacy_session_runtime:
+        session_runtimes.add(legacy_session_runtime)
     completion = _extract_section(
         _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"), "## Completion Record",
     )
@@ -2091,7 +2099,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
         review_problems.append("task owner cannot approve or reject their own task")
     if not reviewer_runtime:
         review_problems.append("reviewer host runtime identity is unavailable")
-    elif session_runtime != reviewer_runtime:
+    elif reviewer_runtime not in session_runtimes:
         review_problems.append("active reviewer session is not bound to the current host runtime")
     if not worker_runtimes:
         review_problems.append("worker completion has no host runtime evidence; finish it with the current kit")
@@ -2455,6 +2463,26 @@ def _guidance_acceptance_dir(root: Path) -> Path:
     return common / WORKTREE_LEASES_DIR / GUIDANCE_ACCEPTANCE_DIR
 
 
+def _create_binary_secret(path: Path, payload: bytes) -> bool:
+    """Create one private secret without Windows text-mode byte translation."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    try:
+        fd = os.open(path, flags, 0o600)
+    except FileExistsError:
+        return False
+    try:
+        remaining = memoryview(payload)
+        while remaining:
+            written = os.write(fd, remaining)
+            if written <= 0:
+                raise OSError("unable to write complete secret")
+            remaining = remaining[written:]
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+    return True
+
+
 def _guidance_signing_key(root: Path, *, create: bool) -> bytes:
     common = _git_common_dir(root)
     if common is None:
@@ -2467,17 +2495,7 @@ def _guidance_signing_key(root: Path, *, create: bool) -> bytes:
             raise ValueError("guidance signing key is unavailable; rerun dispatch from this checkout")
         path.parent.mkdir(parents=True, exist_ok=True)
         generated = secrets.token_bytes(32)
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            key = path.read_bytes()
-        else:
-            try:
-                os.write(fd, generated)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            key = generated
+        key = generated if _create_binary_secret(path, generated) else path.read_bytes()
     except OSError as exc:
         raise ValueError(f"unable to read guidance signing key: {exc}") from exc
     if len(key) < 32:
@@ -4236,17 +4254,7 @@ def _eval_signing_key(root: Path, *, create: bool) -> bytes:
             raise ValueError("eval signing key is unavailable; rerun the suite from this policy checkout")
         path.parent.mkdir(parents=True, exist_ok=True)
         generated = secrets.token_bytes(32)
-        try:
-            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        except FileExistsError:
-            key = path.read_bytes()
-        else:
-            try:
-                os.write(fd, generated)
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            key = generated
+        key = generated if _create_binary_secret(path, generated) else path.read_bytes()
     except OSError as exc:
         raise ValueError(f"unable to read eval signing key: {exc}") from exc
     if len(key) < 32:

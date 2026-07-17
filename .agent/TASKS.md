@@ -53,3 +53,7 @@
 | T-040 | done | codex | `tools/, tests/, templates/project/, .agent/` | [.agent/tasks/T-040.md](tasks/T-040.md) | close T-038 multi-session review follow-ups |
 | T-041 | review | supervisor | `.agent/` | [.agent/tasks/T-041.md](tasks/T-041.md) | independent review T-040 multi-session follow-up fixes |
 | T-042 | review | codex | `README.md, tools/, tests/, templates/project/, .agent/` | [.agent/tasks/T-042.md](tasks/T-042.md) | package approved multi-session release |
+| T-043 | done | codex | `tools/, tests/, templates/project/, .agent/` | [.agent/tasks/T-043.md](tasks/T-043.md) | fix Windows guidance receipt integrity CI |
+| T-044 | review | supervisor | `.agent/` | [.agent/tasks/T-044.md](tasks/T-044.md) | Review T-043 signing-key binary write |
+| T-045 | done | codex | `tools/, tests/, .agent/` | [.agent/tasks/T-045.md](tasks/T-045.md) | accept recorded reviewer runtime identities |
+| T-046 | review | supervisor | `.agent/` | [.agent/tasks/T-046.md](tasks/T-046.md) | T-046 independent review T-045 recorded runtime identities |
