@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-18 03:18:34",
+  "updated_at": "2026-07-18 03:32:05",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -728,7 +728,7 @@
     },
     "T-042": {
       "title": "package approved multi-session release",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "README.md",
@@ -739,7 +739,7 @@
       ],
       "deps": [],
       "created_at": "2026-07-18 02:05:38",
-      "updated_at": "2026-07-18 02:06:33"
+      "updated_at": "2026-07-18 03:30:29"
     },
     "T-043": {
       "title": "fix Windows guidance receipt integrity CI",
@@ -812,6 +812,28 @@
       "deps": [],
       "created_at": "2026-07-18 03:14:25",
       "updated_at": "2026-07-18 03:18:34"
+    },
+    "T-049": {
+      "title": "reconcile merged multi-session release",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 03:26:21",
+      "updated_at": "2026-07-18 03:31:21"
+    },
+    "T-050": {
+      "title": "independent supervisor reconcile T-049 PR #7 evidence",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 03:29:00",
+      "updated_at": "2026-07-18 03:32:05"
     }
   }
 }
