@@ -36,6 +36,11 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-042 - package approved multi-session release (owner: codex)
+- [ ] T-041 - independent review T-040 multi-session follow-up fixes (owner: supervisor)
+- [x] T-040 - close T-038 multi-session review follow-ups (owner: codex)
+- [ ] T-039 - independent review T-038 multi-session coordination (owner: supervisor)
+- [x] T-038 - coordinate concurrent sessions in one project (owner: codex)
 - [ ] T-037 - remove GitHub reconciliation pagination caps (owner: supervisor)
 - [ ] T-036 - bind GitHub reconciliation authority and compatibility (owner: supervisor)
 - [ ] T-035 - paginate GitHub reconciliation file evidence (owner: supervisor)

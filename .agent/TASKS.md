@@ -48,3 +48,8 @@
 | T-035 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-035.md](tasks/T-035.md) | paginate GitHub reconciliation file evidence |
 | T-036 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-036.md](tasks/T-036.md) | bind GitHub reconciliation authority and compatibility |
 | T-037 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-037.md](tasks/T-037.md) | remove GitHub reconciliation pagination caps |
+| T-038 | done | codex | `tools/, tests/, docs/, README.md, templates/project/, .agent/, integrations/, .codex/, .claude/, .cursor/` | [.agent/tasks/T-038.md](tasks/T-038.md) | coordinate concurrent sessions in one project |
+| T-039 | review | supervisor | `.agent/` | [.agent/tasks/T-039.md](tasks/T-039.md) | independent review T-038 multi-session coordination |
+| T-040 | done | codex | `tools/, tests/, templates/project/, .agent/` | [.agent/tasks/T-040.md](tasks/T-040.md) | close T-038 multi-session review follow-ups |
+| T-041 | review | supervisor | `.agent/` | [.agent/tasks/T-041.md](tasks/T-041.md) | independent review T-040 multi-session follow-up fixes |
+| T-042 | review | codex | `README.md, tools/, tests/, templates/project/, .agent/` | [.agent/tasks/T-042.md](tasks/T-042.md) | package approved multi-session release |
