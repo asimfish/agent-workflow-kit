@@ -36,13 +36,15 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-050 - independent supervisor reconcile T-049 PR #7 evidence (owner: supervisor)
+- [x] T-049 - reconcile merged multi-session release (owner: codex)
 - [ ] T-048 - review T-047 binary signing mock fix (owner: supervisor)
 - [x] T-047 - fix Windows binary signing regression mock (owner: codex)
 - [ ] T-046 - T-046 independent review T-045 recorded runtime identities (owner: supervisor)
 - [x] T-045 - accept recorded reviewer runtime identities (owner: codex)
 - [ ] T-044 - Review T-043 signing-key binary write (owner: supervisor)
 - [x] T-043 - fix Windows guidance receipt integrity CI (owner: codex)
-- [ ] T-042 - package approved multi-session release (owner: codex)
+- [x] T-042 - package approved multi-session release (owner: codex)
 - [ ] T-041 - independent review T-040 multi-session follow-up fixes (owner: supervisor)
 - [x] T-040 - close T-038 multi-session review follow-ups (owner: codex)
 - [ ] T-039 - independent review T-038 multi-session coordination (owner: supervisor)
