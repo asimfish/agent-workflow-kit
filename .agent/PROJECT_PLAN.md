@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-048 - review T-047 binary signing mock fix (owner: supervisor)
+- [x] T-047 - fix Windows binary signing regression mock (owner: codex)
 - [ ] T-046 - T-046 independent review T-045 recorded runtime identities (owner: supervisor)
 - [x] T-045 - accept recorded reviewer runtime identities (owner: codex)
 - [ ] T-044 - Review T-043 signing-key binary write (owner: supervisor)

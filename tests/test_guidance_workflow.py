@@ -649,6 +649,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         real_open = os.open
+        platform_binary_flag = getattr(os, "O_BINARY", 0)
         synthetic_binary_flag = 1 << 29
         opened_flags = []
         secrets_to_write = [b"\n" * 32, (b"\r\n\x1a\x00" * 8)[:32]]
@@ -656,7 +657,8 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
 
         def binary_open(path, flags, mode):
             opened_flags.append(flags)
-            return real_open(path, flags & ~synthetic_binary_flag, mode)
+            host_flags = (flags & ~synthetic_binary_flag) | platform_binary_flag
+            return real_open(path, host_flags, mode)
 
         with mock.patch.object(
                 module.os, "O_BINARY", synthetic_binary_flag, create=True), \

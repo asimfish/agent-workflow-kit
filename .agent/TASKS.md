@@ -57,3 +57,5 @@
 | T-044 | review | supervisor | `.agent/` | [.agent/tasks/T-044.md](tasks/T-044.md) | Review T-043 signing-key binary write |
 | T-045 | done | codex | `tools/, tests/, .agent/` | [.agent/tasks/T-045.md](tasks/T-045.md) | accept recorded reviewer runtime identities |
 | T-046 | review | supervisor | `.agent/` | [.agent/tasks/T-046.md](tasks/T-046.md) | T-046 independent review T-045 recorded runtime identities |
+| T-047 | done | codex | `tests/, .agent/` | [.agent/tasks/T-047.md](tasks/T-047.md) | fix Windows binary signing regression mock |
+| T-048 | review | supervisor | `.agent/` | [.agent/tasks/T-048.md](tasks/T-048.md) | review T-047 binary signing mock fix |
