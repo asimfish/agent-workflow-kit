@@ -204,6 +204,29 @@ The coordination policy is deliberately small:
 - Task/plan/log transitions are serialized with an OS advisory lock, and each
   session writes only its own atomically replaced JSON record.
 
+Document ownership is enforced on top of scopes:
+
+- Controller-generated files — `board.json`, `TASKS.md`, the agent registry,
+  `state/`, the shared progress log, `gates/`, loop runtime/reports, the
+  guidance bus and handoffs, eval runs/decisions/keys, and the install
+  manifest — are never editable through agent tool calls, even when the task
+  scope covers `.agent/`. Each denial names the `agentctl` command that owns
+  the file. Policy definitions (`loops/checkpoints.json`, `evals/suites.json`)
+  remain scope-based.
+- The active task's own document (`.agent/tasks/<id>.md`) is always inside the
+  effective write scope, so a worker scoped to business paths such as
+  `collect/liyufeng_4090/` maintains its contract and stage log without a
+  blanket `.agent/` scope. Scope-conflict checks still use the declared scope.
+- `PROJECT_PLAN.md`, rules, and other tasks' documents follow the declared
+  scope; keep them out of worker scopes so only supervisors or humans edit them.
+
+Read receipts are scope-aware so shared-index churn does not stall the room:
+another task being created or finished rewrites only its own `TASKS.md` row,
+its own plan checklist row, and the plan Change Log, none of which invalidates
+other conversations' receipts. Plan-body edits, rule changes, this task's own
+row, and this task's own document still require re-reading plus
+`agentctl refresh` before further writes.
+
 A full Git clone has a different Git common directory, so it never reads or
 writes the source clone's live session records even when both processes expose
 the same host session ID. Committed plan/task files are only a snapshot across

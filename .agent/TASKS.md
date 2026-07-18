@@ -74,3 +74,10 @@
 | T-061 | done | codex | `tools/, templates/project/tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-061.md](tasks/T-061.md) | close T-060 identity policy review findings |
 | T-062 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T-062.md](tasks/T-062.md) | second independent gate re-review for T-057 T-059 and T-061 |
 | T-063 | review | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-063.md](tasks/T-063.md) | package approved multi-session migration release |
+| T-064 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-064.md](tasks/T-064.md) | enforce document ownership and scope-aware receipts |
+| T-065 | review | supervisor | `.agent/` | [.agent/tasks/T-065.md](tasks/T-065.md) | independently review T-064 document ownership and receipts |
+| T-066 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-066.md](tasks/T-066.md) | extend controller-owned files to registry, bus, handoffs, and eval runs |
+| T-067 | review | supervisor | `.agent/` | [.agent/tasks/T-067.md](tasks/T-067.md) | independently review T-066 ownership inventory extension |
+| T-068 | done | cursor | `tools/, tests/` | [.agent/tasks/T-068.md](tasks/T-068.md) | reject start on unknown task ids |
+| T-069 | review | supervisor | `.agent/` | [.agent/tasks/T-069.md](tasks/T-069.md) | independently review T-065 T-067 T-068 |
+| T-070 | in_progress | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-070.md](tasks/T-070.md) | package document ownership release |
