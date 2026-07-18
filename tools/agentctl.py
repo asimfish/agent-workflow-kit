@@ -59,10 +59,41 @@ SESSION_RUNTIME_DIR = "sessions"
 SESSION_COORDINATION_LOCK = "sessions.lock"
 SESSION_VIEW_FILE = "SESSIONS.md"
 SESSION_STALE_SECONDS = 30 * 60
+SESSION_ID_ENV = "AGENT_WORKFLOW_SESSION_ID"
 SESSION_OWNER_RUNTIME_ENV = "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME"
 SESSION_INSTANCE_ENV = "AGENT_WORKFLOW_SESSION_INSTANCE_ID"
 PARENT_SESSION_KEY_ENV = "AGENT_WORKFLOW_PARENT_SESSION_KEY"
 SESSION_ISOLATION_ERROR_ENV = "AGENT_WORKFLOW_SESSION_ISOLATION_ERROR"
+COMMAND_ACTION_ATTRS = {
+    "task": "task_action",
+    "agents": "agents_action",
+    "handoff": "handoff_action",
+    "worktree": "worktree_action",
+    "eval": "eval_action",
+    "guidance": "guidance_action",
+    "loop": "loop_action",
+    "sessions": "sessions_action",
+}
+IDENTITY_FREE_COMMAND_PATHS = frozenset({
+    ("init",),
+    ("focus",),
+    ("board",),
+    ("task", "show"),
+    ("agents", "list"),
+    ("handoff", "list"),
+    ("handoff", "show"),
+    ("eval", "list"),
+    ("eval", "show"),
+    ("eval", "compare"),
+    ("guidance", "list"),
+    ("guidance", "show"),
+    ("loop", "list"),
+    ("loop", "show"),
+    ("check",),
+    ("migrate",),
+    ("sessions", "list"),
+    ("status",),
+})
 LOCKS_DIR = "locks"
 BOARD_FILE = "board.json"
 AGENTS_FILE = "agents.json"
@@ -303,6 +334,65 @@ def _workflow_session_isolation_error() -> str:
     )
 
 
+def _workflow_session_identity_source() -> str:
+    forced = (os.environ.get("AGENT_WORKFLOW_SESSION_KEY") or "").strip()
+    if forced == "default":
+        return "default"
+    if re.fullmatch(r"session-[0-9a-f]{24}", forced):
+        return "forced_key"
+
+    explicit = (os.environ.get(SESSION_ID_ENV) or "").strip()
+    runtime = _runtime_identity()
+    owner_runtime = (os.environ.get(SESSION_OWNER_RUNTIME_ENV) or "").strip()
+    if explicit and runtime and owner_runtime and owner_runtime != runtime:
+        source = "host_runtime"
+    elif explicit:
+        source = "session_start"
+    elif runtime:
+        source = "host_runtime"
+    elif (os.environ.get("WHALENT_COMPOSER_ID") or "").strip():
+        source = "whalent_composer"
+    elif (os.environ.get("AGENT_SESSION_ID") or "").strip():
+        source = "agent_session"
+    elif (os.environ.get("TERM_SESSION_ID") or "").strip():
+        source = "terminal"
+    else:
+        source = "default"
+    if _workflow_session_instance_key():
+        return "session_instance"
+    return source
+
+
+def _workflow_session_identity_error() -> str:
+    isolation_error = _workflow_session_isolation_error()
+    if isolation_error:
+        return isolation_error
+    source = _workflow_session_identity_source()
+    if source not in {"terminal", "default"}:
+        return ""
+    if source == "terminal":
+        detail = "TERM_SESSION_ID is terminal-scoped and may be shared by multiple agents"
+    else:
+        detail = "the client supplied no conversation, runtime, or SessionStart identity"
+    return (
+        "unique conversation identity is unavailable: " + detail + "; refusing "
+        "to load or mutate task-session state. Restart this conversation so the "
+        "project SessionStart hook runs, then retry"
+    )
+
+
+def _agentctl_command_path(args: argparse.Namespace) -> tuple[str, ...]:
+    command = str(getattr(args, "cmd", "") or "")
+    action_attr = COMMAND_ACTION_ATTRS.get(command)
+    if action_attr:
+        return command, str(getattr(args, action_attr, "") or "")
+    return (command,)
+
+
+def _command_requires_trusted_identity(args: argparse.Namespace) -> bool:
+    return _agentctl_command_path(args) not in IDENTITY_FREE_COMMAND_PATHS
+
+
 def _workflow_session_key() -> str:
     forced = (os.environ.get("AGENT_WORKFLOW_SESSION_KEY") or "").strip()
     if forced == "default" or re.fullmatch(r"session-[0-9a-f]{24}", forced):
@@ -369,7 +459,7 @@ def _session_matches_current_runtime(st: dict, session_key: str) -> bool:
 
 
 def _load_session(root: Path) -> dict:
-    if _workflow_session_isolation_error():
+    if _workflow_session_identity_error():
         return {}
     key = _workflow_session_key()
     path = _session_path(root, key)
@@ -414,6 +504,7 @@ def _save_session(root: Path, st: dict) -> None:
     instance_key = _workflow_session_instance_key()
     if instance_key:
         st["session_instance_key"] = instance_key
+    st["identity_source"] = _workflow_session_identity_source()
     st["checkout"] = str(root.resolve())
     st["branch"] = _git(root, "branch", "--show-current")
     st["heartbeat_at"] = _now()
@@ -1446,9 +1537,9 @@ def _print_focus(root: Path, task: str, agent: str | None = None,
 
 def cmd_work(args: argparse.Namespace) -> int:
     root = _repo_root()
-    isolation_error = _workflow_session_isolation_error()
-    if isolation_error:
-        print(f"agentctl: {isolation_error}", file=sys.stderr)
+    identity_error = _workflow_session_identity_error()
+    if identity_error:
+        print(f"agentctl: {identity_error}", file=sys.stderr)
         return 2
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
     if args.task:
@@ -1552,9 +1643,9 @@ def cmd_work(args: argparse.Namespace) -> int:
 
 def cmd_start(args: argparse.Namespace) -> int:
     root = _repo_root()
-    isolation_error = _workflow_session_isolation_error()
-    if isolation_error:
-        print(f"agentctl: {isolation_error}", file=sys.stderr)
+    identity_error = _workflow_session_identity_error()
+    if identity_error:
+        print(f"agentctl: {identity_error}", file=sys.stderr)
         return 2
     if not (root / WORKFLOW_DIR / PLAN_FILE).is_file():
         print(f"agentctl: missing {WORKFLOW_DIR}/{PLAN_FILE}. run 'agentctl init' first.", file=sys.stderr)
@@ -7053,6 +7144,313 @@ def _doctor_managed_install(root: Path) -> tuple[list[str], list[str], list[dict
     return problems, warnings, checks
 
 
+def _migration_installation_report(root: Path) -> dict:
+    """Report whether this checkout has a complete, current managed install."""
+    problems: list[str] = []
+    warnings: list[str] = []
+    checks: list[dict] = []
+
+    missing = [rel for rel in _doctor_required_paths() if not (root / rel).exists()]
+    if missing:
+        problems.append("missing required files: " + ", ".join(missing))
+    checks.append({
+        "name": "required files",
+        "status": "ok" if not missing else "fail",
+        "detail": (
+            "all required workflow files are present"
+            if not missing else ", ".join(missing)
+        ),
+    })
+
+    if (root / ".git").exists():
+        hooks_path = _git(root, "config", "--get", "core.hooksPath")
+        if hooks_path != ".githooks":
+            problems.append(
+                f"git core.hooksPath is '{hooks_path or '<unset>'}', expected '.githooks'"
+            )
+        checks.append({
+            "name": "git hooks",
+            "status": "ok" if hooks_path == ".githooks" else "fail",
+            "detail": f"core.hooksPath={hooks_path or '<unset>'}",
+        })
+    else:
+        warnings.append("not a Git repository; local Git hooks are not active")
+        checks.append({
+            "name": "git hooks", "status": "warn", "detail": "not a Git repository",
+        })
+
+    install_problems, install_warnings, install_checks = _doctor_managed_install(root)
+    problems.extend(install_problems)
+    warnings.extend(install_warnings)
+    checks.extend(install_checks)
+
+    manifest_path = _install_manifest_path(root)
+    source_checkout = (
+        (root / "templates" / "project").is_dir() and _kit_root() == root
+    )
+    manifest_data = _load_json(manifest_path, {}) if manifest_path.is_file() else {}
+    if source_checkout and not manifest_path.is_file():
+        manifest_state = "source_checkout"
+    elif not manifest_path.is_file():
+        manifest_state = "legacy_missing"
+        problems.append(
+            "installation manifest is missing (legacy install); reinstall from a current kit checkout"
+        )
+    elif not isinstance(manifest_data, dict) or not isinstance(
+            manifest_data.get("managed_files"), dict):
+        manifest_state = "invalid"
+    else:
+        manifest_state = "managed"
+
+    return {
+        "ok": not problems,
+        "manifest": manifest_state,
+        "manifest_version": (
+            manifest_data.get("version") if isinstance(manifest_data, dict) else None
+        ),
+        "problems": problems,
+        "warnings": warnings,
+        "checks": checks,
+    }
+
+
+def _migration_current_record(root: Path) -> tuple[str, dict, str, Path | None, str]:
+    """Locate current and legacy session state without triggering a migration write."""
+    key = _workflow_session_key()
+    identity_error = _workflow_session_identity_error()
+    if identity_error:
+        source = "untrusted_fork" if _workflow_session_isolation_error() else "untrusted_identity"
+        return key, {}, source, None, identity_error
+
+    exact_path = _session_path(root, key)
+    exact = _load_json(exact_path, {})
+    if isinstance(exact, dict) and exact.get("task"):
+        source = "default" if key == "default" else "conversation"
+        return key, exact, source, exact_path, ""
+    if key == "default":
+        return key, {}, "none", None, ""
+
+    shared_path = _legacy_shared_session_path(root, key)
+    shared = _load_json(shared_path, {})
+    if isinstance(shared, dict) and shared.get("task"):
+        legacy_checkout = shared.get("checkout")
+        matches = (
+            (legacy_checkout and _same_checkout(root, shared))
+            or (not legacy_checkout and _session_matches_current_runtime(shared, key))
+        )
+        if matches:
+            return key, shared, "shared_legacy", shared_path, ""
+
+    singleton_path = _session_path(root, "default")
+    singleton = _load_json(singleton_path, {})
+    if (isinstance(singleton, dict) and singleton.get("task")
+            and _session_matches_current_runtime(singleton, key)):
+        return key, singleton, "singleton_legacy", singleton_path, ""
+    return key, {}, "none", None, ""
+
+
+def _migration_changed_documents(root: Path, session: dict, source: str) -> list[str]:
+    if source != "conversation" or not session.get("task"):
+        return []
+    current = _hash_docs(root, session.get("task"))
+    prior = session.get("doc_hashes") or {}
+    return sorted(
+        rel for rel in set(current) | set(prior)
+        if current.get(rel) != prior.get(rel)
+    )
+
+
+def _migration_session_row(row: dict) -> dict:
+    return {
+        key: row.get(key)
+        for key in (
+            "workflow_session_key",
+            "parent_session_key",
+            "identity_source",
+            "observed_status",
+            "task",
+            "agent",
+            "scope",
+            "claimed_files",
+            "branch",
+            "checkout",
+            "heartbeat_at",
+        )
+        if row.get(key) not in (None, "", [])
+    }
+
+
+def _migration_report(root: Path) -> dict:
+    installation = _migration_installation_report(root)
+    key, session, source, record_path, identity_error = _migration_current_record(root)
+    changed_documents = _migration_changed_documents(root, session, source)
+    current_status = _session_observed_status(session) if session else "none"
+
+    rows = [row for row in _session_rows_unlocked(root) if _same_checkout(root, row)]
+    public_rows = [_migration_session_row(row) for row in rows]
+    current_record = str(record_path) if record_path else ""
+    peer_stale = [
+        row for row in rows
+        if row.get("observed_status") == "stale"
+        and str(row.get("_record_path") or "") != current_record
+    ]
+    unknown_peers = [
+        row for row in rows
+        if row.get("observed_status") in {"active", "stale"}
+        and not row.get("identity_source")
+        and str(row.get("_record_path") or "") != current_record
+    ]
+
+    reasons: list[str] = []
+    next_steps: list[str] = []
+    if not installation["ok"]:
+        action = "repair_install"
+        reasons.extend(installation["problems"])
+        next_steps.extend([
+            "From the latest kit checkout, run agentctl init for this project; "
+            "inspect conflicts before using --force-managed.",
+            "Run agentctl migrate again after installation succeeds.",
+        ])
+    elif identity_error:
+        action = "restart"
+        reasons.append(identity_error)
+        next_steps.extend([
+            "Close and reopen this agent conversation in the project so the "
+            "SessionStart hook establishes an isolated identity.",
+            "Run agentctl migrate again before editing.",
+        ])
+    elif unknown_peers:
+        action = "inspect_sessions"
+        owners = ", ".join(
+            f"{row.get('workflow_session_key')}:{row.get('task')}"
+            for row in unknown_peers
+        )
+        reasons.append(
+            "pre-identity session claims require explicit upgrade inspection: " + owners
+        )
+        next_steps.extend([
+            "Inspect each listed task document, working tree, and whether its old "
+            "conversation is still running.",
+            "After the old conversation is closed, release only its verified claim "
+            "with agentctl sessions release <session-key> --reason <verified-reason>.",
+            "Run agentctl migrate again before selecting work.",
+        ])
+    elif peer_stale:
+        action = "inspect_stale"
+        owners = ", ".join(
+            f"{row.get('workflow_session_key')}:{row.get('task')}" for row in peer_stale
+        )
+        reasons.append(f"stale session claims require inspection: {owners}")
+        next_steps.extend([
+            "Run agentctl sessions list and inspect each stale task document and working tree.",
+            "Release a session only after verification, using agentctl sessions "
+            "release <session-key> --reason <verified-reason>.",
+            "Run agentctl migrate again after claims are reconciled.",
+        ])
+    elif source in {"shared_legacy", "singleton_legacy"}:
+        action = "refresh"
+        reasons.append(f"the current task is stored in a {source.replace('_', ' ')} record")
+        next_steps.extend([
+            "Run agentctl status --json once to move the matching legacy record "
+            "to the per-conversation store.",
+            "Re-read the workflow entry, plan, task index, rules, and current task "
+            "document; then run agentctl refresh.",
+            "Run agentctl migrate again before editing.",
+        ])
+    elif session.get("task") and not session.get("identity_source"):
+        action = "refresh"
+        reasons.append("the current pre-upgrade session record lacks identity metadata")
+        next_steps.extend([
+            "Re-read the workflow entry, plan, task index, rules, and current task "
+            "document; then run agentctl refresh to bind the trusted identity source.",
+            "Run agentctl migrate again before editing.",
+        ])
+    elif current_status in {"released", "review", "approved", "done"}:
+        action = "continue"
+        reasons.append(
+            f"the prior conversation record is {current_status}; normal work "
+            "selection must run before editing"
+        )
+        if changed_documents:
+            next_steps.append(
+                "Re-read every path in current_session.changed_documents before selecting work."
+            )
+        next_steps.append(
+            "Run agentctl work --agent <agent-name> to reclaim an eligible task "
+            "or select the next one; do not edit first."
+        )
+    elif current_status == "stale":
+        action = "refresh"
+        reasons.append("the current conversation record has a stale heartbeat")
+        next_steps.extend([
+            "Re-read the workflow entry, plan, task index, rules, and current task "
+            "document; then run agentctl refresh.",
+            "Run agentctl migrate again before editing.",
+        ])
+    elif changed_documents:
+        action = "refresh"
+        reasons.append("project workflow documents changed since this conversation last read them")
+        next_steps.extend([
+            "Re-read every path in current_session.changed_documents, then run agentctl refresh.",
+            "Run agentctl migrate again before editing.",
+        ])
+    else:
+        action = "continue"
+        reasons.append("the managed installation and current conversation state are compatible")
+        if session.get("task"):
+            next_steps.append(
+                f"Continue task {session.get('task')}; normal scope, hook, test, "
+                "and gate checks remain authoritative."
+            )
+        else:
+            next_steps.append(
+                "Read the project workflow documents and run agentctl work --agent "
+                "<agent-name> to claim or create a task."
+            )
+
+    categorized = {
+        status: [row for row in public_rows if row.get("observed_status") == status]
+        for status in ("active", "stale", "released")
+    }
+    categorized["other"] = [
+        row for row in public_rows
+        if row.get("observed_status") not in {"active", "stale", "released"}
+    ]
+    return {
+        "schema_version": 1,
+        "root": str(root),
+        "ok": action == "continue",
+        "action": action,
+        "installation": installation,
+        "current_session": {
+            "key": key,
+            "source": source,
+            "task": session.get("task") or None,
+            "agent": session.get("agent") or None,
+            "identity_source": session.get("identity_source") or None,
+            "status": current_status,
+            "changed_documents": changed_documents,
+        },
+        "sessions": categorized,
+        "reasons": reasons,
+        "next_steps": next_steps,
+    }
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    report = _migration_report(_repo_root())
+    if args.json:
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+    else:
+        print(f"agentctl migrate: {report['action'].upper()}")
+        for reason in report["reasons"]:
+            print(f"  - {reason}")
+        print("Next:")
+        for index, step in enumerate(report["next_steps"], start=1):
+            print(f"  {index}. {step}")
+    return 0 if report["ok"] else 1
+
+
 def _doctor_report(root: Path) -> dict:
     problems: list[str] = []
     warnings: list[str] = []
@@ -7300,13 +7698,16 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def _sessions_list(root: Path, args: argparse.Namespace) -> int:
-    lock = _session_coordination_lock_path(root)
-    fd = _acquire_lock_file(lock)
-    try:
+    if _workflow_session_identity_error():
         rows = _session_rows_unlocked(root)
-        _render_sessions_view(root, rows)
-    finally:
-        _release_lock_file(lock, fd)
+    else:
+        lock = _session_coordination_lock_path(root)
+        fd = _acquire_lock_file(lock)
+        try:
+            rows = _session_rows_unlocked(root)
+            _render_sessions_view(root, rows)
+        finally:
+            _release_lock_file(lock, fd)
     public = [_public_session_row(row) for row in rows]
     if args.json:
         print(json.dumps({"current": _workflow_session_key(), "sessions": public},
@@ -7499,6 +7900,10 @@ def cmd_sessions(args: argparse.Namespace) -> int:
     root = _repo_root()
     if args.sessions_action == "list":
         return _sessions_list(root, args)
+    identity_error = _workflow_session_identity_error()
+    if identity_error:
+        print(f"agentctl: {identity_error}", file=sys.stderr)
+        return 2
     if args.sessions_action == "heartbeat":
         return _sessions_heartbeat(root)
     if args.sessions_action == "guard":
@@ -7804,6 +8209,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_doctor)
 
+    sp = sub.add_parser("migrate")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_migrate)
+
     sp = sub.add_parser("sessions")
     ssub = sp.add_subparsers(dest="sessions_action", required=True)
     sl = ssub.add_parser("list")
@@ -7826,6 +8235,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if _command_requires_trusted_identity(args):
+        identity_error = _workflow_session_identity_error()
+        if identity_error:
+            print(f"agentctl: {identity_error}", file=sys.stderr)
+            return 2
     return args.func(args)
 
 

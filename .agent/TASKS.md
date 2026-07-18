@@ -67,3 +67,10 @@
 | T-054 | review | supervisor | `.agent/` | [.agent/tasks/T-054.md](tasks/T-054.md) | independently re-review fork isolation fixes |
 | T-055 | done | codex | `tools/, templates/project/tools/, tests/, .agent/` | [.agent/tasks/T-055.md](tasks/T-055.md) | prevent fork fallback to parent controller session |
 | T-056 | review | supervisor | `.agent/` | [.agent/tasks/T-056.md](tasks/T-056.md) | independently verify controller fork fail closed |
+| T-057 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-057.md](tasks/T-057.md) | migrate legacy workflow sessions |
+| T-058 | review | supervisor | `.agent/` | [.agent/tasks/T-058.md](tasks/T-058.md) | independently review T-057 legacy session migration |
+| T-059 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-059.md](tasks/T-059.md) | close T-058 terminal mutation identity gap |
+| T-060 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-060.md](tasks/T-060.md) | independent gate review for T-057 and T-059 |
+| T-061 | done | codex | `tools/, templates/project/tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-061.md](tasks/T-061.md) | close T-060 identity policy review findings |
+| T-062 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T-062.md](tasks/T-062.md) | second independent gate re-review for T-057 T-059 and T-061 |
+| T-063 | review | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-063.md](tasks/T-063.md) | package approved multi-session migration release |

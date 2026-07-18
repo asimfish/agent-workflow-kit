@@ -37,6 +37,36 @@
       ],
       "model": "",
       "reasoning_effort": ""
+    },
+    "independent-reviewer": {
+      "role": "independent review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [
+        "agentctl gate",
+        "agentctl note",
+        "agentctl finish"
+      ],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
+    },
+    "independent-reviewer-2": {
+      "role": "independent review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [
+        "agentctl gate",
+        "agentctl note",
+        "agentctl finish"
+      ],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

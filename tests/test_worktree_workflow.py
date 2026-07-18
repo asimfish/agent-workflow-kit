@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 KIT = Path(__file__).resolve().parents[1]
@@ -24,6 +25,11 @@ def path_is_relative_to(path, parent):
 
 class WorktreeWorkflowRegressionTest(unittest.TestCase):
     def setUp(self):
+        identity = mock.patch.dict(
+            os.environ, {"AGENT_WORKFLOW_SESSION_ID": "worktree-regression-session"},
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
         self.temp = Path(tempfile.mkdtemp(prefix="awk-worktree-regress-"))
         self.addCleanup(shutil.rmtree, self.temp, ignore_errors=True)
         self.root = self.temp / "project"

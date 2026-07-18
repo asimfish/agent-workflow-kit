@@ -58,6 +58,62 @@ kit-managed files when appropriate:
 python3 tools/agentctl.py init /path/to/your/project --force-managed
 ```
 
+### Upgrade Existing Projects And Sessions
+
+Give one agent this instruction from the target project:
+
+```text
+Upgrade this project's Agent Workflow Kit from https://github.com/asimfish/super_project.git.
+Preserve project-owned .agent plans and task history, run agentctl migrate, and
+follow its action until it returns continue. Never auto-release another session.
+```
+
+The agent reruns the same idempotent `init`, then uses the installed read-only
+`migrate` audit. Other conversations do not need manual command sequences. The
+updated managed `AGENTS.md` block makes them audit their state before resuming.
+
+For conversations that are already open when the upgrade happens, use this
+one-time transition:
+
+1. Stop editing in every old conversation and let one agent finish the upgrade.
+2. Close each old conversation and reopen it in the same project. This reruns the
+   new `SessionStart` hook and gives that conversation an identity that is not
+   shared with another agent in the same terminal.
+3. Tell each reopened agent only `按 .agent 规范开始工作。` The agent runs
+   `migrate`, follows the reported action, and then claims or resumes work.
+
+Do not keep an old-kit conversation writing while new-kit conversations are
+active in the same checkout. Reopening is required only for this transition;
+normal future conversations receive an isolated identity automatically.
+
+| Action | Agent behavior |
+|---|---|
+| `continue` | Start or resume normal `.agent` work. |
+| `refresh` | Read the named workflow/task documents, run `refresh`, and audit again. Matching legacy singleton state is first moved by `status`. |
+| `restart` | Reopen the conversation so `SessionStart` establishes a trusted identity, then audit again. |
+| `inspect_sessions` | Inspect pre-upgrade claims whose identity is unknown; release only a verified closed conversation, then audit again. |
+| `inspect_stale` | Inspect the recorded task and working tree; release only after explicit verification. |
+| `repair_install` | Rerun `init` from the latest kit, resolving managed-file conflicts without overwriting project state. |
+
+`migrate` does not download code, edit task state, refresh receipts, or release
+claims. An already-running process cannot receive a new `SessionStart` identity;
+that is the only case where reopening the conversation is required.
+
+On Codex, Claude Code, and Cursor integrations that invoke the installed
+`SessionStart` hook, a missing provider conversation ID is replaced by a fresh
+workflow ID for that startup. A terminal-only or default identity is never
+accepted for controller mutations after bootstrap. The explicit exception is
+`init`, which must be able to install or repair the hooks that establish an
+identity; its existing merge/conflict checks remain authoritative. The
+controller defaults every other command to identity-required, with a small
+audited read-only allowlist, and the pre-tool hook applies the same policy to
+script-path and `python -m tools.agentctl` shell commands. When identity is not
+trusted, read-only `sessions list` scans atomic records without creating a lock
+or refreshing `.agent/state/SESSIONS.md`; a trusted SessionStart or normal work
+cycle refreshes that generated view later. Two agents therefore cannot silently
+fall back to one terminal ID, including through low-level commands such as
+`task create`.
+
 ## What It Installs
 
 The target project gets a local `.agent/` system plus hooks and controller files:
@@ -582,6 +638,7 @@ agentctl loop status|resume|stop                    inspect or control the lates
 agentctl board [--json]                             show board
 agentctl check --mode manual|pre-commit|commit-msg|pre-push|ci
 agentctl doctor [--json]                            diagnose installed workflow health
+agentctl migrate [--json]                           audit an upgraded/older session transition
 ```
 
 ## Diagnostics
@@ -598,6 +655,10 @@ runtime state, managed worktree leases, and the same base conditions as
 `agentctl check --mode manual`.
 It exits nonzero when a real workflow problem needs attention.
 
+After an upgrade, `migrate` narrows installation, identity, document receipt,
+and stale-session state into one required action. It exits zero only for
+`continue`, so an agent can close the transition loop without guessing.
+
 ## Regression Tests
 
 ```bash
@@ -607,8 +668,9 @@ python3 -m unittest discover -s tests
 The regression tests install the kit into fresh temporary Git projects. They
 replay feedback escalation, failure budgets, cooperative stop, safe and
 unknown-result orphan recovery, launch handshakes, one-shot/cycle mutual
-exclusion, descendant cleanup, non-destructive Windows PID checks, and supervisor
-guidance, managed worktree allocation, and harness evaluation: Fable-style plan creation,
+exclusion, descendant cleanup, non-destructive Windows PID checks,
+legacy-session migration classification, supervisor guidance, managed worktree
+allocation, and harness evaluation: Fable-style plan creation,
 Codex work-start surfacing, finish blocking until acknowledgement, and successful
 completion after `guidance ack`, supervisor rejection of transport-only success,
 signed acceptance of evidence-complete turns, tampered-receipt rejection, plus

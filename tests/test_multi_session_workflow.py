@@ -194,6 +194,283 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             "cursor-conversation-2",
         )
 
+    def test_same_terminal_session_starts_generate_distinct_workflow_identities(self):
+        shared_terminal = self.bare_env()
+        shared_terminal["TERM_SESSION_ID"] = "shared-terminal-window"
+        exports = []
+        for _index in range(2):
+            started = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+                cwd=self.root,
+                env=shared_terminal,
+                input=json.dumps({"source": "startup"}),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            exports.append(json.loads(started.stdout)["env"])
+
+        first_id = exports[0]["AGENT_WORKFLOW_SESSION_ID"]
+        second_id = exports[1]["AGENT_WORKFLOW_SESSION_ID"]
+        self.assertTrue(first_id)
+        self.assertTrue(second_id)
+        self.assertNotEqual(first_id, second_id)
+
+        first_env = shared_terminal.copy()
+        first_env.update(exports[0])
+        second_env = shared_terminal.copy()
+        second_env.update(exports[1])
+        self.agentctl_env(
+            first_env, "work", "--agent", "codex", "--auto-create",
+            "--new-id", "T-190", "--title", "first terminal conversation",
+            "--scope", "src/terminal-one/",
+        )
+        self.agentctl_env(
+            second_env, "work", "--agent", "codex", "--auto-create",
+            "--new-id", "T-191", "--title", "second terminal conversation",
+            "--scope", "src/terminal-two/",
+        )
+        first = json.loads(
+            self.agentctl_env(first_env, "status", "--json").stdout
+        )
+        second = json.loads(
+            self.agentctl_env(second_env, "status", "--json").stdout
+        )
+        self.assertEqual(first["task"], "T-190")
+        self.assertEqual(second["task"], "T-191")
+        self.assertNotEqual(first["workflow_session_key"], second["workflow_session_key"])
+        self.assertEqual(first["identity_source"], "session_start")
+        self.assertEqual(second["identity_source"], "session_start")
+
+    def test_terminal_only_identity_blocks_direct_and_hook_mutations(self):
+        terminal_only = self.bare_env()
+        terminal_only["TERM_SESSION_ID"] = "shared-terminal-window"
+
+        direct = self.agentctl_env(
+            terminal_only, "work", "--agent", "codex", "--auto-create",
+            "--new-id", "T-192", "--title", "unsafe terminal fallback",
+            "--scope", "src/unsafe/", expect=2,
+        )
+        self.assertIn("unique conversation identity", direct.stderr)
+
+        hooked = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=terminal_only,
+            input=json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": "python3 tools/agentctl.py work --agent codex",
+                },
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(hooked.returncode, 0, hooked.stderr)
+        decision = json.loads(hooked.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("unique conversation identity", decision["reason"])
+
+    def test_terminal_only_identity_blocks_non_session_controller_mutations(self):
+        terminal_only = self.bare_env()
+        terminal_only["TERM_SESSION_ID"] = "shared-terminal-window"
+
+        direct = self.agentctl_env(
+            terminal_only, "task", "create", "--id", "T-193",
+            "--title", "unsafe global mutation", "--owner", "codex",
+            "--scope", "src/unsafe-global/", expect=2,
+        )
+        self.assertIn("unique conversation identity", direct.stderr)
+        self.assertFalse((self.root / ".agent" / "tasks" / "T-193.md").exists())
+
+        hooked = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=terminal_only,
+            input=json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": (
+                        "python3 tools/agentctl.py task create --id T-193 "
+                        "--title unsafe --owner codex --scope src/unsafe-global/"
+                    ),
+                },
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(hooked.returncode, 0, hooked.stderr)
+        decision = json.loads(hooked.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("unique workflow identity", decision["reason"])
+
+        module_hook = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=terminal_only,
+            input=json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": (
+                        "python3 -m tools.agentctl task create --id T-194 "
+                        "--title unsafe --owner codex --scope src/unsafe-module/"
+                    ),
+                },
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(module_hook.returncode, 0, module_hook.stderr)
+        module_decision = json.loads(module_hook.stdout)
+        self.assertEqual(module_decision["decision"], "block")
+        self.assertIn("unique workflow identity", module_decision["reason"])
+
+        module_direct = subprocess.run(
+            [
+                sys.executable, "-m", "tools.agentctl", "task", "create",
+                "--id", "T-194", "--title", "unsafe module mutation",
+                "--owner", "codex", "--scope", "src/unsafe-module/",
+            ],
+            cwd=self.root,
+            env=terminal_only,
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(module_direct.returncode, 2, module_direct.stdout + module_direct.stderr)
+        self.assertIn("unique conversation identity", module_direct.stderr)
+        self.assertFalse((self.root / ".agent" / "tasks" / "T-194.md").exists())
+
+        shown = self.agentctl_env(terminal_only, "task", "show", "T-000")
+        self.assertIn("T-000", shown.stdout)
+        audited = self.agentctl_env(
+            terminal_only, "migrate", "--json", expect=1,
+        )
+        self.assertEqual(json.loads(audited.stdout)["action"], "restart")
+
+    def test_terminal_only_sessions_list_does_not_write_generated_state(self):
+        terminal_only = self.bare_env()
+        terminal_only["TERM_SESSION_ID"] = "shared-terminal-window"
+        view = self.root / ".agent" / "state" / "SESSIONS.md"
+        common_dir = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout.strip()
+        common_path = Path(common_dir)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        lock = common_path.resolve() / "agent-workflow" / "sessions.lock"
+        view.unlink(missing_ok=True)
+        lock.unlink(missing_ok=True)
+
+        listed = self.agentctl_env(terminal_only, "sessions", "list", "--json")
+
+        self.assertEqual(json.loads(listed.stdout)["sessions"], [])
+        self.assertFalse(view.exists())
+        self.assertFalse(lock.exists())
+
+        trusted = self.env("trusted-list-conversation")
+        self.agentctl_env(trusted, "sessions", "list", "--json")
+        self.assertTrue(view.is_file())
+        self.assertTrue(lock.is_file())
+
+    def test_identity_policy_covers_every_controller_command_leaf(self):
+        import argparse
+        from tools import agent_workflow_hook as workflow_hook
+        from tools import agentctl
+
+        def leaf_paths(parser, prefix=()):
+            action = next(
+                (
+                    item for item in parser._actions
+                    if isinstance(item, argparse._SubParsersAction)
+                ),
+                None,
+            )
+            if action is None:
+                return {prefix}
+            paths = set()
+            for name, child in action.choices.items():
+                paths.update(leaf_paths(child, prefix + (name,)))
+            return paths
+
+        expected = {
+            ("init",), ("work",), ("start",), ("focus",), ("progress",),
+            ("note",), ("complete",), ("finish",), ("gate",), ("refresh",),
+            ("board",), ("task", "create"), ("task", "show"),
+            ("agents", "add"), ("agents", "list"),
+            ("handoff", "create"), ("handoff", "list"),
+            ("handoff", "show"), ("handoff", "mark"),
+            ("worktree", "create"), ("worktree", "list"),
+            ("worktree", "release"), ("eval", "list"), ("eval", "run"),
+            ("eval", "show"), ("eval", "compare"), ("eval", "gate"),
+            ("guidance", "create"), ("guidance", "list"),
+            ("guidance", "show"), ("guidance", "ack"),
+            ("guidance", "dispatch"), ("guidance", "verify"),
+            ("loop", "list"), ("loop", "show"), ("loop", "run"),
+            ("loop", "auto"), ("loop", "cycle"), ("loop", "status"),
+            ("loop", "resume"), ("loop", "stop"), ("check",),
+            ("doctor",), ("migrate",), ("sessions", "list"),
+            ("sessions", "heartbeat"), ("sessions", "guard"),
+            ("sessions", "release"), ("status",),
+        }
+        discovered = leaf_paths(agentctl.build_parser())
+        self.assertEqual(discovered, expected)
+        self.assertEqual(
+            agentctl.IDENTITY_FREE_COMMAND_PATHS,
+            workflow_hook.IDENTITY_FREE_COMMAND_PATHS,
+        )
+        self.assertLessEqual(agentctl.IDENTITY_FREE_COMMAND_PATHS, discovered)
+
+        for path in sorted(discovered):
+            namespace = argparse.Namespace(cmd=path[0])
+            action_attr = agentctl.COMMAND_ACTION_ATTRS.get(path[0])
+            if action_attr:
+                setattr(namespace, action_attr, path[1])
+            expected_required = path not in agentctl.IDENTITY_FREE_COMMAND_PATHS
+            self.assertEqual(
+                agentctl._command_requires_trusted_identity(namespace),
+                expected_required,
+                path,
+            )
+            command = "python3 tools/agentctl.py " + " ".join(path)
+            self.assertEqual(
+                workflow_hook.command_requires_agentctl_identity(command),
+                expected_required,
+                path,
+            )
+            module_command = "python3 -m tools.agentctl " + " ".join(path)
+            self.assertEqual(
+                workflow_hook.command_requires_agentctl_identity(module_command),
+                expected_required,
+                ("module", *path),
+            )
+
+        self.assertTrue(
+            workflow_hook.command_requires_agentctl_identity(
+                "python3 -m tools.agentctl"
+            )
+        )
+        self.assertFalse(
+            workflow_hook.command_requires_agentctl_identity(
+                "python3 -m tools.agentctl --help"
+            )
+        )
+
+        chained = (
+            "python3 tools/agentctl.py task show T-000 && "
+            "python3 tools/agentctl.py task create --id T-999"
+        )
+        self.assertTrue(workflow_hook.command_requires_agentctl_identity(chained))
+
     def test_fork_inheriting_parent_workflow_id_uses_child_runtime(self):
         parent_env = self.bare_env()
         parent_env.update({

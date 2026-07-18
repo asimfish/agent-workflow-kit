@@ -52,6 +52,29 @@ SESSION_EXPORT_ENV_NAMES = (
     PARENT_SESSION_KEY_ENV,
     SESSION_ISOLATION_ERROR_ENV,
 )
+AGENTCTL_ACTION_COMMANDS = frozenset({
+    "task", "agents", "handoff", "worktree", "eval", "guidance", "loop", "sessions",
+})
+IDENTITY_FREE_COMMAND_PATHS = frozenset({
+    ("init",),
+    ("focus",),
+    ("board",),
+    ("task", "show"),
+    ("agents", "list"),
+    ("handoff", "list"),
+    ("handoff", "show"),
+    ("eval", "list"),
+    ("eval", "show"),
+    ("eval", "compare"),
+    ("guidance", "list"),
+    ("guidance", "show"),
+    ("loop", "list"),
+    ("loop", "show"),
+    ("check",),
+    ("migrate",),
+    ("sessions", "list"),
+    ("status",),
+})
 
 
 def run(cmd: list[str], cwd: Path, env: dict | None = None) -> subprocess.CompletedProcess[str]:
@@ -176,6 +199,44 @@ def _host_runtime_identity(env: dict) -> str:
     return f"host-runtime:{digest[:32]}"
 
 
+def _session_identity_source(env: dict) -> str:
+    forced = str(env.get("AGENT_WORKFLOW_SESSION_KEY") or "").strip()
+    if forced == "default":
+        return "default"
+    if re.fullmatch(r"session-[0-9a-f]{24}", forced):
+        return "forced_key"
+    if str(env.get(SESSION_ID_ENV) or "").strip():
+        return "session_start"
+    if _host_runtime_identity(env):
+        return "host_runtime"
+    if str(env.get("WHALENT_COMPOSER_ID") or "").strip():
+        return "whalent_composer"
+    if str(env.get("AGENT_SESSION_ID") or "").strip():
+        return "agent_session"
+    if str(env.get(SESSION_INSTANCE_ENV) or "").strip():
+        return "session_instance"
+    if str(env.get("TERM_SESSION_ID") or "").strip():
+        return "terminal"
+    return "default"
+
+
+def session_identity_error(env: dict) -> str:
+    isolation_error = str(env.get(SESSION_ISOLATION_ERROR_ENV) or "").strip()
+    if isolation_error:
+        return isolation_error
+    source = _session_identity_source(env)
+    if source not in {"terminal", "default"}:
+        return ""
+    if source == "terminal":
+        detail = "TERM_SESSION_ID is terminal-scoped and may be shared by multiple agents"
+    else:
+        detail = "the client supplied no conversation, runtime, or SessionStart identity"
+    return (
+        "unique conversation identity is unavailable: " + detail + "; restart "
+        "this conversation so the project SessionStart hook can establish one"
+    )
+
+
 def _payload_is_fork(payload: dict, parent_id: str) -> bool:
     source = str(payload.get("source") or payload.get("reason") or "").strip().lower()
     return bool(parent_id or source in {"fork", "forked", "clone", "cloned", "branch"})
@@ -201,6 +262,17 @@ def hook_environment(payload: dict, *, create_fork_instance: bool = False) -> di
         forked and session_id and inherited_id and session_id == inherited_id
         and not inherited_owner
     )
+
+    if (create_fork_instance and not forked and not session_id and not inherited_id
+            and _session_identity_source(env) in {"terminal", "default"}):
+        transcript_path = str(
+            payload.get("transcript_path") or payload.get("transcriptPath") or ""
+        ).strip()
+        seed = (
+            f"transcript_path={transcript_path}"
+            if transcript_path else f"generated={secrets.token_hex(24)}"
+        )
+        session_id = _private_identity_key("generated", seed)
 
     instance_key = payload_session_instance_key(payload)
     inherited_instance = str(env.get(SESSION_INSTANCE_ENV) or "").strip()
@@ -244,7 +316,8 @@ def hook_environment(payload: dict, *, create_fork_instance: bool = False) -> di
         env[SESSION_ID_ENV] = ""
         env[SESSION_OWNER_RUNTIME_ENV] = ""
         env[SESSION_ISOLATION_ERROR_ENV] = (
-            "forked conversation instance is missing or untrusted; "
+            "forked conversation must use an identity distinct from its parent; "
+            "its instance is missing or untrusted; "
             "restart the session so SessionStart can establish an isolated instance"
         )
     elif SESSION_ISOLATION_ERROR_ENV in env:
@@ -314,8 +387,64 @@ def check_manual(root: Path, env: dict) -> tuple[bool, str]:
     return False, (result.stderr or result.stdout).strip()
 
 
+def _agentctl_command_paths(command: str) -> list[tuple[str, ...]]:
+    if "agentctl" not in command:
+        return []
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return [("__unparseable__",)]
+
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token in {";", "&&", "||", "|", "&"}:
+            if current:
+                segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+
+    paths: list[tuple[str, ...]] = []
+    for segment in segments:
+        for index, token in enumerate(segment):
+            file_invocation = Path(token).name in {"agentctl", "agentctl.py"}
+            module_invocation = (
+                index > 0
+                and segment[index - 1] == "-m"
+                and token.rsplit(".", 1)[-1] == "agentctl"
+            )
+            if not (file_invocation or module_invocation):
+                continue
+            trailing = segment[index + 1:]
+            if any(item in {"-h", "--help"} for item in trailing):
+                continue
+            words = [item for item in trailing if item and not item.startswith("-")]
+            if not words:
+                paths.append(("__unclassified__",))
+                continue
+            command_name = words[0]
+            if command_name in AGENTCTL_ACTION_COMMANDS:
+                action = words[1] if len(words) > 1 else ""
+                paths.append((command_name, action))
+            else:
+                paths.append((command_name,))
+    return paths
+
+
 def command_is_agentctl_start(command: str) -> bool:
-    return "agentctl.py" in command and re.search(r"\b(?:start|work)\b", command) is not None
+    return any(path in {("start",), ("work",)} for path in _agentctl_command_paths(command))
+
+
+def command_requires_agentctl_identity(command: str) -> bool:
+    return any(
+        path not in IDENTITY_FREE_COMMAND_PATHS
+        for path in _agentctl_command_paths(command)
+    )
 
 
 def payload_command(payload: dict) -> str:
@@ -553,14 +682,14 @@ def pre_tool_use() -> int:
         return 0
     payload = read_input()
     env = hook_environment(payload)
-    isolation_error = str(env.get(SESSION_ISOLATION_ERROR_ENV) or "").strip()
+    identity_error = session_identity_error(env)
     mutating = is_mutating_tool(payload)
-    startup_command = command_is_agentctl_start(payload_command(payload))
-    if isolation_error and (mutating or startup_command):
+    controller_mutation = command_requires_agentctl_identity(payload_command(payload))
+    if identity_error and (mutating or controller_mutation):
         return block(
             "PreToolUse",
-            "Agent Workflow Kit blocked this action because the forked conversation "
-            "does not have an identity distinct from its parent. " + isolation_error + ".",
+            "Agent Workflow Kit blocked this action because this conversation does "
+            "not have a unique workflow identity. " + identity_error + ".",
         )
     active = has_session(root, env)
     if not mutating:

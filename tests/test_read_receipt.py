@@ -1,12 +1,14 @@
 """Regression coverage for mandatory workflow-document read receipts."""
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 KIT = Path(__file__).resolve().parents[1]
@@ -14,6 +16,11 @@ KIT = Path(__file__).resolve().parents[1]
 
 class ReadReceiptRegressionTest(unittest.TestCase):
     def setUp(self):
+        identity = mock.patch.dict(
+            os.environ, {"AGENT_WORKFLOW_SESSION_ID": "receipt-regression-session"},
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
         self.root = Path(tempfile.mkdtemp(prefix="awk-receipt-regress-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         git = subprocess.run(

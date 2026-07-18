@@ -52,6 +52,7 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         env = os.environ.copy()
         for name in IDENTITY_ENV:
             env.pop(name, None)
+        env["AGENT_WORKFLOW_SESSION_ID"] = "install-hook-session"
         return env
 
     def agentctl(self, *args, expect=0):
@@ -339,6 +340,7 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         self.env = os.environ.copy()
         for name in IDENTITY_ENV:
             self.env.pop(name, None)
+        self.env["AGENT_WORKFLOW_SESSION_ID"] = "github-gate-session"
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir()
         if os.name == "nt":

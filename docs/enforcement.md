@@ -80,6 +80,9 @@ instance; later mutating hooks block when that instance was not propagated.
   timestamps in `.agent/gates/`; it does not merge a PR.
 - `board` / `task` / `agents` — machine-readable task board, task scaffolding, agent registry.
 - `refresh` — re-record doc hashes after the plan/rules/task docs changed.
+- `migrate` — read-only post-upgrade audit that classifies install health,
+  current/legacy identity, document receipts, and stale session claims. It never
+  refreshes receipts or releases claims itself.
 
 `start`, `progress`, and `complete` remain available as low-level equivalents for
 debugging and scripted migrations.
@@ -129,3 +132,26 @@ operator acknowledgement to replace those managed files after inspection.
 Provider hook upgrades remove only the managed command node, preserving custom
 commands that share the same matcher. `doctor` compares the effective matcher,
 command, timeout, and fail-closed fields against the installed contract.
+
+After an upgrade, an older conversation runs `agentctl migrate` before editing.
+The audit returns `continue`, `refresh`, `restart`, `inspect_sessions`,
+`inspect_stale`, or `repair_install` and exits nonzero until the transition is
+resolved. `inspect_sessions` covers active or stale pre-upgrade claims that do
+not carry trustworthy identity-source metadata; they are never inherited or
+released automatically. Only a missing trusted `SessionStart` identity requires
+reopening the conversation. Project-owned plans, task history, and stale claims
+are not modified by the audit.
+
+If a provider does not expose a unique conversation ID, each normal
+`SessionStart` generates one and exports it to later hook/controller calls.
+Terminal-only and default identities are rejected for every controller command
+except an audited read-only allowlist and the `init` bootstrap needed to install
+the hook itself. The dispatcher defaults new commands to identity-required; the
+PreToolUse shell classifier carries the same allowlist for script-path and
+`python -m tools.agentctl` invocations, and a regression test enumerates every
+argparse command leaf in both forms. Under an untrusted identity, `sessions
+list` reads atomic records without taking the coordination lock or regenerating
+the local Markdown view, keeping the diagnostic allowlist write-free. This
+prevents separate agents launched under one terminal or service process from
+sharing state through either normal session commands or lower-level mutations
+such as `task create`.

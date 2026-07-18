@@ -62,6 +62,11 @@ $ {command}
 
 class LoopWorkflowRegressionTest(unittest.TestCase):
     def setUp(self):
+        identity = mock.patch.dict(
+            os.environ, {"AGENT_WORKFLOW_SESSION_ID": "loop-regression-session"},
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
         self.root = Path(tempfile.mkdtemp(prefix="awk-loop-regress-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         git = subprocess.run(["git", "init", "-q"], cwd=str(self.root),
