@@ -407,7 +407,9 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
         self.write_loop(
             "regress-inflight",
             "inflight-check",
-            "echo start >> starts.txt; sleep 2; echo done >> dones.txt",
+            # The orphan must outlive the kill -> status -> refusal assertions
+            # even on a heavily loaded machine; 2s lost the race in practice.
+            "echo start >> starts.txt; sleep 6; echo done >> dones.txt",
         )
         self.add_checkpoint("inflight-check", "regress-inflight", escalate_after=3)
 
@@ -446,7 +448,7 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
             "loop", "stop", "--ack-inflight", "--reason", "not yet reconciled", expect=2)
         self.assertIn("still has a live", refused_stop.stdout + refused_stop.stderr)
 
-        deadline = time.monotonic() + 10
+        deadline = time.monotonic() + 20
         module = self.load_agentctl_module("agentctl_inflight_test")
         while time.monotonic() < deadline:
             runtime = json.loads(state_path.read_text(encoding="utf-8"))["cycle_runtime"]

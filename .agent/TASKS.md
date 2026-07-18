@@ -80,4 +80,6 @@
 | T-067 | review | supervisor | `.agent/` | [.agent/tasks/T-067.md](tasks/T-067.md) | independently review T-066 ownership inventory extension |
 | T-068 | done | cursor | `tools/, tests/` | [.agent/tasks/T-068.md](tasks/T-068.md) | reject start on unknown task ids |
 | T-069 | review | supervisor | `.agent/` | [.agent/tasks/T-069.md](tasks/T-069.md) | independently review T-065 T-067 T-068 |
-| T-070 | in_progress | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-070.md](tasks/T-070.md) | package document ownership release |
+| T-070 | review | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-070.md](tasks/T-070.md) | package document ownership release |
+| T-071 | done | cursor | `tests/, .agent/` | [.agent/tasks/T-071.md](tasks/T-071.md) | deflake loop inflight reconciliation regression |
+| T-072 | review | supervisor | `.agent/` | [.agent/tasks/T-072.md](tasks/T-072.md) | independently review T-071 loop test deflake |

@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-072 - independently review T-071 loop test deflake (owner: supervisor)
+- [x] T-071 - deflake loop inflight reconciliation regression (owner: cursor)
 - [ ] T-070 - package document ownership release (owner: cursor)
 - [ ] T-069 - independently review T-065 T-067 T-068 (owner: supervisor)
 - [x] T-068 - reject start on unknown task ids (owner: cursor)
