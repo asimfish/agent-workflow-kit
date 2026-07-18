@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-19 05:01:32",
+  "updated_at": "2026-07-19 05:21:42",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1090,7 +1090,7 @@
     },
     "T-070": {
       "title": "package document ownership release",
-      "status": "in_progress",
+      "status": "review",
       "owner": "cursor",
       "scope": [
         "tools/",
@@ -1102,7 +1102,30 @@
       ],
       "deps": [],
       "created_at": "2026-07-19 05:01:32",
-      "updated_at": "2026-07-19 05:01:32"
+      "updated_at": "2026-07-19 05:04:01"
+    },
+    "T-071": {
+      "title": "deflake loop inflight reconciliation regression",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 05:07:44",
+      "updated_at": "2026-07-19 05:21:41"
+    },
+    "T-072": {
+      "title": "independently review T-071 loop test deflake",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 05:21:08",
+      "updated_at": "2026-07-19 05:21:42"
     }
   }
 }
