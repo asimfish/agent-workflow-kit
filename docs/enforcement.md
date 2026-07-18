@@ -28,6 +28,23 @@ document. Later checks detect when those files change and require an explicit
 `agentctl refresh`. `agentctl note` and `agentctl finish` enforce the same receipt
 directly, so a note cannot silently erase evidence that instructions changed.
 
+The plan and task-index receipts are scope-aware: another task's index row,
+another task's plan checklist row, and plan Change Log appends are excluded from
+this session's receipt, so unrelated task lifecycles do not force a refresh on
+every peer. Plan-body edits, rule changes, this task's own row, and this task's
+own document still invalidate the receipt.
+
+Path guards enforce document ownership on top of the write scope. The active
+task's own document is always part of the effective scope, while
+controller-generated files (`board.json`, `TASKS.md`, the agent registry,
+`state/`, the shared progress log, `gates/`, loop runtime and reports, the
+guidance bus and handoffs, eval runs/decisions/keys, and the install manifest)
+are rejected for direct agent edits regardless of scope; the denial names the
+owning `agentctl` command. Policy definitions such as `loops/checkpoints.json`
+and `evals/suites.json` stay scope-based. Direct edits to `PROJECT_PLAN.md`,
+rules, or another task's document require the declared scope to cover them,
+which worker scopes should not.
+
 If there is no assigned task for the current request, the agent creates and starts
 one itself:
 

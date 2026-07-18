@@ -133,6 +133,16 @@ the sole bootstrap exception because it installs the identity hook itself.
 - Task creation, start, note, finish, and the generated session view use atomic
   writes and an advisory coordination lock. Hooks reject writes outside the
   active scope and reject a path already claimed by another live session.
+- Give each worker a business-path scope (for example `collect/machine_a/`).
+  The task's own document under `.agent/tasks/` is always writable without a
+  blanket `.agent/` scope. Controller-generated files (board, task index,
+  agent registry, state views, shared progress log, gates, loop runtime,
+  guidance bus/handoffs, eval runs, install manifest) are never edited
+  directly; update them through `agentctl` commands. Leave `PROJECT_PLAN.md`
+  and rules to supervisors or humans.
+- Unrelated task lifecycles do not invalidate this conversation's read
+  receipt: only plan-body/rule changes, this task's own index row, or this
+  task's own document require re-reading plus `agentctl refresh`.
 - Git index, HEAD, branch, merge, and push mutations require exclusive use of a
   checkout. If another conversation is active, allocate a task-scoped worktree
   instead of bypassing the guard.

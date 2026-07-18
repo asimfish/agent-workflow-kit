@@ -36,6 +36,13 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-070 - package document ownership release (owner: cursor)
+- [ ] T-069 - independently review T-065 T-067 T-068 (owner: supervisor)
+- [x] T-068 - reject start on unknown task ids (owner: cursor)
+- [ ] T-067 - independently review T-066 ownership inventory extension (owner: supervisor)
+- [x] T-066 - extend controller-owned files to registry, bus, handoffs, and eval runs (owner: cursor)
+- [ ] T-065 - independently review T-064 document ownership and receipts (owner: supervisor)
+- [x] T-064 - enforce document ownership and scope-aware receipts (owner: cursor)
 - [ ] T-063 - package approved multi-session migration release (owner: codex)
 - [ ] T-062 - second independent gate re-review for T-057 T-059 and T-061 (owner: independent-reviewer-2)
 - [x] T-061 - close T-060 identity policy review findings (owner: codex)

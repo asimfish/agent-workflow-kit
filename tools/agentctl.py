@@ -1048,6 +1048,57 @@ def _path_in_scope(path: str, scope: list[str]) -> bool:
     return any(_scopes_overlap([path], [item]) for item in scope)
 
 
+def _controller_owned_paths() -> tuple[tuple[str, str], ...]:
+    """Workflow files agents must never edit directly, with the owning command."""
+    return (
+        (f"{WORKFLOW_DIR}/{BOARD_FILE}", "agentctl task/work/finish"),
+        (f"{WORKFLOW_DIR}/{TASKS_FILE}", "agentctl task/work/finish"),
+        (f"{WORKFLOW_DIR}/{AGENTS_FILE}", "agentctl agents"),
+        (f"{WORKFLOW_DIR}/{STATE_DIR}/", "agentctl sessions/status"),
+        (f"{WORKFLOW_DIR}/{LOG_DIR}/{PROGRESS_LOG}", "agentctl note/progress"),
+        (f"{WORKFLOW_DIR}/{GATES_DIR}/", "agentctl gate"),
+        (f"{WORKFLOW_DIR}/{LOOPS_DIR}/{LOOP_STATE_FILE}", "agentctl loop"),
+        (f"{WORKFLOW_DIR}/{LOOPS_DIR}/{LOOP_RUNS_DIR}/", "agentctl loop"),
+        (f"{WORKFLOW_DIR}/{BUS_DIR}/", "agentctl guidance"),
+        (f"{WORKFLOW_DIR}/handoffs/", "agentctl handoff/guidance"),
+        (f"{WORKFLOW_DIR}/{EVALS_DIR}/{EVAL_RUNS_DIR}/", "agentctl eval run"),
+        (f"{WORKFLOW_DIR}/{EVALS_DIR}/{EVAL_DECISIONS_DIR}/", "agentctl eval gate"),
+        (f"{WORKFLOW_DIR}/{EVALS_DIR}/{EVAL_SIGNING_KEY_FILE}", "agentctl eval"),
+        (f"{WORKFLOW_DIR}/{INSTALL_MANIFEST_FILE}", "agentctl init"),
+    )
+
+
+def _controller_owned_claim_error(path: str) -> str | None:
+    for owned, command in _controller_owned_paths():
+        if owned.endswith("/"):
+            if path == owned.rstrip("/") or path.startswith(owned):
+                return (
+                    f"path {path} is controller-generated; use '{command}' "
+                    "instead of editing it directly"
+                )
+        elif path == owned:
+            return (
+                f"path {path} is controller-generated; use '{command}' "
+                "instead of editing it directly"
+            )
+    return None
+
+
+def _session_effective_scope(st: dict) -> list[str]:
+    """Declared scope plus the active task's own document.
+
+    Business-scoped workers keep their task doc writable without needing a
+    blanket `.agent/` scope; scope-conflict checks still use the declared scope.
+    """
+    scope = [str(item) for item in (st.get("scope") or []) if str(item)]
+    task = st.get("task")
+    if task:
+        own_doc = f"{WORKFLOW_DIR}/{TASKS_DIR}/{task}.md"
+        if own_doc not in scope:
+            scope.append(own_doc)
+    return scope
+
+
 def _session_awareness(root: Path, current_key: str | None = None) -> str:
     current_key = current_key or _workflow_session_key()
     rows = _blocking_session_rows(root, current_key)
@@ -1113,11 +1164,58 @@ def _doc_hash_targets(root: Path, task: str | None):
     return targets
 
 
+_TASKS_INDEX_ROW_RE = re.compile(r"^\|\s*([A-Za-z][A-Za-z0-9]*-[\w.]+)\s*\|")
+_PLAN_TASK_ROW_RE = re.compile(r"^- \[[ x]\]\s+([A-Za-z][A-Za-z0-9]*-[\w.]+)\b")
+
+
+def _receipt_view(rel: str, data: bytes, task: str) -> bytes:
+    """Receipt-relevant content of a shared doc for one task's session.
+
+    Other tasks' index rows, other tasks' plan checklist rows, and the plan
+    Change Log body churn on every unrelated lifecycle event; they carry no
+    instruction for this task, so they are excluded from its read receipt.
+    Everything else - headers, goals, rules, this task's own rows - still
+    invalidates the receipt when it changes.
+    """
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data
+    lines = []
+    in_change_log = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_change_log = stripped.lower() == "## change log"
+            lines.append(line)
+            continue
+        if in_change_log and stripped.startswith("- "):
+            continue
+        if rel == f"{WORKFLOW_DIR}/{TASKS_FILE}":
+            row = _TASKS_INDEX_ROW_RE.match(line)
+            if row and row.group(1) != task:
+                continue
+        if rel == f"{WORKFLOW_DIR}/{PLAN_FILE}":
+            row = _PLAN_TASK_ROW_RE.match(line)
+            if row and row.group(1) != task:
+                continue
+        lines.append(line)
+    return "\n".join(lines).encode("utf-8")
+
+
 def _hash_docs(root: Path, task: str | None) -> dict:
+    scoped_views = {
+        f"{WORKFLOW_DIR}/{PLAN_FILE}",
+        f"{WORKFLOW_DIR}/{TASKS_FILE}",
+    }
     hashes = {}
     for d in _doc_hash_targets(root, task):
         if d.is_file():
-            hashes[str(d.relative_to(root))] = hashlib.sha256(d.read_bytes()).hexdigest()[:12]
+            rel = str(d.relative_to(root))
+            data = d.read_bytes()
+            if task and rel in scoped_views:
+                data = _receipt_view(rel, data, task)
+            hashes[rel] = hashlib.sha256(data).hexdigest()[:12]
     return hashes
 
 
@@ -1661,6 +1759,13 @@ def cmd_start(args: argparse.Namespace) -> int:
     try:
         board = _load_board(root)
         tasks = board.setdefault("tasks", {})
+        if task not in tasks:
+            print(
+                f"agentctl: unknown task {task}; create it first with "
+                "'agentctl task create' or 'agentctl work --auto-create'",
+                file=sys.stderr,
+            )
+            return 2
         entry = tasks.get(task, {})
         scope = entry.get("scope") or []
         if args.scope:
@@ -7805,6 +7910,7 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
                 f"other sessions are present: {owners}. Use a task worktree or finish/release them."
             )
         claims = []
+        effective_scope = _session_effective_scope(st)
         for raw in args.path or []:
             path, error = _normalize_claim_path(root, raw)
             if error:
@@ -7812,7 +7918,11 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
                 continue
             if not path:
                 continue
-            if not _path_in_scope(path, st.get("scope") or []):
+            owned_error = _controller_owned_claim_error(path)
+            if owned_error:
+                problems.append(owned_error)
+                continue
+            if not _path_in_scope(path, effective_scope):
                 problems.append(
                     f"path {path} is outside active task scope {st.get('scope') or []}"
                 )

@@ -852,6 +852,23 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             (clone / clone_common).resolve(),
         )
 
+    def test_start_rejects_unknown_task_ids_without_registering_a_claim(self):
+        unknown = self.agentctl(
+            "start", "--task", "T-999", "--agent", "codex",
+            session="one", expect=2,
+        )
+        self.assertIn("unknown task", unknown.stderr)
+        board = json.loads(
+            (self.root / ".agent" / "board.json").read_text(encoding="utf-8"))
+        self.assertNotIn("T-999", board.get("tasks", {}))
+        self.assertFalse(
+            (self.root / ".agent" / "tasks" / "T-999.md").exists())
+        rows = self.sessions("one")["sessions"]
+        self.assertNotIn("T-999", {row.get("task") for row in rows})
+        # A follow-up conversation with a disjoint scope is not blocked by a
+        # ghost claim left behind by the failed start.
+        self.start("two", "T-102", "src/two/")
+
     def test_overlap_same_task_scope_and_parallel_git_are_blocked(self):
         self.start("one", "T-101", "src/shared/")
         self.agentctl(
