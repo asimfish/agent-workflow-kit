@@ -61,3 +61,4 @@
 | T-048 | review | supervisor | `.agent/` | [.agent/tasks/T-048.md](tasks/T-048.md) | review T-047 binary signing mock fix |
 | T-049 | done | codex | `.agent/` | [.agent/tasks/T-049.md](tasks/T-049.md) | reconcile merged multi-session release |
 | T-050 | review | supervisor | `.agent/` | [.agent/tasks/T-050.md](tasks/T-050.md) | independent supervisor reconcile T-049 PR #7 evidence |
+| T-051 | review | codex | `tools/, tests/, integrations/, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-051.md](tasks/T-051.md) | isolate forked conversation sessions |

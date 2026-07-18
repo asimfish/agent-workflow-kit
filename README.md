@@ -126,6 +126,15 @@ under the Git common directory. Hooks aggregate that state into the local
 gitignored file `.agent/state/SESSIONS.md`, show it at session start, and refresh
 it during work.
 
+Forked or cloned conversations are isolated as separate runtime instances. A
+persisted workflow ID is bound to the host runtime that created it, so a child
+that inherits the parent's environment cannot use that stale ID to resume the
+parent's task. Native `parent`/`fork`/`branch`/`clone` hook metadata supplies an
+additional instance key when needed; `.agent/state/SESSIONS.md` shows the hashed
+fork lineage without storing the raw parent ID. If a client reports the same
+parent and child ID and then fails to propagate the instance established by its
+`SessionStart` hook, mutating hooks fail closed.
+
 The coordination policy is deliberately small:
 
 - Disjoint task scopes may work concurrently in one checkout.
@@ -138,6 +147,12 @@ The coordination policy is deliberately small:
   task; task docs and working files are preserved.
 - Task/plan/log transitions are serialized with an OS advisory lock, and each
   session writes only its own atomically replaced JSON record.
+
+A full Git clone has a different Git common directory, so it never reads or
+writes the source clone's live session records even when both processes expose
+the same host session ID. Committed plan/task files are only a snapshot across
+independent clones; use normal fetch/branch/PR integration to exchange later
+decisions. Live cross-clone coordination is intentionally not inferred.
 
 Committed `.agent` plans and task docs remain the durable memory. The generated
 session view is only live coordination, avoiding constant Git conflicts in a

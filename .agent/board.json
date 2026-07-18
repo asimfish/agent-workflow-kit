@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-18 03:32:05",
+  "updated_at": "2026-07-18 09:27:28",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -834,6 +834,23 @@
       "deps": [],
       "created_at": "2026-07-18 03:29:00",
       "updated_at": "2026-07-18 03:32:05"
+    },
+    "T-051": {
+      "title": "isolate forked conversation sessions",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "integrations/",
+        "templates/project/",
+        "docs/",
+        "README.md",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 08:59:08",
+      "updated_at": "2026-07-18 09:27:28"
     }
   }
 }

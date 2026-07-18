@@ -59,6 +59,9 @@ Every worker update must include:
 
 - Every conversation owns a distinct runtime session even when several
   conversations use the same agent name in the same project directory.
+- A conversation fork/clone is a new runtime owner. Never reuse an inherited
+  parent session record; let the native hook/runtime identity select the child
+  instance, then read the generated lineage and peer status before claiming work.
 - Read `.agent/state/SESSIONS.md` when starting or resuming. It is a generated
   presence view; durable goals and decisions remain in committed `.agent` docs.
 - Prefer separate branches or worktrees for parallel implementation; assign each
@@ -69,3 +72,6 @@ Every worker update must include:
 - Never force-release an active session. A stale session may be released only
   after its task document, status, and working files have been inspected; resume
   the existing task rather than creating a competing duplicate.
+- Separate full Git clones do not share live session records. Treat their
+  committed `.agent` documents as snapshots and reconcile through normal Git
+  branches/PRs; do not assume local presence is visible across clones.

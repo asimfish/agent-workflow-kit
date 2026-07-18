@@ -45,6 +45,13 @@ the active task's goal, write scope, and stage TODO plus the required reading li
 This keeps a long-running agent anchored to its task and plan instead of drifting.
 Run `agentctl focus` manually any time to re-anchor.
 
+Conversation forks are treated as new runtime owners. The hook binds a persisted
+workflow session ID to the host runtime that supplied it and carries a hashed
+parent lineage plus an optional fork-instance key. If a child inherits the
+parent's environment, `agentctl` ignores the stale owner-bound ID. If a provider
+reports identical parent/child IDs, `SessionStart` establishes an isolated local
+instance; later mutating hooks block when that instance was not propagated.
+
 ### Runtime commands
 
 `agentctl` is the single controller:
@@ -105,6 +112,11 @@ project hooks still depend on the client loading them, repository trust, and
 user or organization policy. A repository cannot prevent an administrator from
 disabling its native hooks; Git hooks and required GitHub checks remain the
 later enforcement layers.
+
+No local hook can infer two distinct conversations when a client exposes no
+different runtime/session/fork signal and does not run `SessionStart`. Supported
+clients normally provide a unique current session or conversation ID; the
+fail-closed fork path covers explicit but ambiguous parent metadata.
 
 ## Installation And Upgrade Safety
 

@@ -19,7 +19,16 @@ PROVIDER_ENV = (
     "WHALENT_AGENT_ID",
     "WHALENT_CODEX_INSTANCE_ID",
     "WHALENT_COMPOSER_ID",
+    "WHALENT_FORK_SOURCE_AGENT_ID",
     "AGENT_SESSION_ID",
+)
+WORKFLOW_ENV = (
+    "AGENT_WORKFLOW_SESSION_ID",
+    "AGENT_WORKFLOW_SESSION_KEY",
+    "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME",
+    "AGENT_WORKFLOW_SESSION_INSTANCE_ID",
+    "AGENT_WORKFLOW_PARENT_SESSION_KEY",
+    "AGENT_WORKFLOW_SESSION_ISOLATION_ERROR",
 )
 
 
@@ -36,16 +45,24 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
 
     def env(self, session):
         env = os.environ.copy()
-        for name in PROVIDER_ENV:
+        for name in (*PROVIDER_ENV, *WORKFLOW_ENV):
             env.pop(name, None)
         env["AGENT_WORKFLOW_SESSION_ID"] = session
         return env
 
     def bare_env(self):
         env = os.environ.copy()
-        for name in (*PROVIDER_ENV, "AGENT_WORKFLOW_SESSION_ID", "AGENT_WORKFLOW_SESSION_KEY"):
+        for name in (*PROVIDER_ENV, *WORKFLOW_ENV):
             env.pop(name, None)
         return env
+
+    def agentctl_env(self, env, *args, expect=0):
+        proc = subprocess.run(
+            [sys.executable, "tools/agentctl.py", *args], cwd=self.root,
+            env=env, text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
+        return proc
 
     def agentctl(self, *args, session="one", expect=0):
         proc = subprocess.run(
@@ -175,6 +192,204 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         self.assertEqual(
             json.loads(cursor.stdout)["env"]["AGENT_WORKFLOW_SESSION_ID"],
             "cursor-conversation-2",
+        )
+
+    def test_fork_inheriting_parent_workflow_id_uses_child_runtime(self):
+        parent_env = self.bare_env()
+        parent_env.update({
+            "CODEX_THREAD_ID": "shared-thread",
+            "WHALENT_AGENT_ID": "parent-agent",
+        })
+        parent_hook = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root, env=parent_env,
+            input=json.dumps({"session_id": "parent-workflow-id", "source": "startup"}),
+            text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(parent_hook.returncode, 0, parent_hook.stderr)
+        parent_env.update(json.loads(parent_hook.stdout)["env"])
+        self.agentctl_env(
+            parent_env, "work", "--agent", "codex", "--auto-create",
+            "--new-id", "T-160", "--title", "parent fork source",
+            "--scope", "src/parent/",
+        )
+
+        child_env = parent_env.copy()
+        child_env.update({
+            "CODEX_THREAD_ID": "child-thread",
+            "WHALENT_AGENT_ID": "child-agent",
+            "WHALENT_FORK_SOURCE_AGENT_ID": "parent-agent",
+        })
+        child_hook = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root, env=child_env,
+            input=json.dumps({
+                "session_id": "parent-workflow-id",
+                "source": "startup",
+            }),
+            text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(child_hook.returncode, 0, child_hook.stderr)
+        child_exports = json.loads(child_hook.stdout)["env"]
+        self.assertEqual(child_exports["AGENT_WORKFLOW_SESSION_ID"], "")
+        child_env.update(child_exports)
+        self.agentctl_env(
+            child_env, "work", "--agent", "codex", "--auto-create",
+            "--new-id", "T-161", "--title", "fork child work",
+            "--scope", "src/child/",
+        )
+
+        parent = json.loads(
+            self.agentctl_env(parent_env, "status", "--json").stdout
+        )
+        child = json.loads(
+            self.agentctl_env(child_env, "status", "--json").stdout
+        )
+        self.assertEqual(parent["task"], "T-160")
+        self.assertEqual(child["task"], "T-161")
+        self.assertNotEqual(
+            parent["workflow_session_key"], child["workflow_session_key"],
+        )
+        self.assertRegex(child["parent_session_key"], r"^lineage-[0-9a-f]{24}$")
+
+    def test_same_id_forks_get_instances_and_missing_instance_fails_closed(self):
+        self.start("cloned-session", "T-170", "src/parent/")
+
+        first_start = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root, env=self.bare_env(),
+            input=json.dumps({
+                "session_id": "cloned-session",
+                "parent_session_id": "cloned-session",
+                "fork_id": "fork-one",
+                "source": "startup",
+            }),
+            text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(first_start.returncode, 0, first_start.stderr)
+        first_env = self.bare_env()
+        first_env.update(json.loads(first_start.stdout)["env"])
+        self.agentctl_env(
+            first_env, "work", "--agent", "codex", "--auto-create",
+            "--new-id", "T-171", "--title", "first cloned branch",
+            "--scope", "src/fork-one/",
+        )
+
+        generated_start = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root, env=self.bare_env(),
+            input=json.dumps({
+                "session_id": "cloned-session",
+                "parent_session_id": "cloned-session",
+                "source": "startup",
+            }),
+            text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(generated_start.returncode, 0, generated_start.stderr)
+        generated_exports = json.loads(generated_start.stdout)["env"]
+        self.assertRegex(
+            generated_exports["AGENT_WORKFLOW_SESSION_INSTANCE_ID"],
+            r"^instance-[0-9a-f]{24}$",
+        )
+        generated_env = self.bare_env()
+        generated_env.update(generated_exports)
+        self.agentctl_env(
+            generated_env, "work", "--agent", "codex", "--auto-create",
+            "--new-id", "T-172", "--title", "generated cloned branch",
+            "--scope", "src/fork-two/",
+        )
+
+        rows = json.loads(
+            self.agentctl_env(first_env, "sessions", "list", "--json").stdout
+        )["sessions"]
+        fork_rows = [row for row in rows if row["task"] in {"T-171", "T-172"}]
+        self.assertEqual(len(fork_rows), 2)
+        self.assertEqual(len({row["workflow_session_key"] for row in fork_rows}), 2)
+        self.assertTrue(all(row.get("parent_session_key") for row in fork_rows))
+
+        missing_instance = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root, env=self.bare_env(),
+            input=json.dumps({
+                "session_id": "cloned-session",
+                "parent_session_id": "cloned-session",
+                "tool_name": "Write",
+                "tool_input": {"file_path": "src/fork-two/unsafe.py"},
+            }),
+            text=True, capture_output=True, timeout=120,
+        )
+        decision = json.loads(missing_instance.stdout)
+        self.assertEqual(decision["decision"], "block")
+        self.assertIn("identity distinct from its parent", decision["reason"])
+
+    def test_full_git_clone_keeps_same_session_id_runtime_records_local(self):
+        self.start("same-session", "T-180", "src/original/")
+        staged = subprocess.run(
+            ["git", "add", "-A"], cwd=self.root,
+            text=True, capture_output=True, timeout=60,
+        )
+        self.assertEqual(staged.returncode, 0, staged.stdout + staged.stderr)
+        committed = subprocess.run(
+            [
+                "git", "-c", "user.name=Workflow Test",
+                "-c", "user.email=workflow@example.invalid",
+                "commit", "--no-verify", "-qm", "test: clone fixture",
+            ],
+            cwd=self.root, text=True, capture_output=True, timeout=60,
+        )
+        self.assertEqual(committed.returncode, 0, committed.stdout + committed.stderr)
+
+        clone_parent = Path(tempfile.mkdtemp(prefix="awk-sessions-clone-"))
+        self.addCleanup(shutil.rmtree, clone_parent, ignore_errors=True)
+        clone = clone_parent / "repo"
+        cloned = subprocess.run(
+            ["git", "clone", "-q", str(self.root), str(clone)],
+            text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(cloned.returncode, 0, cloned.stdout + cloned.stderr)
+
+        clone_env = self.env("same-session")
+        empty = subprocess.run(
+            [sys.executable, "tools/agentctl.py", "status", "--json"],
+            cwd=clone, env=clone_env, text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(empty.returncode, 0, empty.stdout + empty.stderr)
+        self.assertEqual(json.loads(empty.stdout), {})
+        child = subprocess.run(
+            [
+                sys.executable, "tools/agentctl.py", "work", "--agent", "codex",
+                "--auto-create", "--new-id", "T-181", "--title", "clone-local work",
+                "--scope", "src/clone/",
+            ],
+            cwd=clone, env=clone_env, text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(child.returncode, 0, child.stdout + child.stderr)
+
+        original_status = json.loads(
+            self.agentctl("status", "--json", session="same-session").stdout
+        )
+        clone_status = json.loads(subprocess.run(
+            [sys.executable, "tools/agentctl.py", "status", "--json"],
+            cwd=clone, env=clone_env, text=True, capture_output=True,
+            check=True, timeout=120,
+        ).stdout)
+        self.assertEqual(original_status["task"], "T-180")
+        self.assertEqual(clone_status["task"], "T-181")
+        self.assertEqual(
+            original_status["workflow_session_key"],
+            clone_status["workflow_session_key"],
+        )
+        original_common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=self.root,
+            text=True, capture_output=True, check=True, timeout=60,
+        ).stdout.strip()
+        clone_common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=clone,
+            text=True, capture_output=True, check=True, timeout=60,
+        ).stdout.strip()
+        self.assertNotEqual(
+            (self.root / original_common).resolve(),
+            (clone / clone_common).resolve(),
         )
 
     def test_overlap_same_task_scope_and_parallel_git_are_blocked(self):

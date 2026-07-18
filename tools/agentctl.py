@@ -59,6 +59,9 @@ SESSION_RUNTIME_DIR = "sessions"
 SESSION_COORDINATION_LOCK = "sessions.lock"
 SESSION_VIEW_FILE = "SESSIONS.md"
 SESSION_STALE_SECONDS = 30 * 60
+SESSION_OWNER_RUNTIME_ENV = "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME"
+SESSION_INSTANCE_ENV = "AGENT_WORKFLOW_SESSION_INSTANCE_ID"
+PARENT_SESSION_KEY_ENV = "AGENT_WORKFLOW_PARENT_SESSION_KEY"
 LOCKS_DIR = "locks"
 BOARD_FILE = "board.json"
 AGENTS_FILE = "agents.json"
@@ -253,18 +256,54 @@ def _state_dir(root: Path) -> Path:
     return root / WORKFLOW_DIR / STATE_DIR
 
 
+def _private_identity_key(prefix: str, value: str, length: int = 24) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if re.fullmatch(rf"{re.escape(prefix)}-[0-9a-f]{{{length}}}", normalized):
+        return normalized
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:length]
+    return f"{prefix}-{digest}"
+
+
+def _workflow_session_instance_key() -> str:
+    return _private_identity_key("instance", os.environ.get(SESSION_INSTANCE_ENV, ""))
+
+
+def _workflow_parent_session_key() -> str:
+    explicit = _private_identity_key(
+        "lineage", os.environ.get(PARENT_SESSION_KEY_ENV, ""),
+    )
+    if explicit:
+        return explicit
+    return _private_identity_key(
+        "lineage", os.environ.get("WHALENT_FORK_SOURCE_AGENT_ID", ""),
+    )
+
+
 def _workflow_session_key() -> str:
     forced = (os.environ.get("AGENT_WORKFLOW_SESSION_KEY") or "").strip()
     if forced == "default" or re.fullmatch(r"session-[0-9a-f]{24}", forced):
         return forced
     explicit = (os.environ.get("AGENT_WORKFLOW_SESSION_ID") or "").strip()
-    identity = explicit or _runtime_identity()
+    runtime = _runtime_identity()
+    owner_runtime = (os.environ.get(SESSION_OWNER_RUNTIME_ENV) or "").strip()
+    inherited_explicit = bool(
+        explicit
+        and runtime
+        and owner_runtime
+        and owner_runtime != runtime
+    )
+    identity = runtime if inherited_explicit else (explicit or runtime)
     if not identity:
         for name in ("WHALENT_COMPOSER_ID", "AGENT_SESSION_ID", "TERM_SESSION_ID"):
             value = (os.environ.get(name) or "").strip()
             if value:
                 identity = f"{name}={value}"
                 break
+    instance_key = _workflow_session_instance_key()
+    if instance_key:
+        identity = f"{identity or 'fork'}\n{SESSION_INSTANCE_ENV}={instance_key}"
     if not identity:
         return "default"
     digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:24]
@@ -345,6 +384,12 @@ def _load_session(root: Path) -> dict:
 def _save_session(root: Path, st: dict) -> None:
     key = st.get("workflow_session_key") or _workflow_session_key()
     st["workflow_session_key"] = key
+    parent_key = _workflow_parent_session_key()
+    if parent_key:
+        st["parent_session_key"] = parent_key
+    instance_key = _workflow_session_instance_key()
+    if instance_key:
+        st["session_instance_key"] = instance_key
     st["checkout"] = str(root.resolve())
     st["branch"] = _git(root, "branch", "--show-current")
     st["heartbeat_at"] = _now()
@@ -448,12 +493,13 @@ def _render_sessions_view(root: Path, rows: list[dict] | None = None) -> None:
         "This local, gitignored view is generated from per-conversation records. ",
         "Do not edit it; use the task documents for durable project decisions.",
         "",
-        "| Session | State | Agent | Task | Scope | Branch | Checkout | Heartbeat |",
-        "|---|---|---|---|---|---|---|---|",
+        "| Session | Fork lineage | State | Agent | Task | Scope | Branch | Checkout | Heartbeat |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for row in rows:
         values = [
             row.get("workflow_session_key") or "default",
+            row.get("parent_session_key") or "-",
             row.get("observed_status") or "unknown",
             row.get("agent") or "-",
             row.get("task") or "-",
@@ -465,7 +511,7 @@ def _render_sessions_view(root: Path, rows: list[dict] | None = None) -> None:
         escaped = [str(value).replace("|", "\\|").replace("\n", " ") for value in values]
         lines.append("| " + " | ".join(escaped) + " |")
     if not rows:
-        lines.append("| - | none | - | - | - | - | - | - |")
+        lines.append("| - | - | none | - | - | - | - | - | - |")
     lines.extend([
         "",
         "States `active` and `stale` keep their task/file claims. A stale claim must be ",

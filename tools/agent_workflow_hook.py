@@ -8,9 +8,11 @@ Codex/Claude/Cursor-native hook configs where supported.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
+import secrets
 import shlex
 import subprocess
 import sys
@@ -30,6 +32,25 @@ MUTATING_BASH = re.compile(
 GIT_WRITE_BASH = re.compile(
     r"(^|\s)git\s+(add|commit|push|merge|rebase|reset|checkout|switch|clean)\b",
     re.IGNORECASE,
+)
+RUNTIME_ID_ENV_NAMES = (
+    "CODEX_THREAD_ID",
+    "CLAUDE_CODE_SESSION_ID",
+    "CURSOR_CONVERSATION_ID",
+    "WHALENT_AGENT_ID",
+    "WHALENT_CODEX_INSTANCE_ID",
+)
+SESSION_ID_ENV = "AGENT_WORKFLOW_SESSION_ID"
+SESSION_OWNER_RUNTIME_ENV = "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME"
+SESSION_INSTANCE_ENV = "AGENT_WORKFLOW_SESSION_INSTANCE_ID"
+PARENT_SESSION_KEY_ENV = "AGENT_WORKFLOW_PARENT_SESSION_KEY"
+SESSION_ISOLATION_ERROR_ENV = "AGENT_WORKFLOW_SESSION_ISOLATION_ERROR"
+SESSION_EXPORT_ENV_NAMES = (
+    SESSION_ID_ENV,
+    SESSION_OWNER_RUNTIME_ENV,
+    SESSION_INSTANCE_ENV,
+    PARENT_SESSION_KEY_ENV,
+    SESSION_ISOLATION_ERROR_ENV,
 )
 
 
@@ -96,35 +117,158 @@ def block(event: str, reason: str) -> int:
 
 
 def payload_session_id(payload: dict) -> str:
-    for key in ("session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"):
+    for key in (
+        "session_id", "sessionId", "conversation_id", "conversationId",
+        "thread_id", "threadId", "composer_id", "composerId",
+    ):
         value = payload.get(key)
         if value:
             return str(value)
     return ""
 
 
-def hook_environment(payload: dict) -> dict:
+def payload_parent_session_id(payload: dict) -> str:
+    for key in (
+        "parent_session_id", "parentSessionId",
+        "parent_conversation_id", "parentConversationId",
+        "parent_thread_id", "parentThreadId",
+        "fork_source_session_id", "forkSourceSessionId",
+        "forked_from_session_id", "forkedFromSessionId",
+    ):
+        value = payload.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _private_identity_key(prefix: str, value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if re.fullmatch(rf"{re.escape(prefix)}-[0-9a-f]{{24}}", normalized):
+        return normalized
+    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:24]
+    return f"{prefix}-{digest}"
+
+
+def payload_session_instance_key(payload: dict) -> str:
+    for key in (
+        "session_instance_id", "sessionInstanceId",
+        "fork_id", "forkId", "branch_id", "branchId",
+        "conversation_branch_id", "conversationBranchId",
+        "clone_id", "cloneId",
+    ):
+        value = payload.get(key)
+        if value:
+            return _private_identity_key("instance", f"{key}={value}")
+    return ""
+
+
+def _host_runtime_identity(env: dict) -> str:
+    values = []
+    for name in RUNTIME_ID_ENV_NAMES:
+        value = str(env.get(name) or "").strip()
+        if value:
+            values.append(f"{name}={value}")
+    if not values:
+        return ""
+    digest = hashlib.sha256("\n".join(values).encode("utf-8")).hexdigest()
+    return f"host-runtime:{digest[:32]}"
+
+
+def _payload_is_fork(payload: dict, parent_id: str) -> bool:
+    source = str(payload.get("source") or payload.get("reason") or "").strip().lower()
+    return bool(parent_id or source in {"fork", "forked", "clone", "cloned", "branch"})
+
+
+def hook_environment(payload: dict, *, create_fork_instance: bool = False) -> dict:
     env = os.environ.copy()
-    session_id = payload_session_id(payload)
+    inherited_id = str(env.get(SESSION_ID_ENV) or "").strip()
+    inherited_owner = str(env.get(SESSION_OWNER_RUNTIME_ENV) or "").strip()
+    current_runtime = _host_runtime_identity(env)
+    session_id = payload_session_id(payload).strip()
+    parent_id = (
+        payload_parent_session_id(payload).strip()
+        or str(env.get("WHALENT_FORK_SOURCE_AGENT_ID") or "").strip()
+        or str(env.get(PARENT_SESSION_KEY_ENV) or "").strip()
+    )
+    parent_key = _private_identity_key("lineage", parent_id)
+    forked = _payload_is_fork(payload, parent_id)
+    owner_changed = bool(
+        current_runtime and inherited_owner and current_runtime != inherited_owner
+    )
+
+    instance_key = payload_session_instance_key(payload)
+    inherited_instance = str(env.get(SESSION_INSTANCE_ENV) or "").strip()
+    if not instance_key and not (forked and owner_changed):
+        instance_key = _private_identity_key("instance", inherited_instance)
+
+    ambiguous_fork = bool(
+        forked and parent_id and session_id and session_id == parent_id
+    )
+    if ambiguous_fork and not instance_key:
+        transcript_path = str(
+            payload.get("transcript_path") or payload.get("transcriptPath") or ""
+        ).strip()
+        if transcript_path:
+            instance_key = _private_identity_key(
+                "instance", f"transcript_path={transcript_path}",
+            )
+    if ambiguous_fork and not instance_key and create_fork_instance:
+        instance_key = _private_identity_key(
+            "instance", f"generated={secrets.token_hex(24)}",
+        )
+
+    stale_payload_id = bool(
+        session_id and inherited_id and session_id == inherited_id
+        and owner_changed
+        and not instance_key
+    )
     if session_id:
-        env["AGENT_WORKFLOW_SESSION_ID"] = session_id
+        if stale_payload_id:
+            env[SESSION_ID_ENV] = ""
+            env[SESSION_OWNER_RUNTIME_ENV] = ""
+        else:
+            env[SESSION_ID_ENV] = session_id
+            env[SESSION_OWNER_RUNTIME_ENV] = current_runtime
+    if parent_key:
+        env[PARENT_SESSION_KEY_ENV] = parent_key
+    if instance_key:
+        env[SESSION_INSTANCE_ENV] = instance_key
+    elif forked and owner_changed:
+        env[SESSION_INSTANCE_ENV] = ""
+
+    if ambiguous_fork and not instance_key:
+        env[SESSION_ID_ENV] = ""
+        env[SESSION_OWNER_RUNTIME_ENV] = ""
+        env[SESSION_ISOLATION_ERROR_ENV] = (
+            "forked conversation identity is indistinguishable from its parent; "
+            "restart the session so SessionStart can establish an isolated instance"
+        )
+    elif SESSION_ISOLATION_ERROR_ENV in env:
+        env[SESSION_ISOLATION_ERROR_ENV] = ""
     return env
 
 
-def persist_session_environment(session_id: str) -> dict:
-    if not session_id:
+def session_environment_exports(env: dict) -> dict:
+    return {
+        name: str(env.get(name) or "")
+        for name in SESSION_EXPORT_ENV_NAMES
+        if name in env
+    }
+
+
+def persist_session_environment(env_vars: dict) -> dict:
+    if not env_vars:
         return {}
-    env_vars = {"AGENT_WORKFLOW_SESSION_ID": session_id}
     env_file = (os.environ.get("CLAUDE_ENV_FILE") or "").strip()
     if env_file:
         path = Path(env_file).expanduser()
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             with path.open("a", encoding="utf-8") as handle:
-                handle.write(
-                    "export AGENT_WORKFLOW_SESSION_ID="
-                    + shlex.quote(session_id) + "\n"
-                )
+                for name, value in env_vars.items():
+                    handle.write(f"export {name}=" + shlex.quote(value) + "\n")
         except OSError:
             pass
     return env_vars
@@ -363,8 +507,8 @@ def session_start() -> int:
     if not (root / ".agent").exists():
         return 0
     payload = read_input()
-    env = hook_environment(payload)
-    session_env = persist_session_environment(payload_session_id(payload))
+    env = hook_environment(payload, create_fork_instance=True)
+    session_env = persist_session_environment(session_environment_exports(env))
     entry = workflow_entry(root)
     if entry:
         message = (
@@ -407,6 +551,13 @@ def pre_tool_use() -> int:
         return 0
     payload = read_input()
     env = hook_environment(payload)
+    isolation_error = str(env.get(SESSION_ISOLATION_ERROR_ENV) or "").strip()
+    if isolation_error:
+        return block(
+            "PreToolUse",
+            "Agent Workflow Kit blocked this action because the forked conversation "
+            "does not have an identity distinct from its parent. " + isolation_error + ".",
+        )
     active = has_session(root, env)
     if not is_mutating_tool(payload):
         if active:
