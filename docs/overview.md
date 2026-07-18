@@ -15,7 +15,7 @@ enforceable, plan-driven workflow for multiple AI agents. It has two layers:
 | Install & distribute | `install.sh` / `agentctl init`: copy templates, distribute `agentctl.py`, install git hooks into `.githooks/` and set `core.hooksPath`, seed `board.json`/`agents.json` |
 | Standards | `.agent/rules/`: code (stdlib-only, exit codes, confidence tags), documentation (source-of-truth, status machine), GitHub (Conventional Commits, branches, safety), agent-operating (6 team patterns + decision tree). Aligned with `super_skill_team` |
 | Plan / tasks / board | `PROJECT_PLAN.md` (human plan), `TASKS.md` (index), `board.json` (machine board), `tasks/*.md` (task contracts) |
-| Multi-agent runtime | `agents.json` (profiles/write-scope), `locks/` (per-task locks), write-scope conflict detection so agents don't clobber each other |
+| Multi-agent runtime | Per-conversation records in the Git common directory, owner-bound session IDs, fork lineage/instance isolation, task locks, and write-scope conflict detection so agents do not overwrite each other |
 | Handoffs / bus | `.agent/bus/` stores machine-readable task packets; `.agent/handoffs/` stores human-readable cross-agent handoff notes |
 | Task lifecycle | `work -> note -> finish (review) -> independent gate approve (done)`; status machine `todo->ready->in_progress->review->approved->done` (branches `blocked`/`failed`) |
 | Long-task anti-drift | lifecycle hook re-injects the current task focus on resume/compaction |

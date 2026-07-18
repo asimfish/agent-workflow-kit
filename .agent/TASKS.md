@@ -61,3 +61,9 @@
 | T-048 | review | supervisor | `.agent/` | [.agent/tasks/T-048.md](tasks/T-048.md) | review T-047 binary signing mock fix |
 | T-049 | done | codex | `.agent/` | [.agent/tasks/T-049.md](tasks/T-049.md) | reconcile merged multi-session release |
 | T-050 | review | supervisor | `.agent/` | [.agent/tasks/T-050.md](tasks/T-050.md) | independent supervisor reconcile T-049 PR #7 evidence |
+| T-051 | done | codex | `tools/, tests/, integrations/, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-051.md](tasks/T-051.md) | isolate forked conversation sessions |
+| T-052 | review | supervisor | `.agent/` | [.agent/tasks/T-052.md](tasks/T-052.md) | independently review forked-session isolation |
+| T-053 | done | codex | `tools/, templates/project/tools/, tests/, .agent/` | [.agent/tasks/T-053.md](tasks/T-053.md) | close fork isolation review findings |
+| T-054 | review | supervisor | `.agent/` | [.agent/tasks/T-054.md](tasks/T-054.md) | independently re-review fork isolation fixes |
+| T-055 | done | codex | `tools/, templates/project/tools/, tests/, .agent/` | [.agent/tasks/T-055.md](tasks/T-055.md) | prevent fork fallback to parent controller session |
+| T-056 | review | supervisor | `.agent/` | [.agent/tasks/T-056.md](tasks/T-056.md) | independently verify controller fork fail closed |
