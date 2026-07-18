@@ -26,6 +26,11 @@ KIT = Path(__file__).resolve().parents[1]
 
 class GuidanceWorkflowRegressionTest(unittest.TestCase):
     def setUp(self):
+        identity = mock.patch.dict(
+            os.environ, {"AGENT_WORKFLOW_SESSION_ID": "guidance-regression-session"},
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
         self.root = Path(tempfile.mkdtemp(prefix="awk-guidance-regress-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.env = os.environ.copy()

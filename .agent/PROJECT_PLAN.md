@@ -36,6 +36,13 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-063 - package approved multi-session migration release (owner: codex)
+- [ ] T-062 - second independent gate re-review for T-057 T-059 and T-061 (owner: independent-reviewer-2)
+- [x] T-061 - close T-060 identity policy review findings (owner: codex)
+- [ ] T-060 - independent gate review for T-057 and T-059 (owner: independent-reviewer)
+- [x] T-059 - close T-058 terminal mutation identity gap (owner: codex)
+- [ ] T-058 - independently review T-057 legacy session migration (owner: supervisor)
+- [x] T-057 - migrate legacy workflow sessions (owner: codex)
 - [ ] T-056 - independently verify controller fork fail closed (owner: supervisor)
 - [x] T-055 - prevent fork fallback to parent controller session (owner: codex)
 - [ ] T-054 - independently re-review fork isolation fixes (owner: supervisor)

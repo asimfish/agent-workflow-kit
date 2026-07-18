@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 KIT = Path(__file__).resolve().parents[1]
@@ -15,6 +16,11 @@ KIT = Path(__file__).resolve().parents[1]
 
 class HarnessEvaluationRegressionTest(unittest.TestCase):
     def setUp(self):
+        identity = mock.patch.dict(
+            os.environ, {"AGENT_WORKFLOW_SESSION_ID": "eval-regression-session"},
+        )
+        identity.start()
+        self.addCleanup(identity.stop)
         self.temp = Path(tempfile.mkdtemp(prefix="awk-eval-regress-"))
         self.addCleanup(shutil.rmtree, self.temp, ignore_errors=True)
         self.root = self.temp / "policy"

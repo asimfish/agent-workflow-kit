@@ -50,6 +50,28 @@ active conversations in the same checkout. The generated local view is
 Use the backend name as `<agent-name>` when no project-specific agent ID is
 assigned, for example `codex`, `claude`, `cursor`, or `agent`.
 
+## Upgrades And Older Sessions
+
+If the kit was just reinstalled/upgraded, or this conversation began under an
+older kit version, diagnose the transition before editing:
+
+```bash
+python3 tools/agentctl.py migrate
+```
+
+The command is read-only and returns one action. Follow it until a rerun returns
+`continue`: re-read and `refresh` changed documents, restart only when a trusted
+`SessionStart` identity is missing, inspect pre-identity or stale claims without
+auto-releasing them, or repair the managed install from the latest kit checkout.
+A matching legacy singleton record is moved only by the existing `status` path
+after the report tells the agent it is safe to do so. Never continue an old-kit
+conversation alongside new-kit writers in the same checkout; reopen it first so
+the installed SessionStart hook can establish isolated state.
+
+After bootstrap, terminal-only/default identity is rejected by both the
+controller dispatcher and PreToolUse for every non-read-only command. `init` is
+the sole bootstrap exception because it installs the identity hook itself.
+
 ## During Work
 
 - Keep edits inside the active task write scope.
