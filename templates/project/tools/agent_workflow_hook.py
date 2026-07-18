@@ -197,16 +197,19 @@ def hook_environment(payload: dict, *, create_fork_instance: bool = False) -> di
     owner_changed = bool(
         current_runtime and inherited_owner and current_runtime != inherited_owner
     )
+    owner_unbound_inheritance = bool(
+        forked and session_id and inherited_id and session_id == inherited_id
+        and not inherited_owner
+    )
 
     instance_key = payload_session_instance_key(payload)
     inherited_instance = str(env.get(SESSION_INSTANCE_ENV) or "").strip()
-    if not instance_key and not (forked and owner_changed):
+    if not instance_key and not (
+        forked and (owner_changed or owner_unbound_inheritance)
+    ):
         instance_key = _private_identity_key("instance", inherited_instance)
 
-    ambiguous_fork = bool(
-        forked and parent_id and session_id and session_id == parent_id
-    )
-    if ambiguous_fork and not instance_key:
+    if forked and not instance_key:
         transcript_path = str(
             payload.get("transcript_path") or payload.get("transcriptPath") or ""
         ).strip()
@@ -214,15 +217,14 @@ def hook_environment(payload: dict, *, create_fork_instance: bool = False) -> di
             instance_key = _private_identity_key(
                 "instance", f"transcript_path={transcript_path}",
             )
-    if ambiguous_fork and not instance_key and create_fork_instance:
+    if forked and not instance_key and create_fork_instance:
         instance_key = _private_identity_key(
             "instance", f"generated={secrets.token_hex(24)}",
         )
 
     stale_payload_id = bool(
         session_id and inherited_id and session_id == inherited_id
-        and owner_changed
-        and not instance_key
+        and (owner_changed or owner_unbound_inheritance)
     )
     if session_id:
         if stale_payload_id:
@@ -235,14 +237,14 @@ def hook_environment(payload: dict, *, create_fork_instance: bool = False) -> di
         env[PARENT_SESSION_KEY_ENV] = parent_key
     if instance_key:
         env[SESSION_INSTANCE_ENV] = instance_key
-    elif forked and owner_changed:
+    elif forked:
         env[SESSION_INSTANCE_ENV] = ""
 
-    if ambiguous_fork and not instance_key:
+    if forked and not instance_key:
         env[SESSION_ID_ENV] = ""
         env[SESSION_OWNER_RUNTIME_ENV] = ""
         env[SESSION_ISOLATION_ERROR_ENV] = (
-            "forked conversation identity is indistinguishable from its parent; "
+            "forked conversation instance is missing or untrusted; "
             "restart the session so SessionStart can establish an isolated instance"
         )
     elif SESSION_ISOLATION_ERROR_ENV in env:
@@ -552,14 +554,16 @@ def pre_tool_use() -> int:
     payload = read_input()
     env = hook_environment(payload)
     isolation_error = str(env.get(SESSION_ISOLATION_ERROR_ENV) or "").strip()
-    if isolation_error:
+    mutating = is_mutating_tool(payload)
+    startup_command = command_is_agentctl_start(payload_command(payload))
+    if isolation_error and (mutating or startup_command):
         return block(
             "PreToolUse",
             "Agent Workflow Kit blocked this action because the forked conversation "
             "does not have an identity distinct from its parent. " + isolation_error + ".",
         )
     active = has_session(root, env)
-    if not is_mutating_tool(payload):
+    if not mutating:
         if active:
             heartbeat(root, env)
         return 0

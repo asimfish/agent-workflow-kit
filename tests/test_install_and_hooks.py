@@ -13,6 +13,22 @@ from urllib.parse import urlparse
 
 
 KIT = Path(__file__).resolve().parents[1]
+IDENTITY_ENV = (
+    "CODEX_THREAD_ID",
+    "CLAUDE_CODE_SESSION_ID",
+    "CURSOR_CONVERSATION_ID",
+    "WHALENT_AGENT_ID",
+    "WHALENT_CODEX_INSTANCE_ID",
+    "WHALENT_COMPOSER_ID",
+    "WHALENT_FORK_SOURCE_AGENT_ID",
+    "AGENT_SESSION_ID",
+    "AGENT_WORKFLOW_SESSION_ID",
+    "AGENT_WORKFLOW_SESSION_KEY",
+    "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME",
+    "AGENT_WORKFLOW_SESSION_INSTANCE_ID",
+    "AGENT_WORKFLOW_PARENT_SESSION_KEY",
+    "AGENT_WORKFLOW_SESSION_ISOLATION_ERROR",
+)
 
 
 class InstallAndHookRegressionTest(unittest.TestCase):
@@ -32,10 +48,17 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
         return proc
 
+    def clean_env(self):
+        env = os.environ.copy()
+        for name in IDENTITY_ENV:
+            env.pop(name, None)
+        return env
+
     def agentctl(self, *args, expect=0):
         proc = subprocess.run(
             [sys.executable, "tools/agentctl.py", *args],
             cwd=self.root,
+            env=self.clean_env(),
             text=True,
             capture_output=True,
             timeout=120,
@@ -47,6 +70,7 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         return subprocess.run(
             [sys.executable, "tools/agent_workflow_hook.py", event],
             cwd=self.root,
+            env=self.clean_env(),
             input=json.dumps(payload),
             text=True,
             capture_output=True,
@@ -213,6 +237,8 @@ class IndependentGateRegressionTest(unittest.TestCase):
     def agentctl(self, *args, expect=0, runtime="worker-runtime",
                  workflow_session="worker-session"):
         env = os.environ.copy()
+        for name in IDENTITY_ENV:
+            env.pop(name, None)
         env["CODEX_THREAD_ID"] = runtime
         env["AGENT_WORKFLOW_SESSION_ID"] = workflow_session
         proc = subprocess.run(
@@ -311,6 +337,8 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
         )
         self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
         self.env = os.environ.copy()
+        for name in IDENTITY_ENV:
+            self.env.pop(name, None)
         fake_bin = self.root / "fake-bin"
         fake_bin.mkdir()
         if os.name == "nt":

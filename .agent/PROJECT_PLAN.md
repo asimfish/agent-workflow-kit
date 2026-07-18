@@ -36,7 +36,12 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] T-051 - isolate forked conversation sessions (owner: codex)
+- [ ] T-056 - independently verify controller fork fail closed (owner: supervisor)
+- [x] T-055 - prevent fork fallback to parent controller session (owner: codex)
+- [ ] T-054 - independently re-review fork isolation fixes (owner: supervisor)
+- [x] T-053 - close fork isolation review findings (owner: codex)
+- [ ] T-052 - independently review forked-session isolation (owner: supervisor)
+- [x] T-051 - isolate forked conversation sessions (owner: codex)
 - [ ] T-050 - independent supervisor reconcile T-049 PR #7 evidence (owner: supervisor)
 - [x] T-049 - reconcile merged multi-session release (owner: codex)
 - [ ] T-048 - review T-047 binary signing mock fix (owner: supervisor)
