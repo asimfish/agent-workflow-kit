@@ -93,4 +93,5 @@
 | T-080 | review | supervisor | `.agent/` | [.agent/tasks/T-080.md](tasks/T-080.md) | independently review T-079 argument-verified allowlist |
 | T-081 | blocked | codex | `tools/, templates/project/, tests/, README.md, docs/` | [.agent/tasks/T-081.md](tasks/T-081.md) | make concurrent sessions worktree-safe and close read-option escapes |
 | T-082 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-082.md](tasks/T-082.md) | independently review T-081 concurrent isolation hardening |
-| T-083 | review | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-083.md](tasks/T-083.md) | close independent review isolation gaps |
+| T-083 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-083.md](tasks/T-083.md) | close independent review isolation gaps |
+| T-084 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-084.md](tasks/T-084.md) | independently review T-082 review record and T-083 isolation fixes (PR #17) |
