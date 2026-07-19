@@ -852,6 +852,100 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             (clone / clone_common).resolve(),
         )
 
+    def test_interpreter_and_script_writes_require_an_active_session(self):
+        # Inline interpreter code, project scripts, and stream copiers can
+        # write anywhere, so without an active task session they must be
+        # blocked instead of passing as "non-mutating".
+        opaque_commands = (
+            "python3 -c \"open('src/two/out.txt','w').write('x')\"",
+            "python3 collect.py --out src/two/",
+            "./collect.sh",
+            "bash scripts/collect.sh",
+            "rsync -a data/ src/two/",
+            "tar -xf bundle.tar -C src/two/",
+            "curl -o src/two/blob.bin https://example.invalid/blob",
+        )
+        for command in opaque_commands:
+            blocked = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertEqual(blocked.returncode, 0, blocked.stderr)
+            decision = json.loads(blocked.stdout or "{}")
+            self.assertEqual(decision.get("decision"), "block", command)
+        # The controller keeps its own identity/mutation gating: read-only
+        # audits stay available to sessions that have no task yet.
+        for command in (
+            "python3 tools/agentctl.py migrate --json",
+            "python3 tools/agentctl.py sessions list --json",
+            "sed -n '1p' README.md",
+            "perl -ne 'print if /Agent/' README.md",
+        ):
+            allowed = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertEqual(allowed.stdout, "", command)
+        # With an active session the same interpreter write is admitted
+        # through the normal session-level guard.
+        self.start("one", "T-181", "src/one/")
+        self.agentctl("refresh", session="one")
+        admitted = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash",
+             "tool_input": {"command": "python3 -c \"open('x','w').write('x')\""}},
+            session="one",
+        )
+        self.assertNotIn("\"decision\": \"block\"", admitted.stdout)
+
+    def test_workspace_contamination_blocks_until_reconciled(self):
+        subprocess.run(["git", "config", "user.email", "kit@test"], cwd=self.root, check=True)
+        subprocess.run(["git", "config", "user.name", "kit"], cwd=self.root, check=True)
+        victim = self.root / "src" / "two" / "data.txt"
+        victim.parent.mkdir(parents=True)
+        victim.write_text("original\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-qm", "seed tracked project files"],
+            cwd=self.root, check=True,
+        )
+        self.start("one", "T-191", "src/one/")
+        self.agentctl("refresh", session="one")
+        self.agentctl("sessions", "guard", "--path", "src/one/ok.py", session="one")
+        # Simulate an escaped write: a tracked file outside every live scope
+        # changes on disk (e.g. an interpreter or script wrote it).
+        victim.write_text("contaminated\n", encoding="utf-8")
+        blocked = self.agentctl(
+            "sessions", "guard", "--path", "src/one/ok.py",
+            session="one", expect=1,
+        )
+        self.assertIn("outside every live session scope", blocked.stderr)
+        self.assertIn("src/two/data.txt", blocked.stderr)
+        # Once a session legitimately owns that path, the same state is fine.
+        self.start("two", "T-192", "src/two/")
+        self.agentctl("sessions", "guard", "--path", "src/one/ok.py", session="one")
+
+    def test_explicit_auto_create_bypasses_queue_selection(self):
+        self.agentctl(
+            "task", "create", "--id", "T-EXIST", "--title", "queued for codex",
+            "--owner", "codex", "--scope", "src/queue/", session="one",
+        )
+        claimed = self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-REQUEST",
+            "--title", "explicit request", "--scope", "src/request/",
+            session="one",
+        )
+        self.assertIn("T-REQUEST", claimed.stdout)
+        board = json.loads(
+            (self.root / ".agent" / "board.json").read_text(encoding="utf-8"))
+        self.assertEqual(board["tasks"]["T-REQUEST"]["status"], "in_progress")
+        self.assertEqual(board["tasks"]["T-EXIST"]["status"], "todo")
+        # Plain work without an explicit request keeps selecting the queue.
+        selected = self.agentctl("work", "--agent", "codex", session="two")
+        self.assertIn("T-EXIST", selected.stdout)
+
     def test_start_rejects_unknown_task_ids_without_registering_a_claim(self):
         unknown = self.agentctl(
             "start", "--task", "T-999", "--agent", "codex",

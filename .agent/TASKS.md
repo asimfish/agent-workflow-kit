@@ -83,3 +83,5 @@
 | T-070 | review | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-070.md](tasks/T-070.md) | package document ownership release |
 | T-071 | done | cursor | `tests/, .agent/` | [.agent/tasks/T-071.md](tasks/T-071.md) | deflake loop inflight reconciliation regression |
 | T-072 | review | supervisor | `.agent/` | [.agent/tasks/T-072.md](tasks/T-072.md) | independently review T-071 loop test deflake |
+| T-073 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-073.md](tasks/T-073.md) | close interpreter write escapes and explicit auto-create claim |
+| T-074 | review | supervisor | `.agent/` | [.agent/tasks/T-074.md](tasks/T-074.md) | independently review T-073 write escape closure |

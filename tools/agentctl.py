@@ -1099,6 +1099,39 @@ def _session_effective_scope(st: dict) -> list[str]:
     return scope
 
 
+def _workspace_contamination(root: Path, rows: list[dict]) -> list[str]:
+    """Tracked files modified outside every live session's effective scope.
+
+    Static command inspection cannot enumerate what interpreters or project
+    scripts write, so the guard reconciles the working tree instead: a tracked
+    modification that no live session scope covers is evidence that a write
+    escaped the guards, and further mutating actions stop until it is
+    reconciled. Installer-managed dotfiles and workflow documents are exempt;
+    untracked files are judged at commit time by the pre-commit scope check.
+    """
+    status = _git(
+        root, "status", "--porcelain", "-z", "--untracked-files=no",
+        "--no-renames", "--ignore-submodules=all",
+    )
+    if not status:
+        return []
+    scopes: list[list[str]] = [_session_effective_scope(row) for row in rows]
+    contaminated = []
+    for entry in status.split("\0"):
+        # `_git` strips leading whitespace from the first entry, so parse the
+        # two status letters and separator instead of using fixed offsets.
+        match = re.match(r"^\s*[MADRCUT? !]{1,2}\s(.*)$", entry)
+        if not match:
+            continue
+        path = match.group(1).strip().strip('"')
+        if not path or path == "AGENTS.md" or path.startswith("."):
+            continue
+        if any(_path_in_scope(path, scope) for scope in scopes if scope):
+            continue
+        contaminated.append(path)
+    return sorted(set(contaminated))
+
+
 def _session_awareness(root: Path, current_key: str | None = None) -> str:
     current_key = current_key or _workflow_session_key()
     rows = _blocking_session_rows(root, current_key)
@@ -1702,7 +1735,11 @@ def cmd_work(args: argparse.Namespace) -> int:
             _run_loop_checkpoint(root, "work-start", once=True, trigger="work-resume", strict=False)
             return 0
     meta = _resolve_worker_metadata(root, agent, args)
-    task = _select_next_task(root, agent)
+    # An explicit creation request names the work this conversation was asked
+    # to do; it must never be silently swapped for another queued task that
+    # happens to share the agent name.
+    explicit_create = bool(args.auto_create and (args.new_id or args.title))
+    task = None if explicit_create else _select_next_task(root, agent)
     if not task:
         if args.auto_create:
             if not args.title:
@@ -7935,6 +7972,16 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
                             f"{other.get('workflow_session_key')} task={other.get('task')}"
                         )
             claims.append(path)
+        checkout_rows = [
+            row for row in _session_rows_unlocked(root) if _same_checkout(root, row)
+        ]
+        for path in _workspace_contamination(root, checkout_rows):
+            problems.append(
+                f"tracked file {path} was modified outside every live session scope; "
+                "a write escaped the session guards (interpreter, script, or manual "
+                "edit). Revert it, claim it through a task scope, or let a human "
+                "commit it separately before continuing"
+            )
         if problems:
             for problem in sorted(set(problems)):
                 print(f"agentctl: session guard blocked: {problem}", file=sys.stderr)

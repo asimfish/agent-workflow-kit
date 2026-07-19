@@ -453,6 +453,89 @@ def payload_command(payload: dict) -> str:
     return str((payload.get("tool_input") or {}).get("command") or "")
 
 
+def _shell_command_segments(command: str) -> list[tuple[list[str], str]]:
+    if not command:
+        return []
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return []
+    segments = []
+    current = []
+    for token in tokens:
+        if token in {";", "&&", "||", "|"}:
+            if current:
+                segments.append((current, token))
+            current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append((current, ""))
+    return segments
+
+
+def _strip_command_prefixes(tokens: list[str]) -> list[str]:
+    command_tokens = list(tokens)
+    while command_tokens and command_tokens[0] in {"sudo", "command", "nohup", "time"}:
+        command_tokens = command_tokens[1:]
+    if command_tokens and command_tokens[0] == "env":
+        command_tokens = command_tokens[1:]
+        while command_tokens and (
+                command_tokens[0].startswith("-")
+                or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0])):
+            command_tokens = command_tokens[1:]
+    while command_tokens and re.match(
+            r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
+        command_tokens = command_tokens[1:]
+    return command_tokens
+
+
+# Executables whose writes cannot be statically mapped to paths. They demand
+# an active task session (and the session-level guard) instead of passing as
+# read-only. agentctl invocations are excluded: the controller enforces its
+# own identity/mutation policy for every subcommand.
+OPAQUE_WRITE_EXECUTABLES = {
+    "rsync", "dd", "install", "truncate", "shred", "unzip", "make",
+    "cmake", "ninja", "pip", "pip3",
+}
+OPAQUE_INTERPRETERS = re.compile(r"^(python[0-9.]*|node|deno|bun|ruby)$")
+SCRIPT_SUFFIX = re.compile(r"\.(sh|bash|zsh|py|js|ts|rb|pl)$")
+
+
+def command_opaque_write(command: str) -> bool:
+    """True when a shell command can write files we cannot enumerate."""
+    for segment, _connector in _shell_command_segments(command):
+        tokens = _strip_command_prefixes(segment)
+        if not tokens:
+            continue
+        head = tokens[0]
+        executable = Path(head).name
+        args = tokens[1:]
+        if "agentctl.py" in " ".join(tokens):
+            continue
+        if head.startswith("./"):
+            return True
+        if executable in OPAQUE_WRITE_EXECUTABLES:
+            if executable == "unzip" and any(a in {"-l", "-t"} for a in args):
+                continue
+            return True
+        if executable == "tar" and any(
+                a.startswith("-") and "x" in a.lstrip("-") for a in args):
+            return True
+        if executable in {"curl", "wget"} and any(
+                a in {"-o", "-O", "--output", "--remote-name"}
+                or a.startswith("--output=") for a in args):
+            return True
+        if executable in {"bash", "sh", "zsh"} and any(
+                SCRIPT_SUFFIX.search(a) for a in args if not a.startswith("-")):
+            return True
+        if OPAQUE_INTERPRETERS.match(executable):
+            return True
+    return False
+
+
 def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
     values = []
     working_dir = (cwd or Path.cwd()).expanduser()
@@ -472,23 +555,7 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
         add_target(value)
     if not command:
         return values
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
-        lexer.whitespace_split = True
-        tokens = list(lexer)
-    except ValueError:
-        return values
-    segments = []
-    current = []
-    for token in tokens:
-        if token in {";", "&&", "||", "|"}:
-            if current:
-                segments.append((current, token))
-            current = []
-        else:
-            current.append(token)
-    if current:
-        segments.append((current, ""))
+    segments = _shell_command_segments(command)
     redirect_tokens = {">", ">>", "1>", "1>>", "2>", "2>>"}
     for segment, connector in segments:
         command_tokens = []
@@ -606,7 +673,11 @@ def is_mutating_tool(payload: dict) -> bool:
     if command:
         if command_is_agentctl_start(command):
             return False
-        return bool(payload_paths(payload)) or MUTATING_BASH.search(command) is not None
+        return (
+            bool(payload_paths(payload))
+            or MUTATING_BASH.search(command) is not None
+            or command_opaque_write(command)
+        )
     if tool == "Bash":
         if command_is_agentctl_start(command):
             return False
