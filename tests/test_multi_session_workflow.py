@@ -1012,6 +1012,97 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertNotIn('"decision": "block"', solo.stdout)
 
+    def test_git_working_tree_writers_are_not_read_only(self):
+        """Audit repro: `git restore` must not wipe a peer's uncommitted work."""
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            "git restore -- src/two/data.txt",
+            "git stash",
+            "git rm -r src/two",
+            "git mv src/two/a src/two/b",
+            "git apply patch.diff",
+            "git cherry-pick abc123",
+            "git revert HEAD",
+            "git worktree remove ../gone",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", command)
+        # git reads keep passing beside peers, including flag-prefixed forms.
+        for command in (
+            "git status",
+            "git log --oneline -5",
+            "git -C . diff --stat",
+            "git config --get core.hooksPath",
+            "git stash list",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertEqual(passthrough.stdout, "", command)
+
+    def test_link_creation_and_pathless_writers_cannot_slip_through(self):
+        """Audit repro: ln must be path-checked; pathed-without-paths escalates."""
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        into_peer = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {
+                "command": "ln -s ../../etc/hosts src/two/link"}},
+            session="one",
+        )
+        payload = json.loads(into_peer.stdout)
+        self.assertEqual(payload.get("decision"), "block")
+        own_scope = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {
+                "command": "ln -s data.txt src/one/link"}},
+            session="one",
+        )
+        self.assertNotIn('"decision": "block"', own_scope.stdout)
+        # A write-classified command that yields no checkable path cannot pass
+        # beside a live peer on the strength of an empty path list.
+        pathless = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "cp -r"}},
+            session="one",
+        )
+        payload = json.loads(pathless.stdout)
+        self.assertEqual(payload.get("decision"), "block")
+
+    def test_command_substitution_and_process_substitution_are_opaque(self):
+        """Audit repro: $(...), backticks, and <(...) can hide arbitrary writes."""
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            'echo $(python3 -c "open(\'src/two/x\',\'w\').write(\'x\')")',
+            "echo `date` > /dev/null; echo `python3 evil.py`",
+            "diff <(sort a.txt) <(sort b.txt)",
+            'VAR=$(mycollector); echo "$VAR"',
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", command)
+
     def test_unknown_executables_default_to_writes_requiring_a_session(self):
         probe = self.hook(
             "pre-tool-use",

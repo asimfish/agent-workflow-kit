@@ -519,9 +519,67 @@ READ_ONLY_EXECUTABLES = {
     "hexdump", "strings", "base64", "column", "nl", "od", "seq", "expr",
     "getconf", "sysctl", "sw_vers", "arch", "nproc", "tty", "uptime",
     "awk", "gawk", "cd", "export", "unset", "set", "wait", "kill",
-    "git", "gh",
+    "gh",
 }
 _IN_PLACE_FLAG = re.compile(r"^-[a-zA-Z]*i|^--in-place")
+
+# Shell constructs that splice arbitrary command output into another command.
+# Static tokenization cannot see inside them, so their presence makes the
+# whole command an opaque write (fail closed, including quoted literals).
+_SHELL_SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
+
+# Git subcommands that never modify the working tree, index, refs, or config.
+GIT_READ_SUBCOMMANDS = {
+    "status", "log", "show", "diff", "rev-parse", "describe", "ls-files",
+    "ls-tree", "ls-remote", "cat-file", "blame", "annotate", "shortlog",
+    "grep", "help", "merge-base", "name-rev", "diff-tree", "diff-index",
+    "count-objects", "cherry", "var", "show-ref", "reflog", "fetch",
+    "whatchanged", "rev-list", "check-ignore", "check-attr",
+}
+_GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                    "--exec-path"}
+
+
+def _git_segment_details(tokens: list[str]) -> tuple[str, list[str]]:
+    """Return (subcommand, remaining args) after git's global options."""
+    rest = list(tokens[1:])
+    while rest:
+        item = rest[0]
+        if item in _GIT_VALUE_FLAGS:
+            rest = rest[2:]
+            continue
+        if item.startswith("-"):
+            rest = rest[1:]
+            continue
+        break
+    if not rest:
+        return "", []
+    return rest[0], rest[1:]
+
+
+def _git_segment_read_only(tokens: list[str]) -> bool:
+    sub, tail = _git_segment_details(tokens)
+    if not sub:
+        return True
+    positional = [item for item in tail if not item.startswith("-") and item != "--"]
+    if sub in GIT_READ_SUBCOMMANDS:
+        return True
+    if sub == "branch":
+        return not positional
+    if sub == "config":
+        return any(item in {"--get", "--get-all", "--get-regexp", "--list", "-l"}
+                   for item in tail)
+    if sub == "tag":
+        return not positional or any(item in {"-l", "--list"} for item in tail)
+    if sub == "stash":
+        return bool(tail) and tail[0] in {"list", "show"}
+    if sub == "remote":
+        return not tail or tail[0] in {"-v", "show", "get-url"}
+    if sub == "worktree":
+        return bool(tail) and tail[0] == "list"
+    # Default-deny: restore/checkout/rm/mv/apply/cherry-pick/revert/clean/
+    # stash-mutations and anything unrecognized can rewrite shared state.
+    return False
 
 
 def _classify_segment(tokens: list[str]) -> str:
@@ -560,6 +618,8 @@ def _classify_segment(tokens: list[str]) -> str:
         return "read_only"
     if OPAQUE_INTERPRETERS.match(executable):
         return "opaque"
+    if executable == "git":
+        return "read_only" if _git_segment_read_only(tokens) else "git_write"
     if executable == "find":
         if any(a in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for a in args):
             return "opaque"
@@ -576,25 +636,41 @@ def _classify_segment(tokens: list[str]) -> str:
     return "opaque"
 
 
+_VERDICT_RANK = {"read_only": 0, "pathed": 1, "git_write": 2, "opaque": 3}
+
+
 def classify_shell_command(command: str) -> str:
     """Strongest write capability across all pipeline segments."""
+    if command and _SHELL_SUBSTITUTION.search(command):
+        return "opaque"
     strongest = "read_only"
     for segment, _connector in _shell_command_segments(command):
         if any(token in {">", ">>", "1>", "1>>", "2>", "2>>"} for token in segment):
-            if strongest == "read_only":
+            if _VERDICT_RANK[strongest] < _VERDICT_RANK["pathed"]:
                 strongest = "pathed"
         tokens = _strip_command_prefixes(segment)
         verdict = _classify_segment(tokens)
         if verdict == "opaque":
             return "opaque"
-        if verdict == "pathed":
-            strongest = "pathed"
+        if _VERDICT_RANK[verdict] > _VERDICT_RANK[strongest]:
+            strongest = verdict
     return strongest
 
 
 def command_opaque_write(command: str) -> bool:
     """True when a shell command can write files we cannot enumerate."""
     return classify_shell_command(command) == "opaque"
+
+
+def command_git_write(command: str) -> bool:
+    """True when any segment mutates git state (index/refs/working tree)."""
+    if GIT_WRITE_BASH.search(command):
+        return True
+    for segment, _connector in _shell_command_segments(command):
+        tokens = _strip_command_prefixes(segment)
+        if tokens and Path(tokens[0]).name == "git" and not _git_segment_read_only(tokens):
+            return True
+    return False
 
 
 def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
@@ -659,6 +735,19 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
         if executable in {"touch", "mkdir", "rm", "tee"}:
             for value in args:
                 add_target(value)
+        elif executable == "ln" and args:
+            # `ln [-s] target linkname` writes the link name; a bare
+            # `ln target` links into the working directory.
+            add_target(args[-1] if len(args) >= 2 else args[0])
+        elif executable == "git":
+            sub, tail = _git_segment_details(command_tokens)
+            if sub in {"restore", "rm", "mv", "checkout", "clean"}:
+                for value in tail:
+                    if value.startswith("-") or value == "--":
+                        continue
+                    if sub == "checkout" and "--" not in tail:
+                        continue  # branch switch, not a path restore
+                    add_target(value)
         elif executable in {"cp", "mv"} and args:
             add_target(args[-1])
         elif executable in {"sed", "perl"} and args and any(
@@ -699,13 +788,18 @@ def payload_paths(payload: dict) -> list[str]:
 def guard_session(root: Path, payload: dict, env: dict) -> tuple[bool, str]:
     agentctl = root / "tools" / "agentctl.py"
     command = [sys.executable, str(agentctl), "sessions", "guard"]
-    for path in payload_paths(payload):
+    paths = payload_paths(payload)
+    for path in paths:
         command.extend(["--path", path])
     shell_command = payload_command(payload)
-    if GIT_WRITE_BASH.search(shell_command):
-        command.append("--git-write")
-    if shell_command and command_opaque_write(shell_command):
-        command.append("--opaque")
+    if shell_command:
+        verdict = classify_shell_command(shell_command)
+        if command_git_write(shell_command):
+            command.append("--git-write")
+        if verdict == "opaque" or (verdict == "pathed" and not paths):
+            # A write-capable command that yielded no checkable path must not
+            # pass on the strength of an empty path list.
+            command.append("--opaque")
     result = run(command, root, env)
     if result.returncode == 0:
         return True, result.stdout.strip()
@@ -740,7 +834,7 @@ def is_mutating_tool(payload: dict) -> bool:
         return (
             bool(payload_paths(payload))
             or MUTATING_BASH.search(command) is not None
-            or command_opaque_write(command)
+            or classify_shell_command(command) != "read_only"
         )
     if tool == "Bash":
         if command_is_agentctl_start(command):
