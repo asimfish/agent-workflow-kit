@@ -91,7 +91,9 @@
 | T-078 | review | supervisor | `.agent/` | [.agent/tasks/T-078.md](tasks/T-078.md) | independently review T-077 git and shell metacharacter hardening |
 | T-079 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-079.md](tasks/T-079.md) | verify read-only allowlist strictly and fix git read misclassifications |
 | T-080 | review | supervisor | `.agent/` | [.agent/tasks/T-080.md](tasks/T-080.md) | independently review T-079 argument-verified allowlist |
-| T-081 | review | codex | `tools/, templates/project/, tests/, README.md, docs/` | [.agent/tasks/T-081.md](tasks/T-081.md) | make concurrent sessions worktree-safe and close read-option escapes |
+| T-081 | done | codex | `tools/, templates/project/, tests/, README.md, docs/` | [.agent/tasks/T-081.md](tasks/T-081.md) | make concurrent sessions worktree-safe and close read-option escapes |
 | T-082 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-082.md](tasks/T-082.md) | independently review T-081 concurrent isolation hardening |
 | T-083 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-083.md](tasks/T-083.md) | close independent review isolation gaps |
 | T-084 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-084.md](tasks/T-084.md) | independently review T-082 review record and T-083 isolation fixes (PR #17) |
+| T-085 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-085.md](tasks/T-085.md) | review T-081 resubmission and T-083/T-084 evidence |
+| T-086 | review | codex-integrator | `.agent/` | [.agent/tasks/T-086.md](tasks/T-086.md) | integrate independent T-081 review evidence |
