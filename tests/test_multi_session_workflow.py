@@ -1013,6 +1013,101 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertNotIn('"decision": "block"', solo.stdout)
 
+    def test_newline_separation_and_ampersand_redirects_are_segmented(self):
+        """Self-audit: `\\n` must split commands and `&>`/`>|` must be writes."""
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            "echo hi\npython3 evil.py",
+            "ls\ntouch src/two/x",
+            "echo hi &> src/two/x",
+            "echo hi &>> src/two/x",
+            "echo hi >| src/two/x",
+            "mv src/two/data.txt src/one/",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), repr(command))
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", repr(command))
+        # Own-scope equivalents stay usable.
+        for command in (
+            "echo hi &> src/one/log.txt",
+            "ls\ntouch src/one/x",
+            "mv src/one/a.txt src/one/b.txt",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', passthrough.stdout, repr(command))
+        # Wrapper commands must not distort the underlying classification.
+        wrapped = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {
+                "command": "timeout 60 grep -r pattern src"}},
+            session="one",
+        )
+        self.assertEqual(wrapped.stdout, "", "timeout-wrapped grep")
+
+    def test_git_shared_ref_mutations_require_repo_wide_exclusivity(self):
+        """Self-audit: branch -D etc. hit every worktree, not one checkout."""
+        self.start("one", "T-101", "src/one/")
+        self.agentctl("refresh", session="one")
+        # Register a session that lives in a DIFFERENT checkout (a worktree).
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True, timeout=60)
+        subprocess.run(
+            ["git", "-c", "core.hooksPath=", "-c", "user.email=t@t.t",
+             "-c", "user.name=t", "commit", "-qm", "seed for worktree"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        other = self.root / ".." / f"{self.root.name}-wt"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", str(other), "-b", "wt-branch"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        self.addCleanup(
+            lambda: subprocess.run(
+                ["git", "worktree", "remove", "--force", str(other)],
+                cwd=self.root, timeout=60,
+            )
+        )
+        proc = subprocess.run(
+            [sys.executable, "tools/agentctl.py", "work", "--agent", "codex",
+             "--auto-create", "--new-id", "T-777", "--title", "wt",
+             "--scope", "src/wt/"],
+            cwd=other, env=self.env("wt-session"), text=True,
+            capture_output=True, timeout=120,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+
+        # Shared-ref mutations are refused while ANY other checkout is live.
+        for command in (
+            "git branch -D wt-branch",
+            "git branch -m wt-branch renamed",
+            "git reflog expire --expire=now --all",
+            "git fetch --prune origin",
+            "git gc",
+            "git tag -d v1",
+            "git push --delete origin wt-branch",
+            "git push --force origin main",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", command)
+            self.assertIn("worktree", payload.get("reason", ""), command)
+
     def test_allowlisted_text_tools_cannot_write_through_options_or_dsl(self):
         """Audit repro: sort -o, awk DSL redirects, yq -i, old-style tar."""
         self.start("one", "T-101", "src/one/")

@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-082 - independently review T-081 shell parse and shared-ref fixes (owner: supervisor)
+- [x] T-081 - close newline, redirect, mv-source, and shared-ref gaps (owner: cursor)
 - [ ] T-080 - independently review T-079 argument-verified allowlist (owner: supervisor)
 - [x] T-079 - verify read-only allowlist strictly and fix git read misclassifications (owner: cursor)
 - [ ] T-078 - independently review T-077 git and shell metacharacter hardening (owner: supervisor)
