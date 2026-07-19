@@ -979,6 +979,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             payload = json.loads(decision.stdout)
             self.assertEqual(payload.get("decision"), "block", command)
             self.assertIn("worktree", payload.get("reason", ""), command)
+            self.assertIn("before starting", payload.get("reason", ""), command)
 
         # Read-only staples and path-checked writes keep working beside peers.
         # (perl left this list in T-079: as a general-purpose language it can
@@ -1054,6 +1055,80 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             "sed -n '1,5p' README.md",
             "tar -tzf data.tgz",
             "uniq src/one/in",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertEqual(passthrough.stdout, "", command)
+
+    def test_read_only_commands_fail_closed_on_output_and_execution_options(self):
+        """Every admitted read command must remain read-only for these arguments."""
+        self.start("one", "T-111", "src/one/")
+        self.start("two", "T-112", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            "git diff --output=src/two/diff.txt HEAD",
+            "git log --output src/two/log.txt -1",
+            "git -C src/one diff --output=../two/leak.txt HEAD",
+            "git show --ext-diff HEAD",
+            "git grep --open-files-in-pager=evil needle",
+            "rg --pre 'python3 evil.py' needle .",
+            "fd --exec python3 evil.py",
+            "xxd src/one/input.bin src/two/dump.txt",
+            "find src/one -fprint src/two/list.txt",
+            "tree -o src/two/tree.txt src/one",
+            "cp -t src/two src/one/a",
+            "cp -at src/two src/one/a",
+            "mv --target-directory=src/two src/one/a",
+            "mv -vt src/two src/one/a",
+            "ln -s -t src/two src/one/a",
+            "ln -st src/two src/one/a",
+            "sysctl -w kern.maxfiles=1",
+            "kill 12345",
+            "gh pr merge 1 --merge",
+            "wget https://example.invalid/archive",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", command)
+
+        # Output paths inside the active task scope remain usable when the
+        # command exposes a concrete destination to the guard.
+        for command in (
+            "git diff --output=src/one/diff.txt HEAD",
+            "git -C src/one diff --output=diff.txt HEAD",
+            "xxd src/one/input.bin src/one/dump.txt",
+            "find src/one -fprint src/one/list.txt",
+            "tree -o src/one/tree.txt src/one",
+            "cp -t src/one src/one/a",
+            "cp -at src/one src/one/a",
+            "mv --target-directory=src/one src/one/a",
+            "ln -s -t src/one src/one/a",
+        ):
+            admitted = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', admitted.stdout, command)
+
+        for command in (
+            "git diff --stat",
+            "rg needle .",
+            "fd needle .",
+            "xxd -l 16 src/one/input.bin",
+            "find src/one -print",
+            "tree src/one",
+            "sysctl kern.ostype",
+            "gh pr view 1",
         ):
             passthrough = self.hook(
                 "pre-tool-use",

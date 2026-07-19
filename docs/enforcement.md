@@ -53,8 +53,10 @@ scripts, test/build runners, archive and download tools, nested shells, and
 unknown executables — is an opaque write. Opaque writes require an active
 task session and exclusive use of the checkout: beside another live session
 they are refused with worktree guidance, because their output paths cannot
-be attributed afterwards. Every mutating action also reconciles the working
-tree; a tracked file modified outside every live session scope (including
+be attributed afterwards. Worktree allocation is a pre-start transition from
+a committed `todo`/`ready` task, not an implicit migration of an active dirty
+shared checkout. Every mutating action also reconciles the working tree; a
+tracked file modified outside every live session scope (including
 tracked dotfiles such as `.env`) blocks further mutations until reverted,
 claimed, or committed separately by a human.
 
@@ -77,6 +79,15 @@ The read-only allowlist is argument-verified, not name-based: `sort -o` and
 can write arbitrary files; `sed` counts as read-only only for provably
 print-only scripts (line addresses plus `p`), and both dash and old-style
 bundled `tar` option words are recognized for extract/create/update modes.
+Git `diff`/`log`/`show --output` destinations are resolved after leading `-C`
+options and checked as file writes; `--ext-diff` and pager-opening grep forms
+are opaque. `rg --pre`, `fd --exec`, `ag --pager`, `find -fprint`, `tree -o`,
+and a second `xxd` file operand cannot inherit the read-only classification of
+their executable name. GNU `cp`/`mv`/`ln -t` destinations, including clustered
+short options, are checked as directories. Host/process/remote mutations such
+as `sysctl -w`, `kill`, mutating `gh` actions, and default `wget` downloads are
+opaque beside peers; a conservative set of `gh ... view/list/status` actions
+remains read-only.
 Static shell parsing still cannot PROVE arbitrary commands are read-only, so
 the guarantee model remains: verified reads and path-checked writes may run
 beside peers; everything else requires an exclusive checkout or a task

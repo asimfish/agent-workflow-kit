@@ -204,9 +204,11 @@ The coordination policy is deliberately small:
   are exclusive per checkout too. Beside another live session they are refused
   outright and pointed at a task worktree; alone, they require an active task
   session, and the working tree is reconciled after every mutating action.
-  Only an explicit read-only allowlist (`ls`, `cat`, `grep`, `rg`, `git`
-  reads, `sed`/`awk`/`perl` filters without in-place flags, and similar)
-  passes without a claim.
+  Only explicit, argument-verified read forms (`ls`, `cat`, plain `rg`/`fd`,
+  safe Git/GitHub reads, print-only `sed`, and similar) pass without a claim.
+  Tool names alone are never sufficient: Git `--output`, `find`/`tree` output
+  actions, `xxd` output operands, search-tool exec/preprocessors, and GNU
+  target-directory forms are path-checked or fail closed.
 - A missing heartbeat marks a session stale but does not discard its claim.
   After inspection, an agent can explicitly release it and resume the existing
   task; task docs and working files are preserved.
@@ -561,6 +563,12 @@ uncommitted task documents, dirty baselines, duplicate task/agent leases,
 existing branches, paths overlapping another checkout, and any scope overlap
 with a nonreleased lease, including leases using the same agent name. A managed
 worker cannot override its leased task, agent, or scope during startup.
+
+Allocate the lease before the worker starts the execution phase. If an opaque
+command is denied in an already-active shared checkout, the guard does not
+pretend it can move uncommitted work automatically: wait for the peer sessions
+to finish/release, or create a new committed `todo`/`ready` phase and allocate
+that phase from a clean planning checkout.
 
 After the worker commits or removes all changes, run release from another
 worktree:

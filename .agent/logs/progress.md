@@ -191,3 +191,6 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-20 00:48:00 [T-079] Argument-verified allowlist (sort/uniq/base64 outputs pathed, awk/yq/perl opaque, sed print-only, old-style tar), git fetch/reflog-mutation/branch-config now writes; superseded perl assertions updated with rationale.
 - 2026-07-20 00:51:46 [T-079] Argument-verified allowlist (sort/uniq/base64 outputs pathed, awk/yq/perl opaque, sed print-only, old-style tar), git fetch/reflog-mutation/branch-config now writes; superseded perl assertions updated with rationale.
 - 2026-07-20 01:09:19 [T-080] 41/41 probes after in-review fix of git branch --list over-block; multi-session+ownership 34/34 rerun; template parity confirmed.
+- 2026-07-20 01:43:54 [T-081] Defined T-081 contract: block option-based cross-scope writes and make concurrent worktree isolation agent-actionable.
+- 2026-07-20 02:03:56 [T-081] Closed command-option write escapes and corrected worktree guidance; starting focused and full verification.
+- 2026-07-20 02:25:30 [T-081] Verification complete: 56 focused and 131 full tests pass; syntax, parity, diff, and manual checks pass.

@@ -7967,9 +7967,11 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
             problems.append(
                 "this command's written paths cannot be enumerated, so it "
                 "requires exclusive use of this checkout; other live sessions: "
-                f"{owners}. Run it in a task worktree (agentctl worktree create "
-                "--task <task-id> --agent <agent-name>) or wait until the peers "
-                "finish or release."
+                f"{owners}. Wait until those sessions finish/release, or put the "
+                "next execution phase in a committed todo/ready task and allocate "
+                "its managed worktree before starting that phase (agentctl "
+                "worktree create --task <task-id> --agent <agent-name>). An "
+                "already-active shared-checkout task is not relocated implicitly."
             )
         claims = []
         effective_scope = _session_effective_scope(st)

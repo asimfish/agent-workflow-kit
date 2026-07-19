@@ -521,8 +521,7 @@ READ_ONLY_EXECUTABLES = {
     "shasum", "sha1sum", "sha256sum", "cksum", "jq", "xxd",
     "hexdump", "strings", "column", "nl", "od", "seq", "expr",
     "getconf", "sysctl", "sw_vers", "arch", "nproc", "tty", "uptime",
-    "cd", "export", "unset", "set", "wait", "kill",
-    "gh",
+    "cd", "export", "unset", "set", "wait",
 }
 # sed scripts that provably only print: line addresses plus p/q commands,
 # e.g. `1p`, `1,5p`, `$p`. Anything else (s///w, r/w commands, hold space
@@ -551,6 +550,101 @@ _GIT_BRANCH_READ_FLAGS = re.compile(
 )
 _GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                     "--exec-path"}
+_GIT_EMBEDDED_EXEC_FLAGS = {"--ext-diff", "--textconv"}
+_GH_GLOBAL_VALUE_FLAGS = {"-R", "--repo", "--hostname"}
+_GH_READ_ACTIONS = {
+    ("auth", "status"),
+    ("cache", "list"),
+    ("issue", "list"), ("issue", "status"), ("issue", "view"),
+    ("pr", "checks"), ("pr", "diff"), ("pr", "list"),
+    ("pr", "status"), ("pr", "view"),
+    ("release", "list"), ("release", "view"),
+    ("repo", "list"), ("repo", "view"),
+    ("run", "list"), ("run", "view"), ("run", "watch"),
+    ("workflow", "list"), ("workflow", "view"),
+}
+_XXD_VALUE_FLAGS = {
+    "-c", "-cols", "-g", "-groupsize", "-l", "-len", "-n", "-name",
+    "-o", "-offset", "-s", "-seek",
+}
+_FIND_OUTPUT_ACTIONS = {"-fls", "-fprint", "-fprint0", "-fprintf"}
+_CURL_PATH_FLAGS = {
+    "-c", "--cookie-jar", "-D", "--dump-header", "--trace",
+    "--trace-ascii", "--etag-save", "--hsts", "--alt-svc", "-o", "--output",
+}
+
+
+def _option_values(args: list[str], flags: set[str],
+                   attached_short: bool = False) -> list[str]:
+    """Return explicit values for selected short/long command options."""
+    values = []
+    index = 0
+    while index < len(args):
+        item = args[index]
+        if item in flags:
+            if index + 1 < len(args):
+                values.append(args[index + 1])
+                index += 2
+                continue
+        for flag in flags:
+            if flag.startswith("--") and item.startswith(flag + "="):
+                values.append(item.split("=", 1)[1])
+                break
+            if (attached_short and len(flag) == 2 and item.startswith(flag)
+                    and len(item) > 2):
+                values.append(item[2:])
+                break
+        index += 1
+    return values
+
+
+def _positionals(args: list[str], value_flags: set[str]) -> list[str]:
+    """Return positionals while skipping values consumed by known options."""
+    values = []
+    index = 0
+    positional_only = False
+    while index < len(args):
+        item = args[index]
+        if positional_only:
+            values.append(item)
+        elif item == "--":
+            positional_only = True
+        elif item in value_flags:
+            index += 1
+        elif not item.startswith("-"):
+            values.append(item)
+        index += 1
+    return values
+
+
+def _clustered_short_option_values(args: list[str], option: str) -> list[str]:
+    """Read a required value from `-abcVALUE` style short-option clusters."""
+    values = []
+    for index, item in enumerate(args):
+        if not item.startswith("-") or item.startswith("--") or len(item) < 2:
+            continue
+        cluster = item[1:]
+        position = cluster.find(option)
+        if position < 0:
+            continue
+        attached = cluster[position + 1:]
+        if attached:
+            values.append(attached)
+        elif index + 1 < len(args):
+            values.append(args[index + 1])
+    return values
+
+
+def _target_directory_values(args: list[str]) -> list[str]:
+    values = _option_values(args, {"--target-directory"})
+    values.extend(_clustered_short_option_values(args, "t"))
+    return list(dict.fromkeys(values))
+
+
+def _tree_output_values(args: list[str]) -> list[str]:
+    values = _option_values(args, {"--output"})
+    values.extend(_clustered_short_option_values(args, "o"))
+    return list(dict.fromkeys(values))
 
 
 def _git_segment_details(tokens: list[str]) -> tuple[str, list[str]]:
@@ -568,6 +662,73 @@ def _git_segment_details(tokens: list[str]) -> tuple[str, list[str]]:
     if not rest:
         return "", []
     return rest[0], rest[1:]
+
+
+def _git_output_paths(tokens: list[str]) -> list[str]:
+    sub, tail = _git_segment_details(tokens)
+    if sub not in GIT_READ_SUBCOMMANDS:
+        return []
+    return _option_values(tail, {"--output"})
+
+
+def _git_effective_cwd(tokens: list[str], cwd: Path) -> Path:
+    """Apply Git's leading `-C` options to resolve command output paths."""
+    current = cwd
+    rest = list(tokens[1:])
+    index = 0
+    while index < len(rest):
+        item = rest[index]
+        if item == "-C" and index + 1 < len(rest):
+            target = Path(rest[index + 1]).expanduser()
+            current = target if target.is_absolute() else current / target
+            index += 2
+            continue
+        if item in _GIT_VALUE_FLAGS:
+            index += 2
+            continue
+        if item.startswith("-"):
+            index += 1
+            continue
+        break
+    return current
+
+
+def _git_has_embedded_execution(tokens: list[str]) -> bool:
+    sub, tail = _git_segment_details(tokens)
+    if sub not in GIT_READ_SUBCOMMANDS:
+        return False
+    if any(item in _GIT_EMBEDDED_EXEC_FLAGS for item in tail):
+        return True
+    return sub == "grep" and any(
+        item == "--open-files-in-pager"
+        or item.startswith("--open-files-in-pager=")
+        for item in tail
+    )
+
+
+def _gh_segment_read_only(tokens: list[str]) -> bool:
+    rest = list(tokens[1:])
+    words = []
+    index = 0
+    while index < len(rest):
+        item = rest[index]
+        if item in _GH_GLOBAL_VALUE_FLAGS:
+            index += 2
+            continue
+        if any(item.startswith(flag + "=") for flag in _GH_GLOBAL_VALUE_FLAGS
+               if flag.startswith("--")):
+            index += 1
+            continue
+        if not item.startswith("-"):
+            words.append(item)
+            if len(words) == 2:
+                break
+        index += 1
+    if not words:
+        return any(item in {"--help", "--version"} for item in rest)
+    if words[0] in {"help", "status"}:
+        return True
+    return len(words) >= 2 and (words[0], words[1]) in _GH_READ_ACTIONS
 
 
 def _git_segment_read_only(tokens: list[str]) -> bool:
@@ -641,19 +802,68 @@ def _classify_segment(tokens: list[str]) -> str:
         if any(set(word) & set("xcuUrA") for word in option_words):
             return "opaque"
         return "read_only"
-    if executable in {"curl", "wget"}:
-        if any(a in {"-o", "-O", "--output", "--remote-name"}
-               or a.startswith("--output=") for a in args):
+    if executable == "wget":
+        # wget writes downloads (and commonly its HSTS store) by default.
+        return "opaque"
+    if executable == "curl":
+        if any(a in {"-O", "--remote-name", "--remote-name-all", "-K", "--config"}
+               or a.startswith("--config=") for a in args):
             return "opaque"
+        if any(a.startswith("-") and not a.startswith("--") and len(a) > 2
+               and any(flag in a[1:] for flag in "oOcDK") for a in args):
+            return "opaque"
+        if any(value != "-" for value in _option_values(
+                args, _CURL_PATH_FLAGS, attached_short=True)):
+            return "pathed"
         return "read_only"
     if OPAQUE_INTERPRETERS.match(executable):
         return "opaque"
     if executable == "git":
+        if _git_has_embedded_execution(tokens):
+            return "opaque"
+        if _git_output_paths(tokens):
+            return "pathed"
         return "read_only" if _git_segment_read_only(tokens) else "git_write"
+    if executable == "gh":
+        return "read_only" if _gh_segment_read_only(tokens) else "opaque"
+    if executable == "rg":
+        if any(a in {"--pre", "--hostname-bin"}
+               or a.startswith("--pre=")
+               or a.startswith("--hostname-bin=") for a in args):
+            return "opaque"
+        return "read_only"
+    if executable == "fd":
+        if any(a in {"-x", "-X", "--exec", "--exec-batch"}
+               or (a.startswith("-x") and len(a) > 2)
+               or (a.startswith("-X") and len(a) > 2)
+               or a.startswith("--exec=")
+               or a.startswith("--exec-batch=") for a in args):
+            return "opaque"
+        return "read_only"
+    if executable == "ag":
+        if any(a == "--pager" or a.startswith("--pager=") for a in args):
+            return "opaque"
+        return "read_only"
     if executable == "find":
         if any(a in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for a in args):
             return "opaque"
+        if any(a in _FIND_OUTPUT_ACTIONS for a in args):
+            return "pathed"
         return "read_only"
+    if executable == "tree":
+        if _tree_output_values(args):
+            return "pathed"
+        return "read_only"
+    if executable == "xxd":
+        return "pathed" if len(_positionals(args, _XXD_VALUE_FLAGS)) >= 2 else "read_only"
+    if executable == "sysctl":
+        if any(a == "-w" or a == "--write" or a.startswith("--write=")
+               or (a.startswith("-") and not a.startswith("--") and "w" in a[1:])
+               for a in args):
+            return "opaque"
+        return "read_only"
+    if executable == "kill":
+        return "opaque"
     if executable == "sed":
         if any(_IN_PLACE_FLAG.match(a) for a in args if a.startswith("-")):
             return "pathed"
@@ -733,13 +943,13 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
     working_dir = (cwd or Path.cwd()).expanduser()
     discard_targets = {"/dev/null", "/dev/stdout", "/dev/stderr", "nul"}
 
-    def add_target(raw: str) -> None:
+    def add_target(raw: str, base: Path | None = None) -> None:
         value = str(raw or "").strip()
         if not value or value.lower() in discard_targets:
             return
         target = Path(value).expanduser()
         if not target.is_absolute():
-            target = working_dir / target
+            target = (base or working_dir) / target
         values.append(str(target))
 
     for value in re.findall(
@@ -804,12 +1014,35 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
                     add_target(item.split("=", 1)[1])
         elif executable == "uniq" and len(args) >= 2:
             add_target(args[-1])
+        elif executable == "curl":
+            for value in _option_values(
+                    command_args, _CURL_PATH_FLAGS, attached_short=True):
+                if value != "-":
+                    add_target(value)
+        elif executable == "tree":
+            for value in _tree_output_values(command_args):
+                add_target(value)
+        elif executable == "find":
+            for index, item in enumerate(command_args):
+                if item in _FIND_OUTPUT_ACTIONS and index + 1 < len(command_args):
+                    add_target(command_args[index + 1])
+        elif executable == "xxd":
+            positional = _positionals(command_args, _XXD_VALUE_FLAGS)
+            if len(positional) >= 2:
+                add_target(positional[-1])
         elif executable == "ln" and args:
             # `ln [-s] target linkname` writes the link name; a bare
             # `ln target` links into the working directory.
-            add_target(args[-1] if len(args) >= 2 else args[0])
+            target_dirs = _target_directory_values(command_args)
+            if target_dirs:
+                add_target(target_dirs[-1])
+            else:
+                add_target(args[-1] if len(args) >= 2 else args[0])
         elif executable == "git":
             sub, tail = _git_segment_details(command_tokens)
+            git_cwd = _git_effective_cwd(command_tokens, working_dir)
+            for value in _git_output_paths(command_tokens):
+                add_target(value, git_cwd)
             if sub in {"restore", "rm", "mv", "checkout", "clean"}:
                 for value in tail:
                     if value.startswith("-") or value == "--":
@@ -818,7 +1051,8 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
                         continue  # branch switch, not a path restore
                     add_target(value)
         elif executable in {"cp", "mv"} and args:
-            add_target(args[-1])
+            target_dirs = _target_directory_values(command_args)
+            add_target(target_dirs[-1] if target_dirs else args[-1])
         elif executable in {"sed", "perl"} and args and any(
                 item == "--in-place"
                 or item.startswith("--in-place=")
