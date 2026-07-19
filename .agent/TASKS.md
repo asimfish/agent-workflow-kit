@@ -89,3 +89,5 @@
 | T-076 | review | supervisor | `.agent/` | [.agent/tasks/T-076.md](tasks/T-076.md) | independently review T-075 opaque write isolation |
 | T-077 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-077.md](tasks/T-077.md) | default-deny git subcommands and shell metacharacters |
 | T-078 | review | supervisor | `.agent/` | [.agent/tasks/T-078.md](tasks/T-078.md) | independently review T-077 git and shell metacharacter hardening |
+| T-079 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-079.md](tasks/T-079.md) | verify read-only allowlist strictly and fix git read misclassifications |
+| T-080 | review | supervisor | `.agent/` | [.agent/tasks/T-080.md](tasks/T-080.md) | independently review T-079 argument-verified allowlist |

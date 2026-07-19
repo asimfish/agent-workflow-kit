@@ -875,12 +875,12 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             decision = json.loads(blocked.stdout or "{}")
             self.assertEqual(decision.get("decision"), "block", command)
         # The controller keeps its own identity/mutation gating: read-only
-        # audits stay available to sessions that have no task yet.
+        # audits stay available to sessions that have no task yet. (Inline
+        # perl left this list in T-079: a general-purpose language is opaque.)
         for command in (
             "python3 tools/agentctl.py migrate --json",
             "python3 tools/agentctl.py sessions list --json",
             "sed -n '1p' README.md",
-            "perl -ne 'print if /Agent/' README.md",
         ):
             allowed = self.hook(
                 "pre-tool-use",
@@ -981,10 +981,11 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             self.assertIn("worktree", payload.get("reason", ""), command)
 
         # Read-only staples and path-checked writes keep working beside peers.
+        # (perl left this list in T-079: as a general-purpose language it can
+        # write files from inline code, so it is opaque like python.)
         for command in (
             "sed -n '1p' README.md",
             "grep -r Agent docs",
-            "perl -ne 'print if /Agent/' README.md",
             "git status",
         ):
             passthrough = self.hook(
@@ -1011,6 +1012,91 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             session="one",
         )
         self.assertNotIn('"decision": "block"', solo.stdout)
+
+    def test_allowlisted_text_tools_cannot_write_through_options_or_dsl(self):
+        """Audit repro: sort -o, awk DSL redirects, yq -i, old-style tar."""
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            "sort -o src/two/data.txt src/one/source",
+            'awk \'BEGIN { print "A" > "src/two/awk.txt" }\'',
+            "awk '{print $1}' data.csv",
+            "yq -i '.a=1' src/two/cfg.yaml",
+            "yq '.a' cfg.yaml",
+            "tar xvf data.tgz",
+            "tar cf archive.tar src/two",
+            "perl -ne 'print if /Agent/' README.md",
+            "uniq src/one/in src/two/out",
+            "sed 's/x/y/w src/two/leak.txt' input",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", command)
+        # sort -o into the session's own scope is a checked, allowed write.
+        own = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {
+                "command": "sort -o src/one/sorted.txt src/one/raw.txt"}},
+            session="one",
+        )
+        self.assertNotIn('"decision": "block"', own.stdout)
+        # Verified read-only forms keep passing beside peers.
+        for command in (
+            "sort src/one/raw.txt",
+            "jq '.a' cfg.json",
+            "sed -n '1,5p' README.md",
+            "tar -tzf data.tgz",
+            "uniq src/one/in",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertEqual(passthrough.stdout, "", command)
+
+    def test_git_ref_and_config_mutations_are_not_read_only(self):
+        """Audit repro: fetch, reflog expire, and branch config are writes."""
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            "git fetch origin",
+            "git reflog expire --all",
+            "git reflog delete HEAD@{1}",
+            "git branch --set-upstream-to=origin/main",
+            "git branch -D feature/x",
+            "git branch new-branch",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", command)
+        for command in (
+            "git reflog",
+            "git reflog show HEAD",
+            "git branch",
+            "git branch -a --list",
+            "git branch --show-current",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertEqual(passthrough.stdout, "", command)
 
     def test_git_working_tree_writers_are_not_read_only(self):
         """Audit repro: `git restore` must not wipe a peer's uncommitted work."""
@@ -1239,7 +1325,9 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             session="one",
         )
         self.assertEqual(read_only_sed.stdout, "")
-        read_only_perl = self.hook(
+        # Since T-079, inline perl is opaque (a general-purpose language can
+        # write arbitrary files); beside a live peer it is refused.
+        inline_perl = self.hook(
             "pre-tool-use",
             {
                 "tool_name": "Bash",
@@ -1247,7 +1335,9 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             },
             session="one",
         )
-        self.assertEqual(read_only_perl.stdout, "")
+        self.assertEqual(
+            json.loads(inline_perl.stdout).get("decision"), "block",
+        )
         in_place_sed = self.hook(
             "pre-tool-use",
             {

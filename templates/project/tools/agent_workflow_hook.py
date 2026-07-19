@@ -508,19 +508,26 @@ SCRIPT_SUFFIX = re.compile(r"\.(sh|bash|zsh|py|js|ts|rb|pl)$")
 # write arbitrary paths, so everything outside this list is treated as an
 # opaque write. sed/awk/perl one-liners without in-place flags are accepted as
 # conventional text filters; their in-place forms are path-extracted instead.
+# Commands verified to have no file-writing options or embedded languages.
+# sort/uniq (output targets), awk/yq/perl (DSLs), base64 (-o), and tar are
+# handled by dedicated argument-aware branches instead of this list.
 READ_ONLY_EXECUTABLES = {
     "ls", "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep",
-    "rg", "ag", "fd", "tree", "wc", "sort", "uniq", "cut", "tr", "diff",
+    "rg", "ag", "fd", "tree", "wc", "cut", "tr", "diff",
     "cmp", "comm", "file", "stat", "du", "df", "pwd", "whoami", "id",
     "uname", "hostname", "date", "sleep", "true", "false", "test", "[",
     "which", "whereis", "type", "printenv", "ps", "echo", "printf",
     "basename", "dirname", "realpath", "readlink", "md5", "md5sum",
-    "shasum", "sha1sum", "sha256sum", "cksum", "jq", "yq", "xxd",
-    "hexdump", "strings", "base64", "column", "nl", "od", "seq", "expr",
+    "shasum", "sha1sum", "sha256sum", "cksum", "jq", "xxd",
+    "hexdump", "strings", "column", "nl", "od", "seq", "expr",
     "getconf", "sysctl", "sw_vers", "arch", "nproc", "tty", "uptime",
-    "awk", "gawk", "cd", "export", "unset", "set", "wait", "kill",
+    "cd", "export", "unset", "set", "wait", "kill",
     "gh",
 }
+# sed scripts that provably only print: line addresses plus p/q commands,
+# e.g. `1p`, `1,5p`, `$p`. Anything else (s///w, r/w commands, hold space
+# tricks) is not verified and falls through to opaque.
+_SED_PRINT_ONLY = re.compile(r"^[0-9,$;np ]*$")
 _IN_PLACE_FLAG = re.compile(r"^-[a-zA-Z]*i|^--in-place")
 
 # Shell constructs that splice arbitrary command output into another command.
@@ -529,13 +536,19 @@ _IN_PLACE_FLAG = re.compile(r"^-[a-zA-Z]*i|^--in-place")
 _SHELL_SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
 
 # Git subcommands that never modify the working tree, index, refs, or config.
+# fetch and reflog are NOT blanket reads: fetch rewrites shared refs that
+# every worktree sees, and reflog expire/delete mutate history metadata.
 GIT_READ_SUBCOMMANDS = {
     "status", "log", "show", "diff", "rev-parse", "describe", "ls-files",
     "ls-tree", "ls-remote", "cat-file", "blame", "annotate", "shortlog",
     "grep", "help", "merge-base", "name-rev", "diff-tree", "diff-index",
-    "count-objects", "cherry", "var", "show-ref", "reflog", "fetch",
+    "count-objects", "cherry", "var", "show-ref",
     "whatchanged", "rev-list", "check-ignore", "check-attr",
 }
+_GIT_BRANCH_READ_FLAGS = re.compile(
+    r"^(-a|-r|-v|-vv|--list|--show-current|--contains|--no-contains"
+    r"|--merged|--no-merged|--sort=.*|--format=.*|--points-at=.*|--all)$"
+)
 _GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                     "--exec-path"}
 
@@ -565,7 +578,18 @@ def _git_segment_read_only(tokens: list[str]) -> bool:
     if sub in GIT_READ_SUBCOMMANDS:
         return True
     if sub == "branch":
-        return not positional
+        # Creating, deleting, renaming, or configuring branches is a write;
+        # only pure listing forms are read-only, and unknown flags fail
+        # closed. With an explicit --list, positionals are match patterns.
+        flags_ok = all(
+            _GIT_BRANCH_READ_FLAGS.match(item)
+            for item in tail if item.startswith("-")
+        )
+        if not flags_ok:
+            return False
+        return not positional or "--list" in tail
+    if sub == "reflog":
+        return not tail or tail[0] in {"show"} or tail[0].startswith("-")
     if sub == "config":
         return any(item in {"--get", "--get-all", "--get-regexp", "--list", "-l"}
                    for item in tail)
@@ -608,7 +632,13 @@ def _classify_segment(tokens: list[str]) -> str:
             return "read_only"
         return "opaque"
     if executable == "tar":
-        if any(a.startswith("-") and "x" in a.lstrip("-") for a in args):
+        # Handle both `-xzf` and old-style bundled `xvf` option words; extract,
+        # create, update, and append all write files or archives.
+        first_word = args[0] if args else ""
+        option_words = [a.lstrip("-") for a in args if a.startswith("-")]
+        if not first_word.startswith("-") and first_word:
+            option_words.append(first_word)
+        if any(set(word) & set("xcuUrA") for word in option_words):
             return "opaque"
         return "read_only"
     if executable in {"curl", "wget"}:
@@ -624,8 +654,33 @@ def _classify_segment(tokens: list[str]) -> str:
         if any(a in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for a in args):
             return "opaque"
         return "read_only"
-    if executable in {"sed", "perl"}:
+    if executable == "sed":
         if any(_IN_PLACE_FLAG.match(a) for a in args if a.startswith("-")):
+            return "pathed"
+        scripts = [a for a in args if not a.startswith("-")]
+        if scripts and _SED_PRINT_ONLY.match(scripts[0]):
+            return "read_only"
+        # sed scripts can write via the w command (`s///w file`, `1w file`).
+        return "opaque"
+    if executable in {"perl", "awk", "gawk", "mawk", "nawk", "yq"}:
+        # General-purpose or file-writing DSLs: inline code can open, write,
+        # or in-place edit arbitrary paths (awk print > file, perl open,
+        # yq -i). In-place perl keeps its extracted-path form.
+        if executable == "perl" and any(
+                _IN_PLACE_FLAG.match(a) for a in args if a.startswith("-")):
+            return "pathed"
+        return "opaque"
+    if executable == "sort":
+        if any(a == "-o" or a.startswith("--output") for a in args):
+            return "pathed"
+        return "read_only"
+    if executable == "uniq":
+        positional = [a for a in args if not a.startswith("-")]
+        if len(positional) >= 2:
+            return "pathed"
+        return "read_only"
+    if executable == "base64":
+        if any(a == "-o" or a.startswith("--output") for a in args):
             return "pathed"
         return "read_only"
     if executable in {"touch", "mkdir", "rm", "tee", "cp", "mv", "ln"}:
@@ -735,6 +790,20 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
         if executable in {"touch", "mkdir", "rm", "tee"}:
             for value in args:
                 add_target(value)
+        elif executable == "sort":
+            for index, item in enumerate(command_args):
+                if item == "-o" and index + 1 < len(command_args):
+                    add_target(command_args[index + 1])
+                elif item.startswith("--output="):
+                    add_target(item.split("=", 1)[1])
+        elif executable == "base64":
+            for index, item in enumerate(command_args):
+                if item == "-o" and index + 1 < len(command_args):
+                    add_target(command_args[index + 1])
+                elif item.startswith("--output="):
+                    add_target(item.split("=", 1)[1])
+        elif executable == "uniq" and len(args) >= 2:
+            add_target(args[-1])
         elif executable == "ln" and args:
             # `ln [-s] target linkname` writes the link name; a bare
             # `ln target` links into the working directory.
