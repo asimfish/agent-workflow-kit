@@ -142,10 +142,11 @@ the sole bootstrap exception because it installs the identity hook itself.
   and rules to supervisors or humans.
 - Scripts, interpreters, test/build runners, and unknown executables cannot
   prove which paths they write, so they run only in an exclusive checkout.
-  When another conversation is live in the same checkout, run them from a
-  task worktree (`agentctl worktree create --task <id> --agent <name>`);
-  data-collection, training, and test tasks should plan on a worktree per
-  conversation from the start.
+  When another conversation is live in the same checkout, allocate a committed
+  `todo`/`ready` task worktree before starting that execution phase
+  (`agentctl worktree create --task <id> --agent <name>`). An active dirty task
+  is not relocated implicitly; data-collection, training, and test tasks should
+  plan on a worktree per conversation from the start.
 - Unrelated task lifecycles do not invalidate this conversation's read
   receipt: only plan-body/rule changes, this task's own index row, or this
   task's own document require re-reading plus `agentctl refresh`.

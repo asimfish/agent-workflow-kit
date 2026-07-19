@@ -481,10 +481,15 @@ def _strip_command_prefixes(tokens: list[str]) -> list[str]:
     while command_tokens and command_tokens[0] in {"sudo", "command", "nohup", "time"}:
         command_tokens = command_tokens[1:]
     if command_tokens and command_tokens[0] == "env":
-        command_tokens = command_tokens[1:]
-        while command_tokens and (
-                command_tokens[0].startswith("-")
-                or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0])):
+        env_tokens = command_tokens[1:]
+        # env options can change cwd (-C/--chdir) or re-tokenize a command
+        # (-S/--split-string). Keep the env executable visible so unknown
+        # option forms fail closed instead of attributing paths to the old cwd.
+        if env_tokens and env_tokens[0].startswith("-"):
+            return command_tokens
+        command_tokens = env_tokens
+        while command_tokens and re.match(
+                r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
             command_tokens = command_tokens[1:]
     while command_tokens and re.match(
             r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
@@ -533,6 +538,10 @@ _IN_PLACE_FLAG = re.compile(r"^-[a-zA-Z]*i|^--in-place")
 # Static tokenization cannot see inside them, so their presence makes the
 # whole command an opaque write (fail closed, including quoted literals).
 _SHELL_SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
+_SHELL_DYNAMIC_EXPANSION = re.compile(
+    r"(?<!\\)\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}\n]+\})"
+    r"|(?<!\\)\{[^{}\n]*,[^{}\n]*\}"
+)
 
 # Git subcommands that never modify the working tree, index, refs, or config.
 # fetch and reflog are NOT blanket reads: fetch rewrites shared refs that
@@ -572,6 +581,11 @@ _CURL_PATH_FLAGS = {
     "-c", "--cookie-jar", "-D", "--dump-header", "--trace",
     "--trace-ascii", "--etag-save", "--hsts", "--alt-svc", "-o", "--output",
 }
+_CURL_WRITE_OUT_FLAGS = {"-w", "--write-out"}
+_MV_VALUE_FLAGS = {"-S", "--suffix", "-t", "--target-directory"}
+_SED_SCRIPT_VALUE_FLAGS = {
+    "-e", "--expression", "-f", "--file", "-l", "--line-length",
+}
 
 
 def _option_values(args: list[str], flags: set[str],
@@ -609,6 +623,8 @@ def _positionals(args: list[str], value_flags: set[str]) -> list[str]:
             values.append(item)
         elif item == "--":
             positional_only = True
+        elif item == "-":
+            values.append(item)
         elif item in value_flags:
             index += 1
         elif not item.startswith("-"):
@@ -645,6 +661,153 @@ def _tree_output_values(args: list[str]) -> list[str]:
     values = _option_values(args, {"--output"})
     values.extend(_clustered_short_option_values(args, "o"))
     return list(dict.fromkeys(values))
+
+
+def _curl_write_out_details(args: list[str]) -> tuple[list[str], bool]:
+    """Return literal write-out files and whether the format is uninspectable."""
+    paths = []
+    opaque = False
+    for value in _option_values(args, _CURL_WRITE_OUT_FLAGS, attached_short=True):
+        if value.startswith("@"):
+            opaque = True
+            continue
+        for raw in re.findall(r"%output\{([^{}]+)\}", value):
+            target = raw[2:] if raw.startswith(">>") else raw
+            if target:
+                paths.append(target)
+            else:
+                opaque = True
+    return list(dict.fromkeys(paths)), opaque
+
+
+def _git_config_may_execute(value: str) -> bool:
+    key = value.split("=", 1)[0].strip().lower()
+    return (
+        key in {
+            "diff.external", "core.pager", "core.editor",
+            "sequence.editor", "core.fsmonitor", "interactive.difffilter",
+        }
+        or key.startswith("pager.")
+        or bool(re.match(r"^diff\..+\.(?:command|textconv)$", key))
+        or bool(re.match(r"^difftool\..+\.(?:cmd|path)$", key))
+    )
+
+
+def _git_global_config_may_execute(tokens: list[str]) -> bool:
+    rest = list(tokens[1:])
+    index = 0
+    while index < len(rest):
+        item = rest[index]
+        if item == "-c":
+            if index + 1 >= len(rest):
+                return True
+            if _git_config_may_execute(rest[index + 1]):
+                return True
+            index += 2
+            continue
+        if item.startswith("-c") and len(item) > 2:
+            if _git_config_may_execute(item[2:]):
+                return True
+            index += 1
+            continue
+        if item == "--config-env" or item.startswith("--config-env="):
+            return True
+        if item in _GIT_VALUE_FLAGS:
+            index += 2
+            continue
+        if item.startswith("-"):
+            index += 1
+            continue
+        break
+    return False
+
+
+def _remove_option_values(positionals: list[str], values: list[str]) -> list[str]:
+    remaining = list(positionals)
+    for value in values:
+        try:
+            remaining.remove(value)
+        except ValueError:
+            pass
+    return remaining
+
+
+def _mv_write_values(args: list[str]) -> list[str]:
+    target_dirs = _target_directory_values(args)
+    positionals = _positionals(args, _MV_VALUE_FLAGS)
+    positionals = _remove_option_values(positionals, target_dirs)
+    if target_dirs:
+        positionals.append(target_dirs[-1])
+    return list(dict.fromkeys(positionals))
+
+
+def _ln_output_values(args: list[str]) -> list[str]:
+    target_dirs = _target_directory_values(args)
+    positionals = _positionals(args, {"-S", "--suffix", "-t", "--target-directory"})
+    positionals = _remove_option_values(positionals, target_dirs)
+    if target_dirs:
+        return [target_dirs[-1]]
+    if len(positionals) >= 2:
+        return [positionals[-1]]
+    if len(positionals) == 1:
+        return [Path(positionals[0]).name]
+    return []
+
+
+def _sed_in_place_targets(args: list[str]) -> list[str] | None:
+    positionals = []
+    explicit_script = False
+    index = 0
+    positional_only = False
+    while index < len(args):
+        item = args[index]
+        if positional_only:
+            positionals.append(item)
+        elif item == "--":
+            positional_only = True
+        elif item in _SED_SCRIPT_VALUE_FLAGS:
+            if index + 1 >= len(args):
+                return None
+            if item in {"-e", "--expression", "-f", "--file"}:
+                explicit_script = True
+            index += 1
+        elif item.startswith("--expression=") or item.startswith("--file="):
+            explicit_script = True
+        elif ((item.startswith("-e") or item.startswith("-f"))
+              and len(item) > 2):
+            explicit_script = True
+        elif item.startswith("-"):
+            pass
+        else:
+            positionals.append(item)
+        index += 1
+    return positionals if explicit_script else positionals[1:]
+
+
+def _perl_in_place_targets(args: list[str]) -> list[str] | None:
+    positionals = []
+    code_supplied = False
+    index = 0
+    positional_only = False
+    while index < len(args):
+        item = args[index]
+        if positional_only:
+            positionals.append(item)
+        elif item == "--":
+            positional_only = True
+        elif item in {"-e", "-E"}:
+            if index + 1 >= len(args):
+                return None
+            code_supplied = True
+            index += 1
+        elif (item.startswith("-e") or item.startswith("-E")) and len(item) > 2:
+            code_supplied = True
+        elif item.startswith("-"):
+            pass
+        else:
+            positionals.append(item)
+        index += 1
+    return positionals if code_supplied else None
 
 
 def _git_segment_details(tokens: list[str]) -> tuple[str, list[str]]:
@@ -695,8 +858,11 @@ def _git_effective_cwd(tokens: list[str], cwd: Path) -> Path:
 
 def _git_has_embedded_execution(tokens: list[str]) -> bool:
     sub, tail = _git_segment_details(tokens)
-    if sub not in GIT_READ_SUBCOMMANDS:
-        return False
+    if _git_global_config_may_execute(tokens):
+        return True
+    if any(item == "--exec-path" or item.startswith("--exec-path=")
+           for item in tokens[1:]):
+        return True
     if any(item in _GIT_EMBEDDED_EXEC_FLAGS for item in tail):
         return True
     return sub == "grep" and any(
@@ -708,6 +874,8 @@ def _git_has_embedded_execution(tokens: list[str]) -> bool:
 
 def _gh_segment_read_only(tokens: list[str]) -> bool:
     rest = list(tokens[1:])
+    if any(item == "--web" or item.startswith("--web=") for item in rest):
+        return False
     words = []
     index = 0
     while index < len(rest):
@@ -812,6 +980,11 @@ def _classify_segment(tokens: list[str]) -> str:
         if any(a.startswith("-") and not a.startswith("--") and len(a) > 2
                and any(flag in a[1:] for flag in "oOcDK") for a in args):
             return "opaque"
+        write_out_paths, write_out_opaque = _curl_write_out_details(args)
+        if write_out_opaque:
+            return "opaque"
+        if write_out_paths:
+            return "pathed"
         if any(value != "-" for value in _option_values(
                 args, _CURL_PATH_FLAGS, attached_short=True)):
             return "pathed"
@@ -866,7 +1039,7 @@ def _classify_segment(tokens: list[str]) -> str:
         return "opaque"
     if executable == "sed":
         if any(_IN_PLACE_FLAG.match(a) for a in args if a.startswith("-")):
-            return "pathed"
+            return "pathed" if _sed_in_place_targets(args) is not None else "opaque"
         scripts = [a for a in args if not a.startswith("-")]
         if scripts and _SED_PRINT_ONLY.match(scripts[0]):
             return "read_only"
@@ -878,7 +1051,7 @@ def _classify_segment(tokens: list[str]) -> str:
         # yq -i). In-place perl keeps its extracted-path form.
         if executable == "perl" and any(
                 _IN_PLACE_FLAG.match(a) for a in args if a.startswith("-")):
-            return "pathed"
+            return "pathed" if _perl_in_place_targets(args) is not None else "opaque"
         return "opaque"
     if executable == "sort":
         if any(a == "-o" or a.startswith("--output") for a in args):
@@ -906,7 +1079,9 @@ _VERDICT_RANK = {"read_only": 0, "pathed": 1, "git_write": 2, "opaque": 3}
 
 def classify_shell_command(command: str) -> str:
     """Strongest write capability across all pipeline segments."""
-    if command and _SHELL_SUBSTITUTION.search(command):
+    if command and (
+            _SHELL_SUBSTITUTION.search(command)
+            or _SHELL_DYNAMIC_EXPANSION.search(command)):
         return "opaque"
     strongest = "read_only"
     for segment, _connector in _shell_command_segments(command):
@@ -975,17 +1150,7 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
                 continue
             command_tokens.append(token)
             index += 1
-        while command_tokens and command_tokens[0] in {"sudo", "command"}:
-            command_tokens = command_tokens[1:]
-        if command_tokens and command_tokens[0] == "env":
-            command_tokens = command_tokens[1:]
-            while command_tokens and (
-                    command_tokens[0].startswith("-")
-                    or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0])):
-                command_tokens = command_tokens[1:]
-        while command_tokens and re.match(
-                r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
-            command_tokens = command_tokens[1:]
+        command_tokens = _strip_command_prefixes(command_tokens)
         if not command_tokens:
             continue
         executable = Path(command_tokens[0]).name
@@ -1019,6 +1184,9 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
                     command_args, _CURL_PATH_FLAGS, attached_short=True):
                 if value != "-":
                     add_target(value)
+            write_out_paths, _write_out_opaque = _curl_write_out_details(command_args)
+            for value in write_out_paths:
+                add_target(value)
         elif executable == "tree":
             for value in _tree_output_values(command_args):
                 add_target(value)
@@ -1031,13 +1199,8 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
             if len(positional) >= 2:
                 add_target(positional[-1])
         elif executable == "ln" and args:
-            # `ln [-s] target linkname` writes the link name; a bare
-            # `ln target` links into the working directory.
-            target_dirs = _target_directory_values(command_args)
-            if target_dirs:
-                add_target(target_dirs[-1])
-            else:
-                add_target(args[-1] if len(args) >= 2 else args[0])
+            for value in _ln_output_values(command_args):
+                add_target(value)
         elif executable == "git":
             sub, tail = _git_segment_details(command_tokens)
             git_cwd = _git_effective_cwd(command_tokens, working_dir)
@@ -1050,16 +1213,25 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
                     if sub == "checkout" and "--" not in tail:
                         continue  # branch switch, not a path restore
                     add_target(value)
-        elif executable in {"cp", "mv"} and args:
+        elif executable == "cp" and args:
             target_dirs = _target_directory_values(command_args)
             add_target(target_dirs[-1] if target_dirs else args[-1])
+        elif executable == "mv" and args:
+            for value in _mv_write_values(command_args):
+                add_target(value)
         elif executable in {"sed", "perl"} and args and any(
                 item == "--in-place"
                 or item.startswith("--in-place=")
                 or (item.startswith("-") and not item.startswith("--")
                     and "i" in item[1:])
                 for item in command_args):
-            add_target(args[-1])
+            targets = (
+                _sed_in_place_targets(command_args)
+                if executable == "sed"
+                else _perl_in_place_targets(command_args)
+            )
+            for value in targets or []:
+                add_target(value)
     return list(dict.fromkeys(values))
 
 

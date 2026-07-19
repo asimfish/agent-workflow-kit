@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-083 - close independent review isolation gaps (owner: codex)
 - [ ] T-082 - independently review T-081 concurrent isolation hardening (owner: independent-reviewer)
 - [ ] T-081 - make concurrent sessions worktree-safe and close read-option escapes (owner: codex)
 - [ ] T-080 - independently review T-079 argument-verified allowlist (owner: supervisor)

@@ -80,14 +80,18 @@ can write arbitrary files; `sed` counts as read-only only for provably
 print-only scripts (line addresses plus `p`), and both dash and old-style
 bundled `tar` option words are recognized for extract/create/update modes.
 Git `diff`/`log`/`show --output` destinations are resolved after leading `-C`
-options and checked as file writes; `--ext-diff` and pager-opening grep forms
-are opaque. `rg --pre`, `fd --exec`, `ag --pager`, `find -fprint`, `tree -o`,
-and a second `xxd` file operand cannot inherit the read-only classification of
-their executable name. GNU `cp`/`mv`/`ln -t` destinations, including clustered
-short options, are checked as directories. Host/process/remote mutations such
-as `sysctl -w`, `kill`, mutating `gh` actions, and default `wget` downloads are
-opaque beside peers; a conservative set of `gh ... view/list/status` actions
-remains read-only.
+options and checked as file writes; external-diff/textconv configuration,
+execution flags, and pager-opening grep forms are opaque. `rg --pre`,
+`fd --exec`, `ag --pager`, `find -fprint`, `tree -o`, and both normal and
+stdin-based `xxd` output operands cannot inherit the read-only classification
+of their executable name. GNU target-directory forms are checked, `mv` claims
+its deleted sources as well as its destination, and in-place `sed`/`perl`
+claims every input file. Curl write-out files and `gh --web` are write/execution
+surfaces. Dynamic shell variable/brace expansion and cwd-changing `env`
+wrappers are opaque because their final targets cannot be proven statically.
+Host/process/remote mutations such as `sysctl -w`, `kill`, mutating `gh`
+actions, and default `wget` downloads are opaque beside peers; a conservative
+set of `gh ... view/list/status` actions remains read-only.
 Static shell parsing still cannot PROVE arbitrary commands are read-only, so
 the guarantee model remains: verified reads and path-checked writes may run
 beside peers; everything else requires an exclusive checkout or a task

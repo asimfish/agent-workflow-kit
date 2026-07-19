@@ -208,7 +208,10 @@ The coordination policy is deliberately small:
   safe Git/GitHub reads, print-only `sed`, and similar) pass without a claim.
   Tool names alone are never sufficient: Git `--output`, `find`/`tree` output
   actions, `xxd` output operands, search-tool exec/preprocessors, and GNU
-  target-directory forms are path-checked or fail closed.
+  target-directory forms are path-checked or fail closed. Shell variable/brace
+  expansion and cwd-changing `env` wrappers are opaque; moves and in-place
+  edits claim every mutated operand, while curl/Git/GitHub output or execution
+  options cannot inherit a read-only verdict.
 - A missing heartbeat marks a session stale but does not discard its claim.
   After inspection, an agent can explicitly release it and resume the existing
   task; task docs and working files are preserved.

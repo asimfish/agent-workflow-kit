@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 02:53:55",
+  "updated_at": "2026-07-20 03:47:24",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1260,6 +1260,22 @@
       "deps": [],
       "created_at": "2026-07-20 02:35:55",
       "updated_at": "2026-07-20 02:53:55"
+    },
+    "T-083": {
+      "title": "close independent review isolation gaps",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 02:57:49",
+      "updated_at": "2026-07-20 03:47:24"
     }
   }
 }
