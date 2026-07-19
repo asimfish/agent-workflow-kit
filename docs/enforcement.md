@@ -142,7 +142,15 @@ reports identical parent/child IDs, `SessionStart` establishes an isolated local
 instance; later mutating hooks block when that instance was not propagated.
 If a nested CLI first creates a task from its host runtime and a later hook adds
 a payload session ID, the hook reuses the already-recorded runtime session rather
-than switching identities mid-task.
+than switching identities mid-task. When that payload ID was generated inside
+the nested SDK and is absent from inherited environment variables, SessionStart
+exports the normal identity and the first `agentctl work` hook claims an atomic,
+checkout-specific local binding under the Git common directory when that export
+does not reach the shell. The record contains only hashed provider/runtime identities.
+Another payload cannot replace a fresh pending binding or an active runtime
+session in that checkout; independent worktrees use distinct binding keys.
+Malformed binding state also fails closed. Explicit fork lineage or an instance
+key never uses this fallback.
 
 ### Runtime commands
 

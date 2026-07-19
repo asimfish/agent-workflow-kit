@@ -16,6 +16,7 @@ import secrets
 import shlex
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -52,6 +53,10 @@ SESSION_EXPORT_ENV_NAMES = (
     PARENT_SESSION_KEY_ENV,
     SESSION_ISOLATION_ERROR_ENV,
 )
+PROVIDER_BINDING_SCHEMA = 1
+PROVIDER_BINDING_PENDING_NS = 5 * 60 * 1_000_000_000
+PROVIDER_BINDING_LOCK_STALE_NS = 30 * 1_000_000_000
+PROVIDER_BINDING_LOCK_WAIT_SECONDS = 2.0
 AGENTCTL_ACTION_COMMANDS = frozenset({
     "task", "agents", "handoff", "worktree", "eval", "guidance", "loop", "sessions",
 })
@@ -372,9 +377,231 @@ def has_session(root: Path, env: dict) -> bool:
     )
 
 
+def _host_runtime_session_environment(env: dict) -> dict:
+    fallback = env.copy()
+    fallback.pop(SESSION_ID_ENV, None)
+    fallback.pop(SESSION_OWNER_RUNTIME_ENV, None)
+    fallback.pop(SESSION_ISOLATION_ERROR_ENV, None)
+    return fallback
+
+
+def _provider_binding_path(root: Path, runtime_identity: str) -> Path:
+    result = run(["git", "rev-parse", "--git-common-dir"], root)
+    if result.returncode == 0 and result.stdout.strip():
+        common = Path(result.stdout.strip())
+        if not common.is_absolute():
+            common = root / common
+        base = common.resolve() / "agent-workflow" / "provider-bindings"
+    else:
+        base = root / ".agent" / "state" / "provider-bindings"
+    binding_identity = f"{runtime_identity}\ncheckout={root.resolve()}"
+    digest = hashlib.sha256(binding_identity.encode("utf-8")).hexdigest()[:24]
+    return base / f"host-{digest}.json"
+
+
+def _read_provider_binding(path: Path) -> tuple[dict, bool]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, True
+    except (OSError, json.JSONDecodeError):
+        return {}, False
+    if not isinstance(value, dict) or value.get("schema_version") != PROVIDER_BINDING_SCHEMA:
+        return {}, False
+    host_runtime = value.get("host_runtime")
+    provider_key = value.get("provider_key")
+    bound_session_key = value.get("bound_session_key")
+    timestamps = (value.get("created_at_ns"), value.get("updated_at_ns"))
+    if (
+        not isinstance(host_runtime, str)
+        or re.fullmatch(r"host-runtime:[0-9a-f]{32}", host_runtime) is None
+        or not isinstance(provider_key, str)
+        or re.fullmatch(r"provider-[0-9a-f]{24}", provider_key) is None
+        or not isinstance(bound_session_key, str)
+        or (
+            bound_session_key
+            and re.fullmatch(r"session-[0-9a-f]{24}", bound_session_key) is None
+        )
+        or any(
+            not isinstance(item, int) or isinstance(item, bool) or item < 0
+            for item in timestamps
+        )
+    ):
+        return {}, False
+    return value, True
+
+
+def _write_provider_binding(path: Path, value: dict) -> bool:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    temporary = path.parent / (
+        f".{path.name}.{os.getpid()}.{secrets.token_hex(6)}.tmp"
+    )
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            json.dump(value, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            temporary.chmod(0o600)
+        except OSError:
+            pass
+        os.replace(temporary, path)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _acquire_provider_binding_lock(path: Path) -> Path | None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    lock = path.with_suffix(path.suffix + ".lock")
+    deadline = time.monotonic() + PROVIDER_BINDING_LOCK_WAIT_SECONDS
+    while True:
+        try:
+            lock.mkdir()
+            return lock
+        except FileExistsError:
+            try:
+                stale = time.time_ns() - lock.stat().st_mtime_ns
+                if stale > PROVIDER_BINDING_LOCK_STALE_NS:
+                    lock.rmdir()
+                    continue
+            except FileNotFoundError:
+                continue
+            except OSError:
+                return None
+            if time.monotonic() >= deadline:
+                return None
+            time.sleep(0.01)
+        except OSError:
+            return None
+
+
+def _provider_runtime_binding(
+        root: Path, payload: dict, env: dict, *, claim: bool) -> tuple[str, str]:
+    payload_id = payload_session_id(payload).strip()
+    runtime_identity = _host_runtime_identity(env)
+    parent_id = (
+        payload_parent_session_id(payload).strip()
+        or str(env.get("WHALENT_FORK_SOURCE_AGENT_ID") or "").strip()
+        or str(env.get(PARENT_SESSION_KEY_ENV) or "").strip()
+    )
+    if (
+        not payload_id
+        or not runtime_identity
+        or str(os.environ.get(SESSION_ID_ENV) or "").strip()
+        or str(env.get(SESSION_INSTANCE_ENV) or "").strip()
+        or _payload_is_fork(payload, parent_id)
+    ):
+        return "none", ""
+
+    provider_key = _private_identity_key("provider", payload_id)
+    runtime_ids = {
+        str(env.get(name) or "").strip()
+        for name in RUNTIME_ID_ENV_NAMES
+        if str(env.get(name) or "").strip()
+    }
+    runtime_proven = payload_id in runtime_ids
+    fallback = _host_runtime_session_environment(env)
+    host_state = session_state(root, fallback)
+    host_active = bool(
+        host_state.get("task")
+        and host_state.get("presence_status") != "released"
+        and host_state.get("status") != "released"
+    )
+    host_session_key = str(host_state.get("workflow_session_key") or "").strip()
+    path = _provider_binding_path(root, runtime_identity)
+    lock = _acquire_provider_binding_lock(path)
+    if lock is None:
+        return "conflict", (
+            "provider/runtime binding state is busy; retry after the current "
+            "session transition completes"
+        )
+    try:
+        binding, binding_is_valid = _read_provider_binding(path)
+        if not binding_is_valid:
+            return "conflict", (
+                "provider/runtime binding state is invalid; restart this "
+                "conversation before mutating the project"
+            )
+        valid_binding = bool(
+            binding
+            and binding.get("host_runtime") == runtime_identity
+            and re.fullmatch(
+                r"provider-[0-9a-f]{24}",
+                str(binding.get("provider_key") or ""),
+            )
+        )
+        if binding and not valid_binding:
+            return "conflict", (
+                "provider/runtime binding state is invalid; restart this "
+                "conversation before mutating the project"
+            )
+        if valid_binding and binding.get("provider_key") == provider_key:
+            if host_active and host_session_key != binding.get("bound_session_key"):
+                binding["bound_session_key"] = host_session_key
+                binding["updated_at_ns"] = time.time_ns()
+                if not _write_provider_binding(path, binding):
+                    return "conflict", "provider/runtime binding could not be persisted"
+            return "match", ""
+
+        if valid_binding:
+            created_at_ns = int(binding.get("created_at_ns") or 0)
+            pending_is_fresh = (
+                not binding.get("bound_session_key")
+                and time.time_ns() - created_at_ns <= PROVIDER_BINDING_PENDING_NS
+            )
+            if host_active or pending_is_fresh or not claim:
+                return "conflict", (
+                    "this host runtime is already bound to another provider "
+                    "conversation; use a distinct runtime or reopen the session "
+                    "so SessionStart establishes an isolated identity"
+                )
+
+        if host_active:
+            if runtime_proven:
+                return "none", ""
+            return "conflict", (
+                "this host runtime already owns an unbound active task; refusing "
+                "to attach a different provider conversation"
+            )
+        if not claim:
+            return "none", ""
+
+        now_ns = time.time_ns()
+        record = {
+            "schema_version": PROVIDER_BINDING_SCHEMA,
+            "host_runtime": runtime_identity,
+            "provider_key": provider_key,
+            "bound_session_key": "",
+            "created_at_ns": now_ns,
+            "updated_at_ns": now_ns,
+        }
+        if not _write_provider_binding(path, record):
+            return "conflict", "provider/runtime binding could not be persisted"
+        return "match", ""
+    finally:
+        try:
+            lock.rmdir()
+        except OSError:
+            pass
+
+
 def resolve_existing_session_environment(
-        root: Path, payload: dict, env: dict) -> dict:
-    """Prefer an existing host-runtime session over a late payload-only ID."""
+        root: Path, payload: dict, env: dict, *, claim_runtime_binding: bool = False,
+        enforce_runtime_binding_conflict: bool = True) -> dict:
+    """Resolve direct, proven-runtime, or locally bound provider identity."""
     if has_session(root, env):
         return env
     payload_id = payload_session_id(payload)
@@ -385,16 +612,24 @@ def resolve_existing_session_environment(
     }
     if (
         not payload_id
-        or payload_id not in runtime_ids
         or not _host_runtime_identity(env)
         or str(os.environ.get(SESSION_ID_ENV) or "").strip()
         or str(env.get(SESSION_INSTANCE_ENV) or "").strip()
     ):
         return env
-    fallback = env.copy()
-    fallback.pop(SESSION_ID_ENV, None)
-    fallback.pop(SESSION_OWNER_RUNTIME_ENV, None)
-    return fallback if has_session(root, fallback) else env
+    binding, message = _provider_runtime_binding(
+        root, payload, env, claim=claim_runtime_binding,
+    )
+    if binding == "conflict":
+        if not enforce_runtime_binding_conflict:
+            return env
+        isolated = env.copy()
+        isolated[SESSION_ISOLATION_ERROR_ENV] = message
+        return isolated
+    fallback = _host_runtime_session_environment(env)
+    if binding == "match" or payload_id in runtime_ids:
+        return fallback if has_session(root, fallback) else env
+    return env
 
 
 def session_completed(root: Path, env: dict) -> bool:
@@ -1507,6 +1742,7 @@ def session_start() -> int:
     payload = read_input()
     env = resolve_existing_session_environment(
         root, payload, hook_environment(payload, create_fork_instance=True),
+        enforce_runtime_binding_conflict=False,
     )
     session_env = persist_session_environment(session_environment_exports(env))
     entry = workflow_entry(root)
@@ -1550,7 +1786,10 @@ def pre_tool_use() -> int:
     if not (root / ".agent").exists():
         return 0
     payload = read_input()
-    env = resolve_existing_session_environment(root, payload, hook_environment(payload))
+    env = resolve_existing_session_environment(
+        root, payload, hook_environment(payload),
+        claim_runtime_binding=command_is_agentctl_start(payload_command(payload)),
+    )
     identity_error = session_identity_error(env)
     mutating = is_mutating_tool(payload)
     controller_mutation = command_requires_agentctl_identity(payload_command(payload))

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 05:37:41",
+  "updated_at": "2026-07-20 06:57:38",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1328,6 +1328,22 @@
       "deps": [],
       "created_at": "2026-07-20 04:50:30",
       "updated_at": "2026-07-20 05:37:41"
+    },
+    "T-088": {
+      "title": "bind late provider payload ids to bootstrap runtime sessions",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 05:52:25",
+      "updated_at": "2026-07-20 06:57:38"
     }
   }
 }

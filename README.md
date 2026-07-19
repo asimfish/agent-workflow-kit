@@ -187,6 +187,15 @@ under the Git common directory. Hooks aggregate that state into the local
 gitignored file `.agent/state/SESSIONS.md`, show it at session start, and refresh
 it during work.
 
+Some nested CLIs expose their conversation ID only in hook payloads and do not
+export it to later shell subprocesses. `SessionStart` normally exports the
+provider identity. If that export is absent, the first `agentctl work` hook
+atomically binds the hashed payload identity to the hashed host runtime in
+checkout-local Git-common-dir state. Only that provider conversation may reuse
+the runtime-owned task; a second payload on the same pending or active runtime
+and checkout fails closed. Independent worktrees use distinct binding keys. Raw
+provider IDs and checkout paths are not written to the binding record.
+
 Forked or cloned conversations are isolated as separate runtime instances. A
 persisted workflow ID is bound to the host runtime that created it, so a child
 that inherits the parent's environment cannot use that stale ID to resume the

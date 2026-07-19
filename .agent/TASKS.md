@@ -98,3 +98,4 @@
 | T-085 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-085.md](tasks/T-085.md) | review T-081 resubmission and T-083/T-084 evidence |
 | T-086 | review | codex-integrator | `.agent/` | [.agent/tasks/T-086.md](tasks/T-086.md) | integrate independent T-081 review evidence |
 | T-087 | review | codex | `tools/, templates/project/, tests/, README.md, docs/, .codex/, .claude/, .cursor/, .agent/` | [.agent/tasks/T-087.md](tasks/T-087.md) | close residual shared-checkout isolation boundaries |
+| T-088 | review | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-088.md](tasks/T-088.md) | bind late provider payload ids to bootstrap runtime sessions |

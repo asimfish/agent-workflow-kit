@@ -221,6 +221,432 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         self.assertEqual(guarded.returncode, 0, guarded.stderr)
         self.assertNotIn("no active task session", guarded.stdout)
 
+    def test_payload_only_provider_id_binds_to_bootstrap_runtime_session(self):
+        """SDK payload IDs survive when the child shell cannot inherit them."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "outer-sdk-host"
+        payload_id = "sdk-generated-claude-session"
+
+        started = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({"session_id": payload_id, "source": "startup"}),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr)
+        # Model the SDK path reproduced by the independent reviewer: the
+        # SessionStart export is not present in later Bash subprocesses.
+        self.assertNotIn("AGENT_WORKFLOW_SESSION_ID", runtime_env)
+        bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "python3 tools/agentctl.py work --agent claude "
+                    "--auto-create --new-id T-113 --title sdk-bootstrap "
+                    "--scope src/sdk-child/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(bootstrap.returncode, 0, bootstrap.stderr)
+        self.assertNotIn('"decision": "block"', bootstrap.stdout)
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding_files = list(
+            (common_path.resolve() / "agent-workflow" / "provider-bindings").glob(
+                "host-*.json"
+            )
+        )
+        self.assertEqual(len(binding_files), 1)
+        self.assertNotIn(
+            payload_id, binding_files[0].read_text(encoding="utf-8"),
+        )
+        self.agentctl_env(
+            runtime_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-113", "--title", "sdk-bootstrap",
+            "--scope", "src/sdk-child/",
+        )
+
+        guarded = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": "git add src/sdk-child/file.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(guarded.returncode, 0, guarded.stderr)
+        self.assertNotIn("no active task session", guarded.stdout)
+        self.assertNotIn('"decision": "block"', guarded.stdout)
+
+    def test_competing_payload_cannot_reuse_bound_runtime_session(self):
+        """One host runtime cannot silently merge two provider conversations."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "shared-sdk-host"
+        first_id = "sdk-conversation-one"
+        second_id = "sdk-conversation-two"
+
+        first_start = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({"session_id": first_id, "source": "startup"}),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(first_start.returncode, 0, first_start.stderr)
+        first_bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": first_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "python3 tools/agentctl.py work --agent claude "
+                    "--auto-create --new-id T-114 --title first-sdk-task "
+                    "--scope src/first-sdk/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', first_bootstrap.stdout)
+        self.agentctl_env(
+            runtime_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-114", "--title", "first-sdk-task",
+            "--scope", "src/first-sdk/",
+        )
+
+        second_start = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({"session_id": second_id, "source": "startup"}),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(second_start.returncode, 0, second_start.stderr)
+        second_env = json.loads(second_start.stdout).get("env", {})
+        self.assertFalse(second_env.get("AGENT_WORKFLOW_SESSION_ISOLATION_ERROR"))
+
+        for command in (
+            "python3 tools/agentctl.py work --agent claude",
+            "git add src/first-sdk/stolen.py",
+        ):
+            blocked = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=self.root,
+                env=runtime_env,
+                input=json.dumps({
+                    "session_id": second_id,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                }),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            decision = json.loads(blocked.stdout)
+            self.assertEqual(decision.get("decision"), "block", command)
+            self.assertIn("already bound", decision.get("reason", ""), command)
+
+        first_guard = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": first_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": "git add src/first-sdk/owned.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', first_guard.stdout)
+
+    def test_concurrent_payload_bootstrap_claims_only_one_host_runtime(self):
+        """Atomic binding prevents two simultaneous conversations from merging."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "concurrent-sdk-host"
+        processes = []
+        for payload_id in ("concurrent-provider-one", "concurrent-provider-two"):
+            processes.append(subprocess.Popen(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=self.root,
+                env=runtime_env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ))
+        outputs = []
+        for process, payload_id in zip(
+                processes, ("concurrent-provider-one", "concurrent-provider-two")):
+            stdout, stderr = process.communicate(
+                json.dumps({
+                    "session_id": payload_id,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": (
+                        "python3 tools/agentctl.py work --agent claude "
+                        "--auto-create --title concurrent-bootstrap "
+                        "--scope src/concurrent/"
+                    )},
+                }),
+                timeout=120,
+            )
+            self.assertEqual(process.returncode, 0, stderr)
+            outputs.append(json.loads(stdout) if stdout else {})
+
+        conflicts = [
+            output.get("reason", "")
+            for output in outputs
+            if output.get("decision") == "block"
+        ]
+        self.assertEqual(len(conflicts), 1)
+        self.assertIn("already bound", conflicts[0])
+
+    def test_propagated_provider_ids_share_one_host_runtime_without_binding(self):
+        """Normal SessionStart exports keep provider conversations independent."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "shared-propagated-host"
+        sessions = []
+        for payload_id, task, scope in (
+            ("propagated-provider-one", "T-116", "src/propagated-one/"),
+            ("propagated-provider-two", "T-117", "src/propagated-two/"),
+        ):
+            started = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+                cwd=self.root,
+                env=runtime_env,
+                input=json.dumps({"session_id": payload_id, "source": "startup"}),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            exported = json.loads(started.stdout)["env"]
+            self.assertEqual(exported["AGENT_WORKFLOW_SESSION_ID"], payload_id)
+            work_env = runtime_env.copy()
+            work_env.update(exported)
+            command = (
+                f"python3 tools/agentctl.py work --agent claude --auto-create "
+                f"--new-id {task} --title propagated --scope {scope}"
+            )
+            bootstrap = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=self.root,
+                env=work_env,
+                input=json.dumps({
+                    "session_id": payload_id,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                }),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            self.assertNotIn('"decision": "block"', bootstrap.stdout)
+            self.agentctl_env(
+                work_env, "work", "--agent", "claude", "--auto-create",
+                "--new-id", task, "--title", "propagated", "--scope", scope,
+            )
+            sessions.append((payload_id, work_env, scope))
+
+        statuses = [
+            json.loads(self.agentctl_env(env, "status", "--json").stdout)
+            for _, env, _ in sessions
+        ]
+        self.assertNotEqual(
+            statuses[0]["workflow_session_key"],
+            statuses[1]["workflow_session_key"],
+        )
+        for payload_id, work_env, scope in sessions:
+            guarded = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=self.root,
+                env=work_env,
+                input=json.dumps({
+                    "session_id": payload_id,
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": f"{scope}owned.py"},
+                }),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            self.assertNotIn('"decision": "block"', guarded.stdout)
+            self.assertNotIn("no active task session", guarded.stdout)
+
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=self.root,
+            text=True, capture_output=True, check=True, timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding_dir = common_path.resolve() / "agent-workflow" / "provider-bindings"
+        self.assertEqual(list(binding_dir.glob("host-*.json")), [])
+
+    def test_payload_runtime_binding_is_isolated_per_worktree(self):
+        """One host runtime can bootstrap distinct providers in distinct checkouts."""
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "add", "-A"], cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-qm", "test: worktree fixture"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        worktree_parent = Path(tempfile.mkdtemp(prefix="awk-binding-worktree-"))
+        self.addCleanup(shutil.rmtree, worktree_parent, ignore_errors=True)
+        worktree = worktree_parent / "worker"
+        added = subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "binding-worker", str(worktree)],
+            cwd=self.root, text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(added.returncode, 0, added.stdout + added.stderr)
+
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "shared-worktree-host"
+        outputs = []
+        for checkout, payload_id, scope in (
+            (self.root, "root-provider", "src/root-provider/"),
+            (worktree, "worktree-provider", "src/worktree-provider/"),
+        ):
+            guarded = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=checkout,
+                env=runtime_env,
+                input=json.dumps({
+                    "session_id": payload_id,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": (
+                        "python3 tools/agentctl.py work --agent claude "
+                        f"--auto-create --title worktree-bootstrap --scope {scope}"
+                    )},
+                }),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            outputs.append(guarded.stdout)
+        self.assertEqual(outputs, ["", ""])
+
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=self.root,
+            text=True, capture_output=True, check=True, timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding_dir = common_path.resolve() / "agent-workflow" / "provider-bindings"
+        self.assertEqual(len(list(binding_dir.glob("host-*.json"))), 2)
+
+    def test_corrupt_provider_binding_fails_closed(self):
+        """Malformed local identity state cannot be replaced during bootstrap."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "corrupt-binding-host"
+        payload_id = "corrupt-binding-provider"
+        started = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({"session_id": payload_id, "source": "startup"}),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr)
+        bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "python3 tools/agentctl.py work --agent claude --auto-create "
+                    "--new-id T-115 --title corrupt --scope src/corrupt/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', bootstrap.stdout)
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding = next(
+            (common_path.resolve() / "agent-workflow" / "provider-bindings").glob(
+                "host-*.json"
+            )
+        )
+        binding.write_text("{broken", encoding="utf-8")
+
+        attempted = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "python3 tools/agentctl.py work --agent claude --auto-create "
+                    "--new-id T-115 --title corrupt --scope src/corrupt/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        decision = json.loads(attempted.stdout)
+        self.assertEqual(decision.get("decision"), "block")
+        self.assertIn("binding state is invalid", decision.get("reason", ""))
+
     def test_same_terminal_session_starts_generate_distinct_workflow_identities(self):
         shared_terminal = self.bare_env()
         shared_terminal["TERM_SESSION_ID"] = "shared-terminal-window"
