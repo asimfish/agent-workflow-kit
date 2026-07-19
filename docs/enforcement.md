@@ -85,10 +85,13 @@ execution flags, and pager-opening grep forms are opaque. `rg --pre`,
 `fd --exec`, `ag --pager`, `find -fprint`, `tree -o`, and both normal and
 stdin-based `xxd` output operands cannot inherit the read-only classification
 of their executable name. GNU target-directory forms are checked, `mv` claims
-its deleted sources as well as its destination, and in-place `sed`/`perl`
-claims every input file. Curl write-out files and `gh --web` are write/execution
-surfaces. Dynamic shell variable/brace expansion and cwd-changing `env`
-wrappers are opaque because their final targets cannot be proven statically.
+its deleted sources as well as its destination, while in-place `sed`/`perl` is
+opaque because its embedded program can write additional files. Curl write-out,
+libcurl, stderr, SSL-session, and output-directory options plus `gh --web` are
+write/execution surfaces. Newlines, background/pipeline control operators,
+dynamic shell variable/positional expansion, globs in mutation targets, unsafe
+environment assignments, and cwd-changing `env` wrappers are opaque because
+their final effects cannot be proven statically.
 Host/process/remote mutations such as `sysctl -w`, `kill`, mutating `gh`
 actions, and default `wget` downloads are opaque beside peers; a conservative
 set of `gh ... view/list/status` actions remains read-only.
@@ -115,12 +118,18 @@ one itself:
 python3 tools/agentctl.py work --agent codex --auto-create --title "<current request>" --scope "<paths>"
 ```
 
-Codex, Claude Code, and Cursor project hooks call `tools/agent_workflow_hook.py`. The session-start hook injects the protocol into context, the pre-tool hook blocks mutating tools when no active task session exists, and the stop hook reminds the agent to record progress or complete the task (which updates the plan and task doc).
+Codex, Claude Code, and Cursor project hooks call `tools/agent_workflow_hook.py`.
+Codex and Claude match every tool call; Cursor uses generic `preToolUse` plus
+`beforeShellExecution` and `beforeMCPExecution`, all routed through the same
+guard. Known structured file/notebook/MCP mutations contribute every source and
+destination path. Unknown non-read tools and pathless mutations fail closed as
+opaque beside peers. The session-start hook injects the protocol into context,
+and the stop hook reminds the agent to record progress or complete the task.
 
 ### Long-task anti-drift (focus re-injection)
 
-The session-start hook matches `startup|resume|compact`. Whenever a long task is
-resumed or its context is compacted, the hook calls `agentctl focus` and re-injects
+The session-start hook matches `startup|resume|clear|compact`. Whenever a long task is
+resumed, cleared, or its context is compacted, the hook calls `agentctl focus` and re-injects
 the active task's goal, write scope, and stage TODO plus the required reading list.
 This keeps a long-running agent anchored to its task and plan instead of drifting.
 Run `agentctl focus` manually any time to re-anchor.
@@ -131,6 +140,9 @@ parent lineage plus an optional fork-instance key. If a child inherits the
 parent's environment, `agentctl` ignores the stale owner-bound ID. If a provider
 reports identical parent/child IDs, `SessionStart` establishes an isolated local
 instance; later mutating hooks block when that instance was not propagated.
+If a nested CLI first creates a task from its host runtime and a later hook adds
+a payload session ID, the hook reuses the already-recorded runtime session rather
+than switching identities mid-task.
 
 ### Runtime commands
 
@@ -195,6 +207,11 @@ project hooks still depend on the client loading them, repository trust, and
 user or organization policy. A repository cannot prevent an administrator from
 disabling its native hooks; Git hooks and required GitHub checks remain the
 later enforcement layers.
+
+Project hooks are coordination guardrails, not an operating-system sandbox.
+They conservatively route unprovable commands to exclusive worktrees, but they
+cannot contain hostile code or observe side effects performed outside the client
+hook lifecycle. Use an external sandbox for untrusted execution.
 
 No local hook can infer two distinct conversations when a client exposes no
 different runtime/session/fork signal and does not run `SessionStart`. Supported

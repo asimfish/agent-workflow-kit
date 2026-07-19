@@ -155,6 +155,10 @@ the sole bootstrap exception because it installs the identity hook itself.
   every mutating action: a tracked file changed outside every live session
   scope blocks further writes until it is reverted, claimed, or committed
   separately by a human. Write within your scope using enumerable tools.
+- Structured file/notebook/MCP writes are allowed beside peers only when every
+  source and destination path is explicit and inside scope. Unknown or pathless
+  mutating tools are opaque and require an exclusive checkout. Hooks are
+  coordination guardrails, not an OS sandbox for untrusted execution.
 - Git index, HEAD, branch, merge, and push mutations require exclusive use of a
   checkout. If another conversation is active, allocate a task-scoped worktree
   instead of bypassing the guard.

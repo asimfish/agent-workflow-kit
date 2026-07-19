@@ -372,6 +372,31 @@ def has_session(root: Path, env: dict) -> bool:
     )
 
 
+def resolve_existing_session_environment(
+        root: Path, payload: dict, env: dict) -> dict:
+    """Prefer an existing host-runtime session over a late payload-only ID."""
+    if has_session(root, env):
+        return env
+    payload_id = payload_session_id(payload)
+    runtime_ids = {
+        str(env.get(name) or "").strip()
+        for name in RUNTIME_ID_ENV_NAMES
+        if str(env.get(name) or "").strip()
+    }
+    if (
+        not payload_id
+        or payload_id not in runtime_ids
+        or not _host_runtime_identity(env)
+        or str(os.environ.get(SESSION_ID_ENV) or "").strip()
+        or str(env.get(SESSION_INSTANCE_ENV) or "").strip()
+    ):
+        return env
+    fallback = env.copy()
+    fallback.pop(SESSION_ID_ENV, None)
+    fallback.pop(SESSION_OWNER_RUNTIME_ENV, None)
+    return fallback if has_session(root, fallback) else env
+
+
 def session_completed(root: Path, env: dict) -> bool:
     st = session_state(root, env)
     return bool(st.get("completed_at") or st.get("status") in {"review", "done"})
@@ -465,7 +490,7 @@ def _shell_command_segments(command: str) -> list[tuple[list[str], str]]:
     segments = []
     current = []
     for token in tokens:
-        if token in {";", "&&", "||", "|"}:
+        if token in {";", "&&", "||", "|", "&", "|&"}:
             if current:
                 segments.append((current, token))
             current = []
@@ -478,7 +503,7 @@ def _shell_command_segments(command: str) -> list[tuple[list[str], str]]:
 
 def _strip_command_prefixes(tokens: list[str]) -> list[str]:
     command_tokens = list(tokens)
-    while command_tokens and command_tokens[0] in {"sudo", "command", "nohup", "time"}:
+    while command_tokens and command_tokens[0] in {"command", "time"}:
         command_tokens = command_tokens[1:]
     if command_tokens and command_tokens[0] == "env":
         env_tokens = command_tokens[1:]
@@ -488,13 +513,33 @@ def _strip_command_prefixes(tokens: list[str]) -> list[str]:
         if env_tokens and env_tokens[0].startswith("-"):
             return command_tokens
         command_tokens = env_tokens
-        while command_tokens and re.match(
-                r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
+        while command_tokens and _safe_environment_assignment(command_tokens[0]):
             command_tokens = command_tokens[1:]
+        if command_tokens and _environment_assignment(command_tokens[0]):
+            return tokens
     while command_tokens and re.match(
             r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
+        if not _safe_environment_assignment(command_tokens[0]):
+            return tokens
         command_tokens = command_tokens[1:]
     return command_tokens
+
+
+def _environment_assignment(token: str) -> bool:
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", token))
+
+
+def _safe_environment_assignment(token: str) -> bool:
+    if not _environment_assignment(token):
+        return False
+    name = token.split("=", 1)[0]
+    return bool(
+        name.startswith("LC_")
+        or name in {
+            "LANG", "LANGUAGE", "TZ", "TERM", "NO_COLOR", "CLICOLOR",
+            "CLICOLOR_FORCE",
+        }
+    )
 
 
 # Executables whose writes cannot be statically mapped to paths. They demand
@@ -511,8 +556,9 @@ SCRIPT_SUFFIX = re.compile(r"\.(sh|bash|zsh|py|js|ts|rb|pl)$")
 # Commands that read the workspace without writing it. Unknown executables are
 # NOT assumed read-only: any project binary, test runner, or build tool may
 # write arbitrary paths, so everything outside this list is treated as an
-# opaque write. sed/awk/perl one-liners without in-place flags are accepted as
-# conventional text filters; their in-place forms are path-extracted instead.
+# opaque write. Only provably print-only sed forms are accepted as conventional
+# text filters; embedded languages and programmable in-place forms are opaque
+# even when their direct input files are extractable.
 # Commands verified to have no file-writing options or embedded languages.
 # sort/uniq (output targets), awk/yq/perl (DSLs), base64 (-o), and tar are
 # handled by dedicated argument-aware branches instead of this list.
@@ -521,12 +567,12 @@ READ_ONLY_EXECUTABLES = {
     "rg", "ag", "fd", "tree", "wc", "cut", "tr", "diff",
     "cmp", "comm", "file", "stat", "du", "df", "pwd", "whoami", "id",
     "uname", "hostname", "date", "sleep", "true", "false", "test", "[",
-    "which", "whereis", "type", "printenv", "ps", "echo", "printf",
+    "which", "whereis", "type", "printenv", "ps", "echo",
     "basename", "dirname", "realpath", "readlink", "md5", "md5sum",
     "shasum", "sha1sum", "sha256sum", "cksum", "jq", "xxd",
     "hexdump", "strings", "column", "nl", "od", "seq", "expr",
     "getconf", "sysctl", "sw_vers", "arch", "nproc", "tty", "uptime",
-    "cd", "export", "unset", "set", "wait",
+    "wait",
 }
 # sed scripts that provably only print: line addresses plus p/q commands,
 # e.g. `1p`, `1,5p`, `$p`. Anything else (s///w, r/w commands, hold space
@@ -539,7 +585,7 @@ _IN_PLACE_FLAG = re.compile(r"^-[a-zA-Z]*i|^--in-place")
 # whole command an opaque write (fail closed, including quoted literals).
 _SHELL_SUBSTITUTION = re.compile(r"\$\(|`|<\(|>\(")
 _SHELL_DYNAMIC_EXPANSION = re.compile(
-    r"(?<!\\)\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[^}\n]+\})"
+    r"(?<!\\)\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9@*?$!#-]|\{[^}\n]+\})"
     r"|(?<!\\)\{[^{}\n]*,[^{}\n]*\}"
 )
 
@@ -549,7 +595,7 @@ _SHELL_DYNAMIC_EXPANSION = re.compile(
 GIT_READ_SUBCOMMANDS = {
     "status", "log", "show", "diff", "rev-parse", "describe", "ls-files",
     "ls-tree", "ls-remote", "cat-file", "blame", "annotate", "shortlog",
-    "grep", "help", "merge-base", "name-rev", "diff-tree", "diff-index",
+    "grep", "merge-base", "name-rev", "diff-tree", "diff-index",
     "count-objects", "cherry", "var", "show-ref",
     "whatchanged", "rev-list", "check-ignore", "check-attr",
 }
@@ -559,7 +605,7 @@ _GIT_BRANCH_READ_FLAGS = re.compile(
 )
 _GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                     "--exec-path"}
-_GIT_EMBEDDED_EXEC_FLAGS = {"--ext-diff", "--textconv"}
+_GIT_EMBEDDED_EXEC_FLAGS = {"--ext-diff", "--textconv", "--filters"}
 _GH_GLOBAL_VALUE_FLAGS = {"-R", "--repo", "--hostname"}
 _GH_READ_ACTIONS = {
     ("auth", "status"),
@@ -580,12 +626,15 @@ _FIND_OUTPUT_ACTIONS = {"-fls", "-fprint", "-fprint0", "-fprintf"}
 _CURL_PATH_FLAGS = {
     "-c", "--cookie-jar", "-D", "--dump-header", "--trace",
     "--trace-ascii", "--etag-save", "--hsts", "--alt-svc", "-o", "--output",
+    "--libcurl", "--stderr", "--ssl-sessions",
 }
 _CURL_WRITE_OUT_FLAGS = {"-w", "--write-out"}
 _MV_VALUE_FLAGS = {"-S", "--suffix", "-t", "--target-directory"}
 _SED_SCRIPT_VALUE_FLAGS = {
     "-e", "--expression", "-f", "--file", "-l", "--line-length",
 }
+_WRITE_REDIRECTS = {">", ">>", ">|", "&>", "&>>", "<>"}
+_GLOB_CHARS = re.compile(r"[*?\[]")
 
 
 def _option_values(args: list[str], flags: set[str],
@@ -680,17 +729,36 @@ def _curl_write_out_details(args: list[str]) -> tuple[list[str], bool]:
     return list(dict.fromkeys(paths)), opaque
 
 
+def _write_redirection_details(
+        tokens: list[str]) -> tuple[list[str], list[str], bool]:
+    """Return output targets, non-redirection tokens, and malformed state."""
+    paths = []
+    command_tokens = []
+    index = 0
+    while index < len(tokens):
+        fd_prefix = tokens[index].isdigit()
+        op_index = index + 1 if fd_prefix else index
+        op = tokens[op_index] if op_index < len(tokens) else ""
+        if op not in _WRITE_REDIRECTS | {">&"}:
+            command_tokens.append(tokens[index])
+            index += 1
+            continue
+        target_index = op_index + 1
+        if target_index >= len(tokens):
+            return paths, command_tokens, True
+        target = tokens[target_index]
+        if op != ">&" or not (target.isdigit() or target == "-"):
+            paths.append(target)
+        index = target_index + 1
+    return list(dict.fromkeys(paths)), command_tokens, False
+
+
 def _git_config_may_execute(value: str) -> bool:
+    """Only color.* overrides are inert enough for shared-checkout reads."""
+    if "=" not in value:
+        return True
     key = value.split("=", 1)[0].strip().lower()
-    return (
-        key in {
-            "diff.external", "core.pager", "core.editor",
-            "sequence.editor", "core.fsmonitor", "interactive.difffilter",
-        }
-        or key.startswith("pager.")
-        or bool(re.match(r"^diff\..+\.(?:command|textconv)$", key))
-        or bool(re.match(r"^difftool\..+\.(?:cmd|path)$", key))
-    )
+    return not bool(re.fullmatch(r"color\.[a-z0-9.-]+", key))
 
 
 def _git_global_config_may_execute(tokens: list[str]) -> bool:
@@ -961,6 +1029,21 @@ def _classify_segment(tokens: list[str]) -> str:
             return "read_only"
         return "opaque"
     if executable == "tar":
+        if any(
+            item in {
+                "-I", "--use-compress-program", "--checkpoint-action",
+                "--to-command", "--rsh-command", "--info-script",
+                "--new-volume-script", "--index-file", "--volno-file",
+            }
+            or any(item.startswith(flag + "=") for flag in {
+                "--use-compress-program", "--checkpoint-action", "--to-command",
+                "--rsh-command", "--info-script", "--new-volume-script",
+                "--index-file", "--volno-file",
+            })
+            or (item.startswith("-I") and len(item) > 2)
+            for item in args
+        ):
+            return "opaque"
         # Handle both `-xzf` and old-style bundled `xvf` option words; extract,
         # create, update, and append all write files or archives.
         first_word = args[0] if args else ""
@@ -979,6 +1062,8 @@ def _classify_segment(tokens: list[str]) -> str:
             return "opaque"
         if any(a.startswith("-") and not a.startswith("--") and len(a) > 2
                and any(flag in a[1:] for flag in "oOcDK") for a in args):
+            return "opaque"
+        if any(a == "--output-dir" or a.startswith("--output-dir=") for a in args):
             return "opaque"
         write_out_paths, write_out_opaque = _curl_write_out_details(args)
         if write_out_opaque:
@@ -1039,7 +1124,7 @@ def _classify_segment(tokens: list[str]) -> str:
         return "opaque"
     if executable == "sed":
         if any(_IN_PLACE_FLAG.match(a) for a in args if a.startswith("-")):
-            return "pathed" if _sed_in_place_targets(args) is not None else "opaque"
+            return "opaque"
         scripts = [a for a in args if not a.startswith("-")]
         if scripts and _SED_PRINT_ONLY.match(scripts[0]):
             return "read_only"
@@ -1048,12 +1133,20 @@ def _classify_segment(tokens: list[str]) -> str:
     if executable in {"perl", "awk", "gawk", "mawk", "nawk", "yq"}:
         # General-purpose or file-writing DSLs: inline code can open, write,
         # or in-place edit arbitrary paths (awk print > file, perl open,
-        # yq -i). In-place perl keeps its extracted-path form.
+        # yq -i).
         if executable == "perl" and any(
                 _IN_PLACE_FLAG.match(a) for a in args if a.startswith("-")):
-            return "pathed" if _perl_in_place_targets(args) is not None else "opaque"
+            return "opaque"
         return "opaque"
     if executable == "sort":
+        if any(
+            a in {"-T", "--temporary-directory", "--compress-program"}
+            or a.startswith("-T")
+            or a.startswith("--temporary-directory=")
+            or a.startswith("--compress-program=")
+            for a in args
+        ):
+            return "opaque"
         if any(a == "-o" or a.startswith("--output") for a in args):
             return "pathed"
         return "read_only"
@@ -1066,8 +1159,22 @@ def _classify_segment(tokens: list[str]) -> str:
         if any(a == "-o" or a.startswith("--output") for a in args):
             return "pathed"
         return "read_only"
+    if executable in {"cp", "mv", "ln"} and any(
+            a == "-b" or a == "--backup" or a.startswith("--backup=")
+            or (a.startswith("-") and not a.startswith("--") and "b" in a[1:])
+            for a in args):
+        return "opaque"
     if executable in {"touch", "mkdir", "rm", "tee", "cp", "mv", "ln"}:
         return "pathed"
+    if executable == "cd":
+        return "read_only" if (
+            len(args) == 1 and not args[0].startswith("-")
+            and not _GLOB_CHARS.search(args[0])
+        ) else "opaque"
+    if executable == "printf":
+        return "opaque" if any(
+            a == "-v" or a.startswith("--assign=") for a in args
+        ) else "read_only"
     if executable in READ_ONLY_EXECUTABLES:
         return "read_only"
     # Default-deny: an unknown executable may write anywhere.
@@ -1080,15 +1187,23 @@ _VERDICT_RANK = {"read_only": 0, "pathed": 1, "git_write": 2, "opaque": 3}
 def classify_shell_command(command: str) -> str:
     """Strongest write capability across all pipeline segments."""
     if command and (
-            _SHELL_SUBSTITUTION.search(command)
+            "\n" in command
+            or "\r" in command
+            or _SHELL_SUBSTITUTION.search(command)
             or _SHELL_DYNAMIC_EXPANSION.search(command)):
         return "opaque"
     strongest = "read_only"
-    for segment, _connector in _shell_command_segments(command):
-        if any(token in {">", ">>", "1>", "1>>", "2>", "2>>"} for token in segment):
+    segments = _shell_command_segments(command)
+    if command.strip() and not segments:
+        return "opaque"
+    for segment, _connector in segments:
+        redirection_paths, command_tokens, malformed = _write_redirection_details(segment)
+        if malformed:
+            return "opaque"
+        if redirection_paths:
             if _VERDICT_RANK[strongest] < _VERDICT_RANK["pathed"]:
                 strongest = "pathed"
-        tokens = _strip_command_prefixes(segment)
+        tokens = _strip_command_prefixes(command_tokens)
         verdict = _classify_segment(tokens)
         if verdict == "opaque":
             return "opaque"
@@ -1128,35 +1243,25 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
         values.append(str(target))
 
     for value in re.findall(
-            r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", command, flags=re.M):
+            r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$",
+            command, flags=re.M):
         add_target(value)
     if not command:
         return values
     segments = _shell_command_segments(command)
-    redirect_tokens = {">", ">>", "1>", "1>>", "2>", "2>>"}
     for segment, connector in segments:
-        command_tokens = []
-        index = 0
-        while index < len(segment):
-            token = segment[index]
-            if (token.isdigit() and index + 2 < len(segment)
-                    and segment[index + 1] in {">", ">>"}):
-                add_target(segment[index + 2])
-                index += 3
-                continue
-            if token in redirect_tokens and index + 1 < len(segment):
-                add_target(segment[index + 1])
-                index += 2
-                continue
-            command_tokens.append(token)
-            index += 1
+        redirect_paths, command_tokens, _malformed = _write_redirection_details(segment)
+        for value in redirect_paths:
+            add_target(value)
         command_tokens = _strip_command_prefixes(command_tokens)
         if not command_tokens:
             continue
         executable = Path(command_tokens[0]).name
         command_args = command_tokens[1:]
         args = [item for item in command_args if not item.startswith("-")]
-        if executable == "cd" and args:
+        if (executable == "cd" and len(args) == 1
+                and not args[0].startswith("-")
+                and not _GLOB_CHARS.search(args[0])):
             target = Path(args[0]).expanduser()
             next_dir = target if target.is_absolute() else working_dir / target
             if connector in {"&&", ";", ""}:
@@ -1235,20 +1340,77 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
     return list(dict.fromkeys(values))
 
 
+def _tool_name(payload: dict) -> str:
+    return str(
+        payload.get("tool_name") or payload.get("tool")
+        or payload.get("toolType") or ""
+    )
+
+
+def _tool_leaf(payload: dict) -> str:
+    raw = re.split(r"__|[./:]", _tool_name(payload))[-1]
+    return re.sub(r"[^a-z0-9]", "", raw.lower())
+
+
+_PATH_BOUNDED_MUTATION_TOOLS = {
+    "write", "edit", "multiedit", "applypatch", "notebookedit",
+    "strreplace", "save", "writefile", "writemultiplefiles", "editfile",
+    "appendfile", "patchfile", "createfile", "touchfile", "deletefile",
+    "movefile", "copyfile", "renamefile", "createdirectory",
+    "makedirectory", "deletedirectory", "move", "copy", "rename",
+}
+_READ_ONLY_TOOLS = {
+    "read", "glob", "grep", "websearch", "webfetch", "skill",
+    "todowrite", "askuserquestion", "updateplan", "requestuserinput",
+    "viewimage", "getgoal", "updategoal", "creategoal", "toolsearch",
+    "listmcpresources", "listmcpresourcetemplates", "readmcpresource",
+    "enterplanmode", "exitplanmode", "readfile", "readdirectory",
+    "listdirectory", "directorytree", "getfileinfo", "searchfiles",
+}
+_STRUCTURED_PATH_KEYS = {
+    "file_path", "filepath", "notebook_path", "notebookpath", "path",
+    "source", "source_path", "sourcepath", "src", "destination",
+    "destination_path", "destinationpath", "dest", "dst", "target_path",
+    "targetpath", "old_path", "oldpath", "new_path", "newpath",
+    "directory", "directory_path", "directorypath", "target",
+}
+
+
+def _tool_is_read_only(payload: dict) -> bool:
+    return _tool_leaf(payload) in _READ_ONLY_TOOLS
+
+
+def _tool_is_path_bounded_mutation(payload: dict) -> bool:
+    return _tool_leaf(payload) in _PATH_BOUNDED_MUTATION_TOOLS
+
+
+def _structured_paths(value) -> list[str]:
+    paths = []
+    if isinstance(value, dict):
+        for key, item in value.items():
+            normalized = str(key).lower().replace("-", "_")
+            if normalized in _STRUCTURED_PATH_KEYS and isinstance(
+                    item, (str, os.PathLike)):
+                paths.append(str(item))
+            elif isinstance(item, (dict, list, tuple)):
+                paths.extend(_structured_paths(item))
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            paths.extend(_structured_paths(item))
+    return paths
+
+
 def payload_paths(payload: dict) -> list[str]:
-    tool = str(payload.get("tool_name") or payload.get("tool") or payload.get("toolType") or "")
     tool_input = payload.get("tool_input") or {}
     values = []
-    if tool in {"Write", "Edit", "MultiEdit", "apply_patch"}:
-        for key in ("file_path", "path"):
-            value = tool_input.get(key) or payload.get(key)
-            if value:
-                values.append(str(value))
-        for edit in tool_input.get("edits") or []:
-            if isinstance(edit, dict) and (edit.get("file_path") or edit.get("path")):
-                values.append(str(edit.get("file_path") or edit.get("path")))
+    if _tool_is_path_bounded_mutation(payload):
+        values.extend(_structured_paths(tool_input))
+        values.extend(_structured_paths(payload))
         patch = str(tool_input.get("patch") or tool_input.get("input") or "")
-        values.extend(re.findall(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", patch, flags=re.M))
+        values.extend(re.findall(
+            r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): (.+)$",
+            patch, flags=re.M,
+        ))
     elif payload_command(payload):
         cwd_value = (
             tool_input.get("cwd") or tool_input.get("workdir")
@@ -1275,6 +1437,11 @@ def guard_session(root: Path, payload: dict, env: dict) -> tuple[bool, str]:
             # A write-capable command that yielded no checkable path must not
             # pass on the strength of an empty path list.
             command.append("--opaque")
+        elif any(_GLOB_CHARS.search(path) for path in paths):
+            command.append("--opaque")
+    elif is_mutating_tool(payload) and (
+            not _tool_is_path_bounded_mutation(payload) or not paths):
+        command.append("--opaque")
     result = run(command, root, env)
     if result.returncode == 0:
         return True, result.stdout.strip()
@@ -1287,8 +1454,7 @@ def heartbeat(root: Path, env: dict) -> None:
 
 
 def is_finalization_action(payload: dict) -> bool:
-    tool = str(payload.get("tool_name") or payload.get("tool") or payload.get("toolType") or "")
-    if tool in {"Write", "Edit", "MultiEdit", "apply_patch"}:
+    if _tool_is_path_bounded_mutation(payload):
         return False
     command = payload_command(payload)
     if not command:
@@ -1299,9 +1465,8 @@ def is_finalization_action(payload: dict) -> bool:
 
 
 def is_mutating_tool(payload: dict) -> bool:
-    tool = str(payload.get("tool_name") or payload.get("tool") or payload.get("toolType") or "")
     command = payload_command(payload)
-    if tool in {"Write", "Edit", "MultiEdit", "apply_patch"}:
+    if _tool_is_path_bounded_mutation(payload):
         return True
     if command:
         if command_is_agentctl_start(command):
@@ -1311,11 +1476,9 @@ def is_mutating_tool(payload: dict) -> bool:
             or MUTATING_BASH.search(command) is not None
             or classify_shell_command(command) != "read_only"
         )
-    if tool == "Bash":
-        if command_is_agentctl_start(command):
-            return False
-        return MUTATING_BASH.search(command) is not None
-    return False
+    if _tool_leaf(payload) in {"bash", "shell"}:
+        return True
+    return not _tool_is_read_only(payload)
 
 
 def current_focus(root: Path, env: dict) -> str:
@@ -1342,7 +1505,9 @@ def session_start() -> int:
     if not (root / ".agent").exists():
         return 0
     payload = read_input()
-    env = hook_environment(payload, create_fork_instance=True)
+    env = resolve_existing_session_environment(
+        root, payload, hook_environment(payload, create_fork_instance=True),
+    )
     session_env = persist_session_environment(session_environment_exports(env))
     entry = workflow_entry(root)
     if entry:
@@ -1385,7 +1550,7 @@ def pre_tool_use() -> int:
     if not (root / ".agent").exists():
         return 0
     payload = read_input()
-    env = hook_environment(payload)
+    env = resolve_existing_session_environment(root, payload, hook_environment(payload))
     identity_error = session_identity_error(env)
     mutating = is_mutating_tool(payload)
     controller_mutation = command_requires_agentctl_identity(payload_command(payload))
@@ -1445,7 +1610,7 @@ def stop() -> int:
     if not (root / ".agent").exists():
         return 0
     payload = read_input()
-    env = hook_environment(payload)
+    env = resolve_existing_session_environment(root, payload, hook_environment(payload))
     if not has_session(root, env):
         return 0
     heartbeat(root, env)

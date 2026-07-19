@@ -194,6 +194,33 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             "cursor-conversation-2",
         )
 
+    def test_pre_tool_hook_reuses_runtime_session_when_payload_adds_session_id(self):
+        """A child CLI payload ID must not hide its runtime-owned task session."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "outer-codex-thread"
+        runtime_env["CLAUDE_CODE_SESSION_ID"] = "claude-child-session"
+        self.agentctl_env(
+            runtime_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-112", "--title", "child runtime identity",
+            "--scope", "src/claude-child/",
+        )
+
+        guarded = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": "claude-child-session",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git add src/claude-child/file.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(guarded.returncode, 0, guarded.stderr)
+        self.assertNotIn("no active task session", guarded.stdout)
+
     def test_same_terminal_session_starts_generate_distinct_workflow_identities(self):
         shared_terminal = self.bare_env()
         shared_terminal["TERM_SESSION_ID"] = "shared-terminal-window"
@@ -328,6 +355,26 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         module_decision = json.loads(module_hook.stdout)
         self.assertEqual(module_decision["decision"], "block")
         self.assertIn("unique workflow identity", module_decision["reason"])
+
+        piped_hook = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=terminal_only,
+            input=json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "echo audit |& python3 tools/agentctl.py task create "
+                    "--id T-195 --title unsafe --owner codex --scope src/unsafe-pipe/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(piped_hook.returncode, 0, piped_hook.stderr)
+        piped_decision = json.loads(piped_hook.stdout)
+        self.assertEqual(piped_decision["decision"], "block")
+        self.assertIn("unique workflow identity", piped_decision["reason"])
 
         module_direct = subprocess.run(
             [
@@ -1127,8 +1174,6 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             "mv src/one/a src/one/b",
             "ln -s -t src/one src/one/a",
             "ln -s src/one/a src/one/link",
-            "sed -i.bak 's/x/y/' src/one/a src/one/b",
-            "perl -pi -e 's/x/y/' src/one/a src/one/b",
             "curl --write-out '%output{src/one/status.txt}' https://example.invalid",
         ):
             admitted = self.hook(
@@ -1158,6 +1203,126 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
                 session="one",
             )
             self.assertEqual(passthrough.stdout, "", command)
+
+    def test_residual_shell_escape_surfaces_fail_closed_beside_peers(self):
+        self.start("one", "T-113", "src/one/")
+        self.start("two", "T-114", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        blocked_commands = (
+            "echo ok\ntouch src/two/newline.txt",
+            "echo ok & touch src/two/background.txt",
+            "echo ok |& tee src/two/pipeline.txt",
+            "echo ok &> src/two/all-output.txt",
+            "echo ok &>> src/two/all-append.txt",
+            "echo ok >& src/two/fd-output.txt",
+            "echo ok >| src/two/clobber.txt",
+            "cat <> src/two/read-write.txt",
+            "touch src/one/$1",
+            "touch src/one/$@",
+            "rm src/*",
+            "sed -i.bak 's/x/y/' src/one/a",
+            "perl -pi -e 'open F,qq(>src/two/leak);print F qq(x)' src/one/a",
+            "GIT_SSH_COMMAND=evil git status",
+            "git -c credential.helper='!evil' status",
+            "git cat-file --filters HEAD:README.md",
+            "git help status",
+            "curl --libcurl src/two/repro.c https://example.invalid",
+            "curl --stderr src/two/curl.log https://example.invalid",
+            "curl --ssl-sessions src/two/sessions https://example.invalid",
+            "curl --output-dir src/one https://example.invalid/file",
+            "sort --compress-program=evil src/one/input",
+            "sort -T src/two src/one/input",
+            "tar --use-compress-program=evil -tf archive.tar",
+            "tar --checkpoint-action=exec=evil -tf archive.tar",
+            "cp --backup src/one/a src/one/b",
+            "mv --backup src/one/a src/one/b",
+            "ln --backup src/one/a src/one/b",
+            "nohup grep Agent README.md",
+            "export TARGET=src/two/leak",
+            "unset TARGET",
+            "set -o noclobber",
+            "cd",
+            "cd -",
+            "printf -v TARGET src/two/leak",
+        )
+        for command in blocked_commands:
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            self.assertEqual(
+                json.loads(decision.stdout).get("decision"), "block", command,
+            )
+
+        allowed_commands = (
+            "echo ok &> src/one/all-output.txt",
+            "echo ok &>> src/one/all-append.txt",
+            "echo ok >& src/one/fd-output.txt",
+            "echo ok >| src/one/clobber.txt",
+            "echo ok 2>&1",
+            "curl --libcurl src/one/repro.c https://example.invalid",
+            "curl --stderr src/one/curl.log https://example.invalid",
+            "curl --ssl-sessions src/one/sessions https://example.invalid",
+            "cd src/one && touch ok",
+            "git -c color.ui=never diff --stat",
+            "LC_ALL=C grep Agent README.md",
+            "tar -tf archive.tar",
+            "sort src/one/input",
+        )
+        for command in allowed_commands:
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', decision.stdout, command)
+
+    def test_structured_mutation_tools_are_path_checked_or_fail_closed(self):
+        self.start("one", "T-115", "src/one/")
+        self.start("two", "T-116", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        blocked_payloads = (
+            {"tool_name": "NotebookEdit", "tool_input": {
+                "notebook_path": "src/two/work.ipynb"}},
+            {"tool_name": "StrReplace", "tool_input": {
+                "file_path": "src/two/file.py"}},
+            {"tool_name": "Save", "tool_input": {"path": "src/two/file.py"}},
+            {"tool_name": "mcp__filesystem__write_file", "tool_input": {
+                "path": "src/two/file.py", "content": "x"}},
+            {"tool_name": "mcp__filesystem__move_file", "tool_input": {
+                "source": "src/one/a", "destination": "src/two/a"}},
+            {"tool_name": "apply_patch", "tool_input": {"patch": (
+                "*** Begin Patch\n*** Update File: src/one/a\n"
+                "*** Move to: src/two/a\n@@\n-x\n+y\n*** End Patch"
+            )}},
+            {"tool_name": "Task", "tool_input": {"prompt": "edit the repo"}},
+            {"tool_name": "unknown_mutator", "tool_input": {}},
+            {"tool_name": "get_and_delete", "tool_input": {}},
+        )
+        for payload in blocked_payloads:
+            decision = self.hook("pre-tool-use", payload, session="one")
+            self.assertTrue(decision.stdout.strip(), payload)
+            self.assertEqual(
+                json.loads(decision.stdout).get("decision"), "block", payload,
+            )
+
+        allowed_payloads = (
+            {"tool_name": "NotebookEdit", "tool_input": {
+                "notebook_path": "src/one/work.ipynb"}},
+            {"tool_name": "mcp__filesystem__write_file", "tool_input": {
+                "path": "src/one/file.py", "content": "x"}},
+            {"tool_name": "Read", "tool_input": {"file_path": "src/two/file.py"}},
+            {"tool_name": "mcp__filesystem__read_file", "tool_input": {
+                "path": "src/two/file.py"}},
+            {"tool_name": "update_plan", "tool_input": {"plan": []}},
+        )
+        for payload in allowed_payloads:
+            decision = self.hook("pre-tool-use", payload, session="one")
+            self.assertNotIn('"decision": "block"', decision.stdout, payload)
 
     def test_git_ref_and_config_mutations_are_not_read_only(self):
         """Audit repro: fetch, reflog expire, and branch config are writes."""

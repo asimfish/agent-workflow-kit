@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 04:48:47",
+  "updated_at": "2026-07-20 05:37:41",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1309,6 +1309,25 @@
       "deps": [],
       "created_at": "2026-07-20 04:47:14",
       "updated_at": "2026-07-20 04:48:47"
+    },
+    "T-087": {
+      "title": "close residual shared-checkout isolation boundaries",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".codex/",
+        ".claude/",
+        ".cursor/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:50:30",
+      "updated_at": "2026-07-20 05:37:41"
     }
   }
 }

@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-087 - close residual shared-checkout isolation boundaries (owner: codex)
 - [ ] T-086 - integrate independent T-081 review evidence (owner: codex-integrator)
 - [ ] T-085 - review T-081 resubmission and T-083/T-084 evidence (owner: independent-reviewer)
 - [ ] T-084 - independently review T-082 review record and T-083 isolation fixes (PR #17) (owner: independent-reviewer)

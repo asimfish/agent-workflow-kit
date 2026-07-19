@@ -50,6 +50,11 @@ project content is preserved. Project-owned `.agent/` plans, tasks, rules, and
 runtime history are seeded only when absent. Re-running `init` is idempotent and
 upgrades unchanged kit-managed tools using `.agent/install-manifest.json`.
 
+On the first clone/install or after a managed hook upgrade, review and trust the
+project hooks if the client asks. In Codex, inspect `/hooks`; in Claude Code or
+Cursor, accept the project configuration prompt, then reopen the conversation
+once so `SessionStart` runs. The repository cannot approve its own hooks.
+
 If a managed tool or workflow file was edited locally, installation stops before
 making partial changes. Inspect the diff first, then explicitly replace only the
 kit-managed files when appropriate:
@@ -209,14 +214,22 @@ The coordination policy is deliberately small:
   Tool names alone are never sufficient: Git `--output`, `find`/`tree` output
   actions, `xxd` output operands, search-tool exec/preprocessors, and GNU
   target-directory forms are path-checked or fail closed. Shell variable/brace
-  expansion and cwd-changing `env` wrappers are opaque; moves and in-place
-  edits claim every mutated operand, while curl/Git/GitHub output or execution
-  options cannot inherit a read-only verdict.
+  expansion and cwd-changing `env` wrappers are opaque; moves claim every
+  mutated operand, while programmable in-place edits and curl/Git/GitHub
+  output or execution options cannot inherit a read-only verdict.
+- Native write/edit/notebook/filesystem-MCP tools are checked by every concrete
+  source and destination path. A mutating tool with no bounded path contract,
+  including an unknown tool or delegated sub-agent action, is opaque and needs
+  an exclusive checkout. Read/search/plan tools remain usable beside peers.
 - A missing heartbeat marks a session stale but does not discard its claim.
   After inspection, an agent can explicitly release it and resume the existing
   task; task docs and working files are preserved.
 - Task/plan/log transitions are serialized with an OS advisory lock, and each
   session writes only its own atomically replaced JSON record.
+
+These hooks are coordination guardrails, not an OS sandbox. Commands with hidden
+or complex side effects belong in a managed worktree; untrusted code additionally
+needs an external sandbox appropriate to the project.
 
 Document ownership is enforced on top of scopes:
 
