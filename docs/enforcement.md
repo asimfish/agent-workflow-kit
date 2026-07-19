@@ -46,6 +46,18 @@ reverted, claimed through a task scope, or committed separately by a human.
 `agentctl` invocations are exempt from the opaque classification; the
 controller enforces its own per-command identity and mutation policy.
 
+Shell commands are classified before execution: an explicit read-only
+allowlist passes freely, path-extractable writes are checked against the
+active scope, and everything else — interpreters with inline code, project
+scripts, test/build runners, archive and download tools, nested shells, and
+unknown executables — is an opaque write. Opaque writes require an active
+task session and exclusive use of the checkout: beside another live session
+they are refused with worktree guidance, because their output paths cannot
+be attributed afterwards. Every mutating action also reconciles the working
+tree; a tracked file modified outside every live session scope (including
+tracked dotfiles such as `.env`) blocks further mutations until reverted,
+claimed, or committed separately by a human.
+
 Path guards enforce document ownership on top of the write scope. The active
 task's own document is always part of the effective scope, while
 controller-generated files (`board.json`, `TASKS.md`, the agent registry,

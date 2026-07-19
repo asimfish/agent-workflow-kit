@@ -946,6 +946,89 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         selected = self.agentctl("work", "--agent", "codex", session="two")
         self.assertIn("T-EXIST", selected.stdout)
 
+    def test_opaque_commands_require_an_exclusive_checkout(self):
+        """Audit repro: interpreters/scripts must not run beside live peers.
+
+        A command whose written paths cannot be enumerated statically could
+        write into any peer's scope without attribution, so with another live
+        session in the checkout it is refused outright and pointed at task
+        worktrees. Solo sessions keep running them, and read-only staples and
+        path-checked writes stay available either way.
+        """
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        opaque_commands = [
+            # the literal audit reproduction
+            'python3 -c "open(\'src/two/data.txt\',\'w\').write(\'x\')"',
+            # nested shell must be unwrapped, not treated as read-only
+            'bash -c "python3 -c \\"open(\'src/two/data.txt\',\'w\').write(\'x\')\\""',
+            # test/build runners and arbitrary project binaries
+            "pytest -q",
+            "cargo test",
+            "mycollector --output collect/batch1/",
+        ]
+        for command in opaque_commands:
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", command)
+            self.assertIn("worktree", payload.get("reason", ""), command)
+
+        # Read-only staples and path-checked writes keep working beside peers.
+        for command in (
+            "sed -n '1p' README.md",
+            "grep -r Agent docs",
+            "perl -ne 'print if /Agent/' README.md",
+            "git status",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertEqual(passthrough.stdout, "", command)
+        pathed = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "touch src/one/ok.py"}},
+            session="one",
+        )
+        self.assertNotIn("block", pathed.stdout)
+
+        # Once the peer finishes, the same opaque command is allowed again.
+        self.agentctl("refresh", session="two")
+        self.agentctl(
+            "complete", "--summary", "done", "--tests", "fixture", session="two",
+        )
+        solo = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "pytest -q"}},
+            session="one",
+        )
+        self.assertNotIn('"decision": "block"', solo.stdout)
+
+    def test_unknown_executables_default_to_writes_requiring_a_session(self):
+        probe = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "mycollector --run"}},
+            session="ghost",
+        )
+        self.assertTrue(probe.stdout.strip(), "unknown executable passed as read-only")
+        payload = json.loads(probe.stdout)
+        self.assertEqual(payload.get("decision"), "block")
+        self.assertIn("no active task session", payload.get("reason", ""))
+        read_only = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "grep -r pattern src"}},
+            session="ghost",
+        )
+        self.assertEqual(read_only.stdout, "")
+
     def test_start_rejects_unknown_task_ids_without_registering_a_claim(self):
         unknown = self.agentctl(
             "start", "--task", "T-999", "--agent", "codex",

@@ -498,42 +498,103 @@ def _strip_command_prefixes(tokens: list[str]) -> list[str]:
 # own identity/mutation policy for every subcommand.
 OPAQUE_WRITE_EXECUTABLES = {
     "rsync", "dd", "install", "truncate", "shred", "unzip", "make",
-    "cmake", "ninja", "pip", "pip3",
+    "cmake", "ninja", "pip", "pip3", "xargs", "eval", "source",
 }
 OPAQUE_INTERPRETERS = re.compile(r"^(python[0-9.]*|node|deno|bun|ruby)$")
 SCRIPT_SUFFIX = re.compile(r"\.(sh|bash|zsh|py|js|ts|rb|pl)$")
 
+# Commands that read the workspace without writing it. Unknown executables are
+# NOT assumed read-only: any project binary, test runner, or build tool may
+# write arbitrary paths, so everything outside this list is treated as an
+# opaque write. sed/awk/perl one-liners without in-place flags are accepted as
+# conventional text filters; their in-place forms are path-extracted instead.
+READ_ONLY_EXECUTABLES = {
+    "ls", "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep",
+    "rg", "ag", "fd", "tree", "wc", "sort", "uniq", "cut", "tr", "diff",
+    "cmp", "comm", "file", "stat", "du", "df", "pwd", "whoami", "id",
+    "uname", "hostname", "date", "sleep", "true", "false", "test", "[",
+    "which", "whereis", "type", "printenv", "ps", "echo", "printf",
+    "basename", "dirname", "realpath", "readlink", "md5", "md5sum",
+    "shasum", "sha1sum", "sha256sum", "cksum", "jq", "yq", "xxd",
+    "hexdump", "strings", "base64", "column", "nl", "od", "seq", "expr",
+    "getconf", "sysctl", "sw_vers", "arch", "nproc", "tty", "uptime",
+    "awk", "gawk", "cd", "export", "unset", "set", "wait", "kill",
+    "git", "gh",
+}
+_IN_PLACE_FLAG = re.compile(r"^-[a-zA-Z]*i|^--in-place")
+
+
+def _classify_segment(tokens: list[str]) -> str:
+    """Classify one pipeline segment as read_only / pathed / opaque."""
+    if not tokens:
+        return "read_only"
+    joined = " ".join(tokens)
+    if "agentctl.py" in joined or "agent_workflow_hook.py" in joined:
+        return "read_only"
+    head = tokens[0]
+    executable = Path(head).name
+    args = tokens[1:]
+    if head.startswith("./"):
+        return "opaque"
+    if executable in {"bash", "sh", "zsh", "dash", "ksh"}:
+        for index, item in enumerate(args):
+            if item == "-c" and index + 1 < len(args):
+                # Unwrap the nested command and classify its contents.
+                return classify_shell_command(args[index + 1])
+        if any(SCRIPT_SUFFIX.search(a) for a in args if not a.startswith("-")):
+            return "opaque"
+        # `bash` alone or `sh -s` executes stdin we cannot see.
+        return "opaque"
+    if executable in OPAQUE_WRITE_EXECUTABLES:
+        if executable == "unzip" and any(a in {"-l", "-t"} for a in args):
+            return "read_only"
+        return "opaque"
+    if executable == "tar":
+        if any(a.startswith("-") and "x" in a.lstrip("-") for a in args):
+            return "opaque"
+        return "read_only"
+    if executable in {"curl", "wget"}:
+        if any(a in {"-o", "-O", "--output", "--remote-name"}
+               or a.startswith("--output=") for a in args):
+            return "opaque"
+        return "read_only"
+    if OPAQUE_INTERPRETERS.match(executable):
+        return "opaque"
+    if executable == "find":
+        if any(a in {"-delete", "-exec", "-execdir", "-ok", "-okdir"} for a in args):
+            return "opaque"
+        return "read_only"
+    if executable in {"sed", "perl"}:
+        if any(_IN_PLACE_FLAG.match(a) for a in args if a.startswith("-")):
+            return "pathed"
+        return "read_only"
+    if executable in {"touch", "mkdir", "rm", "tee", "cp", "mv", "ln"}:
+        return "pathed"
+    if executable in READ_ONLY_EXECUTABLES:
+        return "read_only"
+    # Default-deny: an unknown executable may write anywhere.
+    return "opaque"
+
+
+def classify_shell_command(command: str) -> str:
+    """Strongest write capability across all pipeline segments."""
+    strongest = "read_only"
+    for segment, _connector in _shell_command_segments(command):
+        if any(token in {">", ">>", "1>", "1>>", "2>", "2>>"} for token in segment):
+            if strongest == "read_only":
+                strongest = "pathed"
+        tokens = _strip_command_prefixes(segment)
+        verdict = _classify_segment(tokens)
+        if verdict == "opaque":
+            return "opaque"
+        if verdict == "pathed":
+            strongest = "pathed"
+    return strongest
+
 
 def command_opaque_write(command: str) -> bool:
     """True when a shell command can write files we cannot enumerate."""
-    for segment, _connector in _shell_command_segments(command):
-        tokens = _strip_command_prefixes(segment)
-        if not tokens:
-            continue
-        head = tokens[0]
-        executable = Path(head).name
-        args = tokens[1:]
-        if "agentctl.py" in " ".join(tokens):
-            continue
-        if head.startswith("./"):
-            return True
-        if executable in OPAQUE_WRITE_EXECUTABLES:
-            if executable == "unzip" and any(a in {"-l", "-t"} for a in args):
-                continue
-            return True
-        if executable == "tar" and any(
-                a.startswith("-") and "x" in a.lstrip("-") for a in args):
-            return True
-        if executable in {"curl", "wget"} and any(
-                a in {"-o", "-O", "--output", "--remote-name"}
-                or a.startswith("--output=") for a in args):
-            return True
-        if executable in {"bash", "sh", "zsh"} and any(
-                SCRIPT_SUFFIX.search(a) for a in args if not a.startswith("-")):
-            return True
-        if OPAQUE_INTERPRETERS.match(executable):
-            return True
-    return False
+    return classify_shell_command(command) == "opaque"
 
 
 def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
@@ -640,8 +701,11 @@ def guard_session(root: Path, payload: dict, env: dict) -> tuple[bool, str]:
     command = [sys.executable, str(agentctl), "sessions", "guard"]
     for path in payload_paths(payload):
         command.extend(["--path", path])
-    if GIT_WRITE_BASH.search(payload_command(payload)):
+    shell_command = payload_command(payload)
+    if GIT_WRITE_BASH.search(shell_command):
         command.append("--git-write")
+    if shell_command and command_opaque_write(shell_command):
+        command.append("--opaque")
     result = run(command, root, env)
     if result.returncode == 0:
         return True, result.stdout.strip()
