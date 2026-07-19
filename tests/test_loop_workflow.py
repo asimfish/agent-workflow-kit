@@ -530,7 +530,9 @@ raise SystemExit(module.main([
         self.agentctl("work", "--agent", "codex", "--auto-create",
                       "--title", "execution lease regression", "--scope", ".agent/", expect=0)
         self.write_loop(
-            "regress-lease", "lease-check", "echo run >> runs.txt; sleep 2")
+            # The lease must stay held through both blocked assertions even on
+            # a heavily loaded machine; 2s lost that race in practice.
+            "regress-lease", "lease-check", "echo run >> runs.txt; sleep 6")
         self.add_checkpoint("lease-check", "regress-lease", escalate_after=3)
 
         runner = subprocess.Popen(

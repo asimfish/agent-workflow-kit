@@ -457,7 +457,15 @@ def _shell_command_segments(command: str) -> list[tuple[list[str], str]]:
     if not command:
         return []
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        # A newline separates commands exactly like `;`. shlex treats it as
+        # plain whitespace, which would silently fuse the second command into
+        # the first segment's arguments, so make the separator explicit.
+        # (Quoted/heredoc newlines become separators too - a fail-closed
+        # over-split, never a merge.)
+        lexer = shlex.shlex(
+            command.replace("\r\n", "\n").replace("\n", " ; "),
+            posix=True, punctuation_chars=";&|<>",
+        )
         lexer.whitespace_split = True
         tokens = list(lexer)
     except ValueError:
@@ -465,7 +473,7 @@ def _shell_command_segments(command: str) -> list[tuple[list[str], str]]:
     segments = []
     current = []
     for token in tokens:
-        if token in {";", "&&", "||", "|"}:
+        if token in {";", "&&", "||", "|", "&"}:
             if current:
                 segments.append((current, token))
             current = []
@@ -476,19 +484,52 @@ def _shell_command_segments(command: str) -> list[tuple[list[str], str]]:
     return segments
 
 
+_DURATION_TOKEN = re.compile(r"^\d+(\.\d+)?[smhd]?$")
+
+
 def _strip_command_prefixes(tokens: list[str]) -> list[str]:
     command_tokens = list(tokens)
-    while command_tokens and command_tokens[0] in {"sudo", "command", "nohup", "time"}:
-        command_tokens = command_tokens[1:]
-    if command_tokens and command_tokens[0] == "env":
-        command_tokens = command_tokens[1:]
-        while command_tokens and (
-                command_tokens[0].startswith("-")
-                or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0])):
+    changed = True
+    while changed and command_tokens:
+        changed = False
+        head = command_tokens[0]
+        if head in {"sudo", "command", "nohup", "time", "setsid", "caffeinate"}:
             command_tokens = command_tokens[1:]
-    while command_tokens and re.match(
-            r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
-        command_tokens = command_tokens[1:]
+            changed = True
+            continue
+        if head in {"nice", "ionice", "stdbuf"}:
+            command_tokens = command_tokens[1:]
+            while command_tokens and command_tokens[0].startswith("-"):
+                flag = command_tokens[0]
+                command_tokens = command_tokens[1:]
+                # `nice -n 10` / `ionice -c 2` carry a separate value token.
+                if flag in {"-n", "-c"} and command_tokens:
+                    command_tokens = command_tokens[1:]
+            changed = True
+            continue
+        if head == "timeout":
+            command_tokens = command_tokens[1:]
+            while command_tokens and command_tokens[0].startswith("-"):
+                flag = command_tokens[0]
+                command_tokens = command_tokens[1:]
+                if flag in {"-k", "--kill-after", "-s", "--signal"} and command_tokens:
+                    command_tokens = command_tokens[1:]
+            if command_tokens and _DURATION_TOKEN.match(command_tokens[0]):
+                command_tokens = command_tokens[1:]
+            changed = True
+            continue
+        if head == "env":
+            command_tokens = command_tokens[1:]
+            while command_tokens and (
+                    command_tokens[0].startswith("-")
+                    or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0])):
+                command_tokens = command_tokens[1:]
+            changed = True
+            continue
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", head):
+            command_tokens = command_tokens[1:]
+            changed = True
+            continue
     return command_tokens
 
 
@@ -692,6 +733,21 @@ def _classify_segment(tokens: list[str]) -> str:
 
 
 _VERDICT_RANK = {"read_only": 0, "pathed": 1, "git_write": 2, "opaque": 3}
+# Tokens that redirect stream output into a file. `>&` is excluded here and
+# handled positionally: followed by a digit it duplicates a descriptor,
+# otherwise it writes the named file.
+REDIRECT_WRITE_TOKENS = {">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>", ">|"}
+
+
+def _segment_redirects_to_file(segment: list[str]) -> bool:
+    for index, token in enumerate(segment):
+        if token in REDIRECT_WRITE_TOKENS:
+            return True
+        if token == ">&":
+            nxt = segment[index + 1] if index + 1 < len(segment) else ""
+            if not nxt.isdigit():
+                return True
+    return False
 
 
 def classify_shell_command(command: str) -> str:
@@ -700,7 +756,7 @@ def classify_shell_command(command: str) -> str:
         return "opaque"
     strongest = "read_only"
     for segment, _connector in _shell_command_segments(command):
-        if any(token in {">", ">>", "1>", "1>>", "2>", "2>>"} for token in segment):
+        if _segment_redirects_to_file(segment):
             if _VERDICT_RANK[strongest] < _VERDICT_RANK["pathed"]:
                 strongest = "pathed"
         tokens = _strip_command_prefixes(segment)
@@ -728,6 +784,41 @@ def command_git_write(command: str) -> bool:
     return False
 
 
+def _git_segment_shared_mutation(tokens: list[str]) -> bool:
+    """True when a git segment rewrites state shared by every worktree.
+
+    Branch deletion/rename, reflog expiry, pruning fetches, gc, tag deletion,
+    forced or deleting pushes, and worktree removal hit refs and objects that
+    all checkouts of the repository see, so per-checkout exclusivity is not
+    enough for them.
+    """
+    sub, tail = _git_segment_details(tokens)
+    flags = [item for item in tail if item.startswith("-")]
+    if sub == "branch":
+        return any(item in {"-D", "-d", "-m", "-M", "-f", "--force", "--delete",
+                            "--move", "-c", "-C", "--copy"} for item in flags)
+    if sub == "reflog":
+        return bool(tail) and tail[0] in {"expire", "delete", "drop"}
+    if sub == "fetch":
+        return any(item in {"--prune", "-p", "--prune-tags"} for item in flags)
+    if sub == "tag":
+        return any(item in {"-d", "--delete"} for item in flags)
+    if sub == "push":
+        return any(item in {"--force", "-f", "--force-with-lease", "--delete",
+                            "-d", "--prune", "--mirror"} for item in flags)
+    if sub == "worktree":
+        return bool(tail) and tail[0] in {"remove", "prune", "move"}
+    return sub in {"gc", "prune", "update-ref", "pack-refs", "filter-branch"}
+
+
+def command_git_shared_mutation(command: str) -> bool:
+    for segment, _connector in _shell_command_segments(command):
+        tokens = _strip_command_prefixes(segment)
+        if tokens and Path(tokens[0]).name == "git" and _git_segment_shared_mutation(tokens):
+            return True
+    return False
+
+
 def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
     values = []
     working_dir = (cwd or Path.cwd()).expanduser()
@@ -748,7 +839,6 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
     if not command:
         return values
     segments = _shell_command_segments(command)
-    redirect_tokens = {">", ">>", "1>", "1>>", "2>", "2>>"}
     for segment, connector in segments:
         command_tokens = []
         index = 0
@@ -759,23 +849,19 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
                 add_target(segment[index + 2])
                 index += 3
                 continue
-            if token in redirect_tokens and index + 1 < len(segment):
+            if token in REDIRECT_WRITE_TOKENS and index + 1 < len(segment):
                 add_target(segment[index + 1])
+                index += 2
+                continue
+            if token == ">&" and index + 1 < len(segment):
+                nxt = segment[index + 1]
+                if not nxt.isdigit():
+                    add_target(nxt)
                 index += 2
                 continue
             command_tokens.append(token)
             index += 1
-        while command_tokens and command_tokens[0] in {"sudo", "command"}:
-            command_tokens = command_tokens[1:]
-        if command_tokens and command_tokens[0] == "env":
-            command_tokens = command_tokens[1:]
-            while command_tokens and (
-                    command_tokens[0].startswith("-")
-                    or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0])):
-                command_tokens = command_tokens[1:]
-        while command_tokens and re.match(
-                r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
-            command_tokens = command_tokens[1:]
+        command_tokens = _strip_command_prefixes(command_tokens)
         if not command_tokens:
             continue
         executable = Path(command_tokens[0]).name
@@ -817,7 +903,11 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
                     if sub == "checkout" and "--" not in tail:
                         continue  # branch switch, not a path restore
                     add_target(value)
-        elif executable in {"cp", "mv"} and args:
+        elif executable == "mv" and args:
+            # A rename writes the destination AND deletes every source.
+            for value in args:
+                add_target(value)
+        elif executable == "cp" and args:
             add_target(args[-1])
         elif executable in {"sed", "perl"} and args and any(
                 item == "--in-place"
@@ -865,6 +955,8 @@ def guard_session(root: Path, payload: dict, env: dict) -> tuple[bool, str]:
         verdict = classify_shell_command(shell_command)
         if command_git_write(shell_command):
             command.append("--git-write")
+        if command_git_shared_mutation(shell_command):
+            command.append("--git-shared")
         if verdict == "opaque" or (verdict == "pathed" and not paths):
             # A write-capable command that yielded no checkable path must not
             # pass on the strength of an empty path list.

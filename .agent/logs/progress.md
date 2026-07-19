@@ -191,3 +191,7 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-20 00:48:00 [T-079] Argument-verified allowlist (sort/uniq/base64 outputs pathed, awk/yq/perl opaque, sed print-only, old-style tar), git fetch/reflog-mutation/branch-config now writes; superseded perl assertions updated with rationale.
 - 2026-07-20 00:51:46 [T-079] Argument-verified allowlist (sort/uniq/base64 outputs pathed, awk/yq/perl opaque, sed print-only, old-style tar), git fetch/reflog-mutation/branch-config now writes; superseded perl assertions updated with rationale.
 - 2026-07-20 01:09:19 [T-080] 41/41 probes after in-review fix of git branch --list over-block; multi-session+ownership 34/34 rerun; template parity confirmed.
+- 2026-07-20 03:40:38 [T-081] Closed self-audit gaps: newline segmentation, ampersand/noclobber redirects, mv source writes, wrapper stripping, and repo-wide exclusivity for shared-ref git mutations.
+- 2026-07-20 04:02:18 [T-081] Closed self-audit gaps: newline segmentation, ampersand/noclobber redirects, mv source writes, wrapper stripping, and repo-wide exclusivity for shared-ref git mutations.
+- 2026-07-20 04:21:11 [T-081] Closed self-audit gaps: newline segmentation, ampersand/noclobber redirects, mv source writes, wrapper stripping, and repo-wide exclusivity for shared-ref git mutations.
+- 2026-07-20 06:42:24 [T-082] 24/24 probes in fresh install with real second worktree; multi-session suite rerun clean from reviewer runtime; template parity confirmed; two deflaked timings verified 3x.

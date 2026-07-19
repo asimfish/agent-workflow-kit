@@ -82,6 +82,17 @@ the guarantee model remains: verified reads and path-checked writes may run
 beside peers; everything else requires an exclusive checkout or a task
 worktree.
 
+Shell parsing itself is hardened against composition tricks: newlines
+separate commands exactly like `;`, `&>`/`&>>`/`>|`/`>&file` redirects are
+recognized and their targets scope-checked, `mv` treats every source operand
+as a write (a rename deletes the source), and `timeout`/`nice`/`stdbuf`/
+`setsid`/`env` wrappers are stripped before classification. Git operations
+that rewrite state shared by every worktree — branch deletion/rename/copy,
+`reflog expire/delete`, pruning fetches, `gc`/`prune`/`update-ref`, tag
+deletion, forced or deleting pushes, and `worktree remove/move/prune` —
+require that no other conversation is live in ANY checkout of the
+repository, not just the current one.
+
 Path guards enforce document ownership on top of the write scope. The active
 task's own document is always part of the effective scope, while
 controller-generated files (`board.json`, `TASKS.md`, the agent registry,
