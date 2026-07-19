@@ -60,14 +60,27 @@ claimed, or committed separately by a human.
 
 Three hardening rules close the remaining static-analysis gaps. Git
 subcommands are default-deny: only an explicit read allowlist (`status`,
-`log`, `diff`, `show`, flag-aware `config --get`, `stash list`, and similar)
-passes as read-only, while `restore`, `checkout`, `stash`, `rm`, `mv`,
-`apply`, `cherry-pick`, `revert`, and every unrecognized subcommand require
-Git exclusivity, with restore/checkout/rm/mv path targets additionally
-scope-checked. A write-classified command that yields no checkable path
-escalates to opaque instead of passing on an empty path list. Command
-substitution, backticks, and process substitution anywhere in a command make
-the whole command opaque, including inside quoted literals (fail closed).
+`log`, `diff`, `show`, flag-aware `config --get`, `stash list`, listing-only
+`branch`/`reflog` forms, and similar) passes as read-only, while `restore`,
+`checkout`, `stash`, `rm`, `mv`, `apply`, `cherry-pick`, `revert`, `fetch`,
+`reflog expire/delete`, branch creation/deletion/configuration, and every
+unrecognized subcommand require Git exclusivity, with restore/checkout/rm/mv
+path targets additionally scope-checked. A write-classified command that
+yields no checkable path escalates to opaque instead of passing on an empty
+path list. Command substitution, backticks, and process substitution
+anywhere in a command make the whole command opaque, including inside quoted
+literals (fail closed).
+
+The read-only allowlist is argument-verified, not name-based: `sort -o` and
+`uniq` with an output operand are path-checked writes, `base64 -o` likewise;
+`awk`, `yq`, and inline `perl` are opaque because their embedded languages
+can write arbitrary files; `sed` counts as read-only only for provably
+print-only scripts (line addresses plus `p`), and both dash and old-style
+bundled `tar` option words are recognized for extract/create/update modes.
+Static shell parsing still cannot PROVE arbitrary commands are read-only, so
+the guarantee model remains: verified reads and path-checked writes may run
+beside peers; everything else requires an exclusive checkout or a task
+worktree.
 
 Path guards enforce document ownership on top of the write scope. The active
 task's own document is always part of the effective scope, while
