@@ -85,3 +85,5 @@
 | T-072 | review | supervisor | `.agent/` | [.agent/tasks/T-072.md](tasks/T-072.md) | independently review T-071 loop test deflake |
 | T-073 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-073.md](tasks/T-073.md) | close interpreter write escapes and explicit auto-create claim |
 | T-074 | review | supervisor | `.agent/` | [.agent/tasks/T-074.md](tasks/T-074.md) | independently review T-073 write escape closure |
+| T-075 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-075.md](tasks/T-075.md) | exclusive opaque writes and default-deny unknown executables |
+| T-076 | review | supervisor | `.agent/` | [.agent/tasks/T-076.md](tasks/T-076.md) | independently review T-075 opaque write isolation |

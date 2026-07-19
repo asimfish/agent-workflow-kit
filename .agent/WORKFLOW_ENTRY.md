@@ -140,6 +140,12 @@ the sole bootstrap exception because it installs the identity hook itself.
   guidance bus/handoffs, eval runs, install manifest) are never edited
   directly; update them through `agentctl` commands. Leave `PROJECT_PLAN.md`
   and rules to supervisors or humans.
+- Scripts, interpreters, test/build runners, and unknown executables cannot
+  prove which paths they write, so they run only in an exclusive checkout.
+  When another conversation is live in the same checkout, run them from a
+  task worktree (`agentctl worktree create --task <id> --agent <name>`);
+  data-collection, training, and test tasks should plan on a worktree per
+  conversation from the start.
 - Unrelated task lifecycles do not invalidate this conversation's read
   receipt: only plan-body/rule changes, this task's own index row, or this
   task's own document require re-reading plus `agentctl refresh`.

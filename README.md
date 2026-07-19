@@ -198,6 +198,15 @@ The coordination policy is deliberately small:
   another session is blocked.
 - Git index, HEAD, branch, merge, and push operations are exclusive per checkout.
   Parallel commit-producing work should use `agentctl worktree create`.
+- Commands whose written paths cannot be enumerated statically — interpreters
+  (`python3 -c`, scripts), test/build runners (`pytest`, `cargo`, `make`),
+  archive/download/extract tools, nested shells, and any unknown executable —
+  are exclusive per checkout too. Beside another live session they are refused
+  outright and pointed at a task worktree; alone, they require an active task
+  session, and the working tree is reconciled after every mutating action.
+  Only an explicit read-only allowlist (`ls`, `cat`, `grep`, `rg`, `git`
+  reads, `sed`/`awk`/`perl` filters without in-place flags, and similar)
+  passes without a claim.
 - A missing heartbeat marks a session stale but does not discard its claim.
   After inspection, an agent can explicitly release it and resume the existing
   task; task docs and working files are preserved.

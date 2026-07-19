@@ -1116,6 +1116,10 @@ def _workspace_contamination(root: Path, rows: list[dict]) -> list[str]:
     if not status:
         return []
     scopes: list[list[str]] = [_session_effective_scope(row) for row in rows]
+    # Installer/client-managed configuration; upgraded by `init`, not by tasks.
+    managed_config_prefixes = (
+        ".githooks/", ".github/", ".claude/", ".codex/", ".cursor/", ".vscode/",
+    )
     contaminated = []
     for entry in status.split("\0"):
         # `_git` strips leading whitespace from the first entry, so parse the
@@ -1124,7 +1128,16 @@ def _workspace_contamination(root: Path, rows: list[dict]) -> list[str]:
         if not match:
             continue
         path = match.group(1).strip().strip('"')
-        if not path or path == "AGENTS.md" or path.startswith("."):
+        if not path or path in {"AGENTS.md", ".gitignore"}:
+            continue
+        if path.startswith(managed_config_prefixes):
+            continue
+        if path.startswith(f"{WORKFLOW_DIR}/"):
+            # Workflow documents are governed by their own layers: controller-
+            # generated files deny direct edits, human-owned plan/rule/policy
+            # docs are receipt-governed, and task documents are unreachable
+            # cross-session because path guards refuse them and opaque writers
+            # cannot run beside live peers at all.
             continue
         if any(_path_in_scope(path, scope) for scope in scopes if scope):
             continue
@@ -7946,6 +7959,18 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
                 "Git index/HEAD/remote mutation requires an exclusive checkout; "
                 f"other sessions are present: {owners}. Use a task worktree or finish/release them."
             )
+        if getattr(args, "opaque", False) and blockers:
+            owners = ", ".join(
+                f"{row.get('workflow_session_key')}:{row.get('task')}"
+                for row in blockers
+            )
+            problems.append(
+                "this command's written paths cannot be enumerated, so it "
+                "requires exclusive use of this checkout; other live sessions: "
+                f"{owners}. Run it in a task worktree (agentctl worktree create "
+                "--task <task-id> --agent <agent-name>) or wait until the peers "
+                "finish or release."
+            )
         claims = []
         effective_scope = _session_effective_scope(st)
         for raw in args.path or []:
@@ -8378,6 +8403,7 @@ def build_parser() -> argparse.ArgumentParser:
     sg = ssub.add_parser("guard")
     sg.add_argument("--path", action="append", default=[])
     sg.add_argument("--git-write", action="store_true")
+    sg.add_argument("--opaque", action="store_true")
     sr = ssub.add_parser("release")
     sr.add_argument("session", nargs="?")
     sr.add_argument("--reason", required=True)

@@ -168,6 +168,58 @@ class DocumentOwnershipRegressionTest(unittest.TestCase):
         note = self.agentctl("note", "must land without refresh", session="one")
         self.assertIn("progress recorded", note.stdout)
 
+    def test_contamination_covers_live_task_docs_and_tracked_dotfiles(self):
+        """Audit repro: dot paths and live task docs must not be blind spots."""
+        def seed_commit(message):
+            # Fixture seeding bypasses the workflow git hooks on purpose.
+            subprocess.run(
+                ["git", "-c", "core.hooksPath=", "-c", "user.email=t@t.t",
+                 "-c", "user.name=t", "commit", "-qm", message],
+                cwd=self.root, check=True, timeout=60,
+            )
+
+        (self.root / ".env").write_text("FLAG=1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True, timeout=60)
+        seed_commit("seed install and tracked dotfile")
+        self.start("one", "T-241", "src/one/")
+        self.start("two", "T-242", "src/two/")
+        self.agentctl("refresh", session="one")
+        baseline = self.guard("src/one/ok.py", session="one")
+        self.assertEqual(baseline.returncode, 0, baseline.stderr)
+
+        # 1. A live peer task's document cannot be reached through any guarded
+        # channel: path-checked writes are refused (outside scope), and opaque
+        # writers are refused entirely while peers are live. Disk-level
+        # attribution between the owner and an attacker is impossible (the
+        # owner's own doc is inside its effective scope), so the defense is
+        # closing both write channels, not the after-the-fact scan.
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True, timeout=60)
+        seed_commit("track live task docs")
+        peer_doc = self.guard(".agent/tasks/T-242.md", session="one", expect=1)
+        self.assertIn("outside active task scope", peer_doc.stderr)
+        opaque = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {
+                "command": "python3 inject.py .agent/tasks/T-242.md"}},
+            session="one",
+        )
+        self.assertEqual(json.loads(opaque.stdout).get("decision"), "block")
+
+        # 2. A tracked dotfile modified outside every scope.
+        env_file = self.root / ".env"
+        env_file.write_text("FLAG=tampered\n", encoding="utf-8")
+        blocked = self.guard("src/one/ok.py", session="one", expect=1)
+        self.assertIn(".env", blocked.stderr)
+        env_file.write_text("FLAG=1\n", encoding="utf-8")
+        self.guard("src/one/ok.py", session="one")
+
+        # 3. Human-owned policy docs stay receipt-governed, not contamination.
+        plan = self.root / ".agent" / "PROJECT_PLAN.md"
+        plan.write_text(plan.read_text(encoding="utf-8") + "\nhuman steer note\n",
+                        encoding="utf-8")
+        steered = self.guard("src/one/ok.py", session="one")
+        self.assertEqual(steered.returncode, 0, steered.stderr)
+
     def test_plan_body_edits_and_own_row_changes_still_invalidate(self):
         self.start("one", "T-231", "src/one/")
         self.agentctl("refresh", session="one")
