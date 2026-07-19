@@ -87,3 +87,5 @@
 | T-074 | review | supervisor | `.agent/` | [.agent/tasks/T-074.md](tasks/T-074.md) | independently review T-073 write escape closure |
 | T-075 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-075.md](tasks/T-075.md) | exclusive opaque writes and default-deny unknown executables |
 | T-076 | review | supervisor | `.agent/` | [.agent/tasks/T-076.md](tasks/T-076.md) | independently review T-075 opaque write isolation |
+| T-077 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-077.md](tasks/T-077.md) | default-deny git subcommands and shell metacharacters |
+| T-078 | review | supervisor | `.agent/` | [.agent/tasks/T-078.md](tasks/T-078.md) | independently review T-077 git and shell metacharacter hardening |

@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-078 - independently review T-077 git and shell metacharacter hardening (owner: supervisor)
+- [x] T-077 - default-deny git subcommands and shell metacharacters (owner: cursor)
 - [ ] T-076 - independently review T-075 opaque write isolation (owner: supervisor)
 - [x] T-075 - exclusive opaque writes and default-deny unknown executables (owner: cursor)
 - [ ] T-074 - independently review T-073 write escape closure (owner: supervisor)

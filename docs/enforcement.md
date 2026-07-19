@@ -58,6 +58,17 @@ tree; a tracked file modified outside every live session scope (including
 tracked dotfiles such as `.env`) blocks further mutations until reverted,
 claimed, or committed separately by a human.
 
+Three hardening rules close the remaining static-analysis gaps. Git
+subcommands are default-deny: only an explicit read allowlist (`status`,
+`log`, `diff`, `show`, flag-aware `config --get`, `stash list`, and similar)
+passes as read-only, while `restore`, `checkout`, `stash`, `rm`, `mv`,
+`apply`, `cherry-pick`, `revert`, and every unrecognized subcommand require
+Git exclusivity, with restore/checkout/rm/mv path targets additionally
+scope-checked. A write-classified command that yields no checkable path
+escalates to opaque instead of passing on an empty path list. Command
+substitution, backticks, and process substitution anywhere in a command make
+the whole command opaque, including inside quoted literals (fail closed).
+
 Path guards enforce document ownership on top of the write scope. The active
 task's own document is always part of the effective scope, while
 controller-generated files (`board.json`, `TASKS.md`, the agent registry,
