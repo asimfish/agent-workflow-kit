@@ -143,6 +143,11 @@ the sole bootstrap exception because it installs the identity hook itself.
 - Unrelated task lifecycles do not invalidate this conversation's read
   receipt: only plan-body/rule changes, this task's own index row, or this
   task's own document require re-reading plus `agentctl refresh`.
+- Interpreter one-liners, project scripts, `rsync`, and other opaque writers
+  need an active task session, and the guard reconciles the working tree on
+  every mutating action: a tracked file changed outside every live session
+  scope blocks further writes until it is reverted, claimed, or committed
+  separately by a human. Write within your scope using enumerable tools.
 - Git index, HEAD, branch, merge, and push mutations require exclusive use of a
   checkout. If another conversation is active, allocate a task-scoped worktree
   instead of bypassing the guard.

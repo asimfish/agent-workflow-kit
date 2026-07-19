@@ -34,6 +34,18 @@ this session's receipt, so unrelated task lifecycles do not force a refresh on
 every peer. Plan-body edits, rule changes, this task's own row, and this task's
 own document still invalidate the receipt.
 
+Shell commands whose writes cannot be statically enumerated - inline
+interpreter code (`python -c`, `node -e`), interpreter/script invocations,
+`./project-scripts`, `rsync`, `dd`, archive extraction, and download `-o`
+targets - are classified as mutating, so they require an active task session
+and pass through the session-level guard. Because their target paths stay
+opaque, the guard additionally reconciles the working tree on every mutating
+action: a tracked file modified outside every live session's effective scope
+is reported as an escaped write and blocks further mutations until it is
+reverted, claimed through a task scope, or committed separately by a human.
+`agentctl` invocations are exempt from the opaque classification; the
+controller enforces its own per-command identity and mutation policy.
+
 Path guards enforce document ownership on top of the write scope. The active
 task's own document is always part of the effective scope, while
 controller-generated files (`board.json`, `TASKS.md`, the agent registry,

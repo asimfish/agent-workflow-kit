@@ -220,6 +220,16 @@ Document ownership is enforced on top of scopes:
 - `PROJECT_PLAN.md`, rules, and other tasks' documents follow the declared
   scope; keep them out of worker scopes so only supervisors or humans edit them.
 
+Opaque writers are fail-closed. Inline interpreter code, project scripts,
+`rsync`, archive extraction, and similar commands cannot be path-checked in
+advance, so they require an active task session, and every mutating action
+reconciles the working tree: a tracked file modified outside every live
+session's scope is treated as an escaped write and blocks further mutations
+until it is reverted, claimed, or committed separately by a human. An explicit
+`work --auto-create --new-id/--title` request always creates and claims the
+named task instead of silently picking up another queued task that shares the
+agent name.
+
 Read receipts are scope-aware so shared-index churn does not stall the room:
 another task being created or finished rewrites only its own `TASKS.md` row,
 its own plan checklist row, and the plan Change Log, none of which invalidates
