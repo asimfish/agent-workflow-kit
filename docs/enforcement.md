@@ -146,11 +146,17 @@ than switching identities mid-task. When that payload ID was generated inside
 the nested SDK and is absent from inherited environment variables, SessionStart
 exports the normal identity and the first `agentctl work` hook claims an atomic,
 checkout-specific local binding under the Git common directory when that export
-does not reach the shell. The record contains only hashed provider/runtime identities.
-Another payload cannot replace a fresh pending binding or an active runtime
-session in that checkout; independent worktrees use distinct binding keys.
-Malformed binding state also fails closed. Explicit fork lineage or an instance
-key never uses this fallback.
+does not reach the shell. Hook processes and the agent shell may also receive
+different runtime-variable subsets. While the binding is still pending, the
+hook tests at most one payload-derived environment for each supported provider
+variable and accepts only one active workflow session. It then persists that
+anonymous session key and stops probing. Zero matches remain pending; multiple
+matches fail closed with an ambiguity error. The record contains only hashed
+provider/runtime identities and the anonymous workflow key. Another payload
+cannot replace a fresh pending binding or an active runtime session in that
+checkout; independent worktrees use distinct binding keys. Malformed binding
+state also fails closed. Explicit fork lineage or an instance key never uses
+this fallback.
 
 ### Runtime commands
 

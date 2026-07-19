@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 07:18:20",
+  "updated_at": "2026-07-20 07:57:43",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1355,6 +1355,22 @@
       "deps": [],
       "created_at": "2026-07-20 07:00:31",
       "updated_at": "2026-07-20 07:18:20"
+    },
+    "T-090": {
+      "title": "close T-089 hook-shell runtime fingerprint skew",
+      "status": "in_progress",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 07:23:52",
+      "updated_at": "2026-07-20 07:57:43"
     }
   }
 }

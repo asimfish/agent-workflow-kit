@@ -302,6 +302,133 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         self.assertNotIn("no active task session", guarded.stdout)
         self.assertNotIn('"decision": "block"', guarded.stdout)
 
+    def test_payload_binding_recovers_shell_runtime_that_adds_provider_id(self):
+        """Hook and shell runtime fingerprints may differ by one provider ID."""
+        hook_env = self.bare_env()
+        hook_env["CODEX_THREAD_ID"] = "outer-skewed-host"
+        payload_id = "shell-injected-claude-session"
+        command = (
+            "python3 tools/agentctl.py work --agent claude --auto-create "
+            "--new-id T-118 --title skewed-shell --scope src/skewed-shell/"
+        )
+
+        bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=hook_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', bootstrap.stdout)
+
+        shell_env = hook_env.copy()
+        shell_env["CLAUDE_CODE_SESSION_ID"] = payload_id
+        self.agentctl_env(
+            shell_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-118", "--title", "skewed-shell",
+            "--scope", "src/skewed-shell/",
+        )
+        shell_status = json.loads(
+            self.agentctl_env(shell_env, "status", "--json").stdout
+        )
+
+        guarded = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=hook_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Write",
+                "tool_input": {"file_path": "src/skewed-shell/owned.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn("no active task session", guarded.stdout)
+        self.assertNotIn('"decision": "block"', guarded.stdout)
+
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=self.root,
+            text=True, capture_output=True, check=True, timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding = next(
+            (common_path.resolve() / "agent-workflow" / "provider-bindings").glob(
+                "host-*.json"
+            )
+        )
+        binding_state = json.loads(binding.read_text(encoding="utf-8"))
+        self.assertEqual(
+            binding_state["bound_session_key"],
+            shell_status["workflow_session_key"],
+        )
+        self.assertNotIn(payload_id, binding.read_text(encoding="utf-8"))
+
+    def test_payload_binding_rejects_ambiguous_derived_shell_sessions(self):
+        """More than one provider-derived shell session must fail closed."""
+        hook_env = self.bare_env()
+        hook_env["CODEX_THREAD_ID"] = "outer-ambiguous-host"
+        payload_id = "ambiguous-provider-session"
+        command = (
+            "python3 tools/agentctl.py work --agent claude --auto-create "
+            "--title ambiguous --scope src/ambiguous/"
+        )
+        bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=hook_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', bootstrap.stdout)
+
+        claude_env = hook_env.copy()
+        claude_env["CLAUDE_CODE_SESSION_ID"] = payload_id
+        cursor_env = hook_env.copy()
+        cursor_env["CURSOR_CONVERSATION_ID"] = payload_id
+        self.agentctl_env(
+            claude_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-119", "--title", "ambiguous-claude",
+            "--scope", "src/ambiguous-claude/",
+        )
+        self.agentctl_env(
+            cursor_env, "work", "--agent", "cursor", "--auto-create",
+            "--new-id", "T-120", "--title", "ambiguous-cursor",
+            "--scope", "src/ambiguous-cursor/",
+        )
+
+        guarded = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=hook_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Write",
+                "tool_input": {"file_path": "src/ambiguous-claude/owned.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        decision = json.loads(guarded.stdout)
+        self.assertEqual(decision.get("decision"), "block")
+        self.assertIn("multiple active provider-derived", decision.get("reason", ""))
+
     def test_competing_payload_cannot_reuse_bound_runtime_session(self):
         """One host runtime cannot silently merge two provider conversations."""
         runtime_env = self.bare_env()

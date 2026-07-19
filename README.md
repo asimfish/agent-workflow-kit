@@ -194,7 +194,12 @@ atomically binds the hashed payload identity to the hashed host runtime in
 checkout-local Git-common-dir state. Only that provider conversation may reuse
 the runtime-owned task; a second payload on the same pending or active runtime
 and checkout fails closed. Independent worktrees use distinct binding keys. Raw
-provider IDs and checkout paths are not written to the binding record.
+provider IDs and checkout paths are not written to the binding record. If the
+actual agent shell adds a provider ID that the hook process cannot see, the
+unbound record checks a bounded set of supported provider environments. Exactly
+one active session is pinned by its anonymous workflow key; multiple matches
+fail closed instead of selecting one. Once pinned, later hooks reuse that key
+without repeating candidate discovery.
 
 Forked or cloned conversations are isolated as separate runtime instances. A
 persisted workflow ID is bound to the host runtime that created it, so a child

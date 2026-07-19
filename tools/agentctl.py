@@ -2348,7 +2348,7 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
         f"- By: {merged_by}\n- Recorded-by: {recorder}\n- Recorder task: {recorder_task}\n"
         f"- Pull request: {evidence.get('url') or ''}\n- Base branch: {evidence.get('baseRefName') or ''}\n"
         f"- Merge commit: {merge_oid}\n- Merged at: {evidence.get('mergedAt') or ''}\n"
-        f"- Reconciled at: {ts}\n- Note: {args.note or ''}\n",
+        f"- Reconciled at: {ts}\n- Note: {args.note or 'none'}\n",
     )
     recorder_session["last_gate"] = {
         "task": task, "decision": "approved", "source": "github-merge", "at": ts,
@@ -2460,7 +2460,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
             f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
             f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
             f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
-            f"- At: {ts}\n- Note: {args.note or ''}\n",
+            f"- At: {ts}\n- Note: {args.note or 'none'}\n",
         )
         st = _load_session(root)
         st["last_gate"] = {"task": task, "decision": "approved", "at": ts}
@@ -2479,7 +2479,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
         f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
         f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
         f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
-        f"- At: {ts}\n- Note: {args.note or ''}\n",
+        f"- At: {ts}\n- Note: {args.note or 'none'}\n",
     )
     st = _load_session(root)
     st["last_gate"] = {"task": task, "decision": "rejected", "at": ts}

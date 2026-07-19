@@ -329,6 +329,8 @@ class IndependentGateRegressionTest(unittest.TestCase):
         gate = (self.root / ".agent" / "gates" / "T-101.md").read_text(encoding="utf-8")
         self.assertIn("Reviewer task: T-102", gate)
         self.assertIn("Reviewer runtime: host-runtime:", gate)
+        self.assertIn("- Note: none\n", gate)
+        self.assertNotRegex(gate, r" +$")
         self.agentctl(
             "check", "--mode", "manual", runtime="reviewer-runtime",
             workflow_session="reviewer-session",

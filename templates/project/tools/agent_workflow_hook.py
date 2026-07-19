@@ -42,6 +42,7 @@ RUNTIME_ID_ENV_NAMES = (
     "WHALENT_CODEX_INSTANCE_ID",
 )
 SESSION_ID_ENV = "AGENT_WORKFLOW_SESSION_ID"
+SESSION_KEY_ENV = "AGENT_WORKFLOW_SESSION_KEY"
 SESSION_OWNER_RUNTIME_ENV = "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME"
 SESSION_INSTANCE_ENV = "AGENT_WORKFLOW_SESSION_INSTANCE_ID"
 PARENT_SESSION_KEY_ENV = "AGENT_WORKFLOW_PARENT_SESSION_KEY"
@@ -380,9 +381,29 @@ def has_session(root: Path, env: dict) -> bool:
 def _host_runtime_session_environment(env: dict) -> dict:
     fallback = env.copy()
     fallback.pop(SESSION_ID_ENV, None)
+    fallback.pop(SESSION_KEY_ENV, None)
     fallback.pop(SESSION_OWNER_RUNTIME_ENV, None)
     fallback.pop(SESSION_ISOLATION_ERROR_ENV, None)
     return fallback
+
+
+def _provider_shell_session_keys(root: Path, payload_id: str, env: dict) -> set[str]:
+    """Return active sessions from bounded provider-ID shell environments."""
+    base = _host_runtime_session_environment(env)
+    session_keys: set[str] = set()
+    for name in RUNTIME_ID_ENV_NAMES:
+        candidate = base.copy()
+        candidate[name] = payload_id
+        state = session_state(root, candidate)
+        session_key = str(state.get("workflow_session_key") or "").strip()
+        if (
+            state.get("task")
+            and state.get("presence_status") != "released"
+            and state.get("status") != "released"
+            and re.fullmatch(r"session-[0-9a-f]{24}", session_key)
+        ):
+            session_keys.add(session_key)
+    return session_keys
 
 
 def _provider_binding_path(root: Path, runtime_identity: str) -> Path:
@@ -549,11 +570,30 @@ def _provider_runtime_binding(
                 "conversation before mutating the project"
             )
         if valid_binding and binding.get("provider_key") == provider_key:
-            if host_active and host_session_key != binding.get("bound_session_key"):
-                binding["bound_session_key"] = host_session_key
+            bound_session_key = str(binding.get("bound_session_key") or "")
+            if bound_session_key:
+                return "bound", bound_session_key
+
+            candidate_session_keys = _provider_shell_session_keys(
+                root, payload_id, env,
+            )
+            if host_active and re.fullmatch(
+                r"session-[0-9a-f]{24}", host_session_key,
+            ):
+                candidate_session_keys.add(host_session_key)
+            if len(candidate_session_keys) > 1:
+                return "conflict", (
+                    "multiple active provider-derived shell sessions match this "
+                    "conversation; release the duplicate sessions or restart "
+                    "with an isolated runtime"
+                )
+            if candidate_session_keys:
+                bound_session_key = next(iter(candidate_session_keys))
+                binding["bound_session_key"] = bound_session_key
                 binding["updated_at_ns"] = time.time_ns()
                 if not _write_provider_binding(path, binding):
                     return "conflict", "provider/runtime binding could not be persisted"
+                return "bound", bound_session_key
             return "match", ""
 
         if valid_binding:
@@ -617,17 +657,21 @@ def resolve_existing_session_environment(
         or str(env.get(SESSION_INSTANCE_ENV) or "").strip()
     ):
         return env
-    binding, message = _provider_runtime_binding(
+    binding_status, binding_value = _provider_runtime_binding(
         root, payload, env, claim=claim_runtime_binding,
     )
-    if binding == "conflict":
+    if binding_status == "conflict":
         if not enforce_runtime_binding_conflict:
             return env
         isolated = env.copy()
-        isolated[SESSION_ISOLATION_ERROR_ENV] = message
+        isolated[SESSION_ISOLATION_ERROR_ENV] = binding_value
         return isolated
+    if binding_status == "bound":
+        bound = _host_runtime_session_environment(env)
+        bound[SESSION_KEY_ENV] = binding_value
+        return bound
     fallback = _host_runtime_session_environment(env)
-    if binding == "match" or payload_id in runtime_ids:
+    if binding_status == "match" or payload_id in runtime_ids:
         return fallback if has_session(root, fallback) else env
     return env
 
