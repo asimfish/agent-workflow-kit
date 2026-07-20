@@ -36,11 +36,12 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-093 - independent regate for T-088 (owner: supervisor)
 - [ ] T-092 - independent gate for T-090 (owner: supervisor)
 - [ ] T-091 - real Claude runtime recovery verification (owner: supervisor)
 - [x] T-090 - close T-089 hook-shell runtime fingerprint skew (owner: codex)
 - [ ] T-089 - independently review T-088 provider bootstrap binding (owner: independent-reviewer)
-- [ ] T-088 - bind late provider payload ids to bootstrap runtime sessions (owner: codex)
+- [x] T-088 - bind late provider payload ids to bootstrap runtime sessions (owner: codex)
 - [ ] T-087 - close residual shared-checkout isolation boundaries (owner: codex)
 - [ ] T-086 - integrate independent T-081 review evidence (owner: codex-integrator)
 - [ ] T-085 - review T-081 resubmission and T-083/T-084 evidence (owner: independent-reviewer)
