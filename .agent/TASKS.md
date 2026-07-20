@@ -115,3 +115,4 @@
 | T17F063E6115138DE-004 | done | codex | `.agent/, hooks/, .githooks/, tools/, templates/project/, tests/` | [.agent/tasks/T17F063E6115138DE-004.md](tasks/T17F063E6115138DE-004.md) | exclude already-published commits from pre-push validation |
 | TD851EF749F675DC5-001 | review | claude-sonnet-reviewer | `.agent/` | [.agent/tasks/TD851EF749F675DC5-001.md](tasks/TD851EF749F675DC5-001.md) | review pre-push published-commit filter |
 | T17F063E6115138DE-005 | review | codex | `.agent/, hooks/, .githooks/, tools/, tests/` | [.agent/tasks/T17F063E6115138DE-005.md](tasks/T17F063E6115138DE-005.md) | release pre-push published-commit fix |
+| T17F063E6115138DE-006 | in_progress | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-006.md](tasks/T17F063E6115138DE-006.md) | integrate concurrent main advances without history loss |

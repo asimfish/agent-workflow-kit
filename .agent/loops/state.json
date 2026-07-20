@@ -2,9 +2,9 @@
   "version": 1,
   "loops": {
     "daily-plan-triage": {
-      "last_run_at": "2026-07-20 14:17:11",
+      "last_run_at": "2026-07-20 14:55:15",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260720-141711-daily-plan-triage.md"
+      "last_report": ".agent/loops/runs/20260720-145515-daily-plan-triage.md"
     },
     "doc-hygiene": {
       "last_run_at": "2026-07-20 14:45:47",
@@ -24,10 +24,10 @@
   },
   "checkpoints": {
     "work-start": {
-      "last_run_at": "2026-07-20 14:17:11",
+      "last_run_at": "2026-07-20 14:55:15",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260720-141711-daily-plan-triage.md"
+        ".agent/loops/runs/20260720-145515-daily-plan-triage.md"
       ],
       "strict": false,
       "trigger": "work-start",

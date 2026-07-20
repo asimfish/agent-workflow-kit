@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T17F063E6115138DE-006 - integrate concurrent main advances without history loss (owner: codex)
 - [ ] T17F063E6115138DE-005 - release pre-push published-commit fix (owner: codex)
 - [ ] TD851EF749F675DC5-001 - review pre-push published-commit filter (owner: claude-sonnet-reviewer)
 - [x] T17F063E6115138DE-004 - exclude already-published commits from pre-push validation (owner: codex)
