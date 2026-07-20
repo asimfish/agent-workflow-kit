@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 13:01:13",
+  "updated_at": "2026-07-20 13:25:25",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1341,6 +1341,33 @@
       "deps": [],
       "created_at": "2026-07-20 13:00:04",
       "updated_at": "2026-07-20 13:01:13"
+    },
+    "T-094": {
+      "title": "halve read-only hook latency by removing redundant status spawn",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:08:03",
+      "updated_at": "2026-07-20 13:25:25"
+    },
+    "T-095": {
+      "title": "independently review T-094 read-only hook latency",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:24:36",
+      "updated_at": "2026-07-20 13:25:25"
     }
   }
 }

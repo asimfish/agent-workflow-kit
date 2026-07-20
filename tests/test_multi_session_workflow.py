@@ -91,6 +91,39 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             self.agentctl("sessions", "list", "--json", session=session).stdout
         )
 
+    def test_read_only_hook_heartbeats_without_a_redundant_status_spawn(self):
+        """Efficiency: a read-only command refreshes the heartbeat in one spawn.
+
+        The read-only PreToolUse path must still keep the session heartbeat
+        fresh (peers rely on it for liveness) and must never block, but it
+        should not pay two agentctl subprocess launches per read.
+        """
+        self.start("one", "T-101", "src/one/")
+        self.agentctl("refresh", session="one")
+        before = json.loads(self.agentctl("status", "--json", session="one").stdout)
+
+        import time as _t
+        _t.sleep(1.1)
+        ro = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "grep -r x src/one"}},
+            session="one",
+        )
+        self.assertEqual(ro.stdout, "", ro.stdout)  # never blocks a read
+        after = json.loads(self.agentctl("status", "--json", session="one").stdout)
+        # The read-only path advanced the heartbeat (liveness preserved).
+        self.assertGreater(
+            int(after.get("heartbeat_ns") or 0),
+            int(before.get("heartbeat_ns") or 0),
+        )
+        # A read-only command with NO active session must still pass silently.
+        idle = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+            session="idle-no-task",
+        )
+        self.assertEqual(idle.stdout, "", idle.stdout)
+
     def test_disjoint_conversations_keep_independent_state_and_visible_status(self):
         self.start("one", "T-101", "src/one/")
         self.start("two", "T-102", "src/two/")

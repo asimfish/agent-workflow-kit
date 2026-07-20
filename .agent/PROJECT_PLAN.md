@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-095 - independently review T-094 read-only hook latency (owner: supervisor)
+- [x] T-094 - halve read-only hook latency by removing redundant status spawn (owner: cursor)
 - [ ] T-093 - independently review T-092 solo scan skip (owner: supervisor)
 - [x] T-092 - skip contamination scan when no peers to avoid over-block and cost (owner: cursor)
 - [ ] T-091 - independently review T-090 symlink guard and efficiency (owner: supervisor)
