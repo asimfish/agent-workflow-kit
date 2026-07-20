@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 11:50:25",
+  "updated_at": "2026-07-20 12:06:28",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1405,6 +1405,33 @@
       "created_at": "2026-07-20 08:32:37",
       "updated_at": "2026-07-20 08:51:43"
     },
+    "T-095": {
+      "title": "close newline, redirect, mv-source, and shared-ref gaps",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 02:52:46",
+      "updated_at": "2026-07-20 06:42:26"
+    },
+    "T-096": {
+      "title": "independently review T-095 shell parse and shared-ref fixes",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 06:24:53",
+      "updated_at": "2026-07-20 06:42:28"
+    },
     "T-098": {
       "title": "recover and complete concurrent session safeguards",
       "status": "in_progress",
@@ -1419,7 +1446,7 @@
       ],
       "deps": [],
       "created_at": "2026-07-20 11:49:43",
-      "updated_at": "2026-07-20 11:50:25"
+      "updated_at": "2026-07-20 12:06:28"
     }
   }
 }

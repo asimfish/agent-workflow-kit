@@ -104,4 +104,6 @@
 | T-091 | review | supervisor | `.agent/` | [.agent/tasks/T-091.md](tasks/T-091.md) | real Claude runtime recovery verification |
 | T-092 | review | supervisor | `.agent/` | [.agent/tasks/T-092.md](tasks/T-092.md) | independent gate for T-090 |
 | T-093 | review | supervisor | `.agent/` | [.agent/tasks/T-093.md](tasks/T-093.md) | independent regate for T-088 |
+| T-095 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-095.md](tasks/T-095.md) | close newline, redirect, mv-source, and shared-ref gaps |
+| T-096 | review | supervisor | `.agent/` | [.agent/tasks/T-096.md](tasks/T-096.md) | independently review T-095 shell parse and shared-ref fixes |
 | T-098 | in_progress | codex | `tools/, templates/project/, tests/, docs/, README.md, .agent/` | [.agent/tasks/T-098.md](tasks/T-098.md) | recover and complete concurrent session safeguards |

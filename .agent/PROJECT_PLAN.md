@@ -37,6 +37,8 @@ instead of relying on chat memory or repeated human prompts.
 
 ## Task Board
 - [ ] T-098 - recover and complete concurrent session safeguards (owner: codex)
+- [ ] T-096 - independently review T-095 shell parse and shared-ref fixes (owner: supervisor)
+- [x] T-095 - close newline, redirect, mv-source, and shared-ref gaps (owner: cursor)
 - [ ] T-093 - independent regate for T-088 (owner: supervisor)
 - [ ] T-092 - independent gate for T-090 (owner: supervisor)
 - [ ] T-091 - real Claude runtime recovery verification (owner: supervisor)

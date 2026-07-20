@@ -607,15 +607,17 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.install_fake_codex(exit_code=0)
         child_pid_path = self.root / ".agent" / "state" / "fake-child.pid"
         self.env["FAKE_CODEX_CHILD_PID"] = str(child_pid_path)
-        self.env["FAKE_CODEX_SLEEP"] = "10"
+        self.env["FAKE_CODEX_SLEEP"] = "20"
+        # The fake codex needs enough runway to spawn its child and persist
+        # the pid before the timeout kill lands; 1s starved it under load.
         failed = self.agentctl(
             "guidance", "create",
             "--from-agent", "fable", "--to-agent", "codex",
             "--to-session", "session-timeout-tree", "--task", "T-212",
             "--summary", "Bound the complete dispatch process tree",
             "--plan", "Terminate descendants before recording timeout failure.",
-            "--dispatch", "--timeout", "1", expect=1)
-        self.assertIn("timed out after 1s", failed.stdout + failed.stderr)
+            "--dispatch", "--timeout", "5", expect=1)
+        self.assertIn("timed out after 5s", failed.stdout + failed.stderr)
         child_pid = int(child_pid_path.read_text(encoding="utf-8"))
         if os.name == "posix":
             state = subprocess.run(

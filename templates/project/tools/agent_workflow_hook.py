@@ -761,7 +761,15 @@ def _shell_command_segments(command: str) -> list[tuple[list[str], str]]:
     if not command:
         return []
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|<>")
+        # A newline separates commands exactly like `;`. shlex treats it as
+        # plain whitespace, which would silently fuse the second command into
+        # the first segment's arguments, so make the separator explicit.
+        # (Quoted/heredoc newlines become separators too - a fail-closed
+        # over-split, never a merge.)
+        lexer = shlex.shlex(
+            command.replace("\r\n", "\n").replace("\n", " ; "),
+            posix=True, punctuation_chars=";&|<>",
+        )
         lexer.whitespace_split = True
         tokens = list(lexer)
     except ValueError:
@@ -780,27 +788,61 @@ def _shell_command_segments(command: str) -> list[tuple[list[str], str]]:
     return segments
 
 
+_DURATION_TOKEN = re.compile(r"^\d+(\.\d+)?[smhd]?$")
+
+
 def _strip_command_prefixes(tokens: list[str]) -> list[str]:
     command_tokens = list(tokens)
-    while command_tokens and command_tokens[0] in {"command", "time"}:
-        command_tokens = command_tokens[1:]
-    if command_tokens and command_tokens[0] == "env":
-        env_tokens = command_tokens[1:]
-        # env options can change cwd (-C/--chdir) or re-tokenize a command
-        # (-S/--split-string). Keep the env executable visible so unknown
-        # option forms fail closed instead of attributing paths to the old cwd.
-        if env_tokens and env_tokens[0].startswith("-"):
-            return command_tokens
-        command_tokens = env_tokens
-        while command_tokens and _safe_environment_assignment(command_tokens[0]):
+    changed = True
+    while changed and command_tokens:
+        changed = False
+        head = command_tokens[0]
+        if head in {"command", "time", "setsid", "caffeinate"}:
             command_tokens = command_tokens[1:]
-        if command_tokens and _environment_assignment(command_tokens[0]):
-            return tokens
-    while command_tokens and re.match(
-            r"^[A-Za-z_][A-Za-z0-9_]*=", command_tokens[0]):
-        if not _safe_environment_assignment(command_tokens[0]):
-            return tokens
-        command_tokens = command_tokens[1:]
+            changed = True
+            continue
+        if head in {"nice", "ionice", "stdbuf"}:
+            command_tokens = command_tokens[1:]
+            while command_tokens and command_tokens[0].startswith("-"):
+                flag = command_tokens[0]
+                command_tokens = command_tokens[1:]
+                # `nice -n 10` / `ionice -c 2` carry a separate value token.
+                if flag in {"-n", "-c"} and command_tokens:
+                    command_tokens = command_tokens[1:]
+            changed = True
+            continue
+        if head == "timeout":
+            command_tokens = command_tokens[1:]
+            while command_tokens and command_tokens[0].startswith("-"):
+                flag = command_tokens[0]
+                command_tokens = command_tokens[1:]
+                if flag in {"-k", "--kill-after", "-s", "--signal"} and command_tokens:
+                    command_tokens = command_tokens[1:]
+            if command_tokens and _DURATION_TOKEN.match(command_tokens[0]):
+                command_tokens = command_tokens[1:]
+            changed = True
+            continue
+        if head == "env":
+            env_tokens = command_tokens[1:]
+            # env options can change cwd (-C/--chdir) or re-tokenize a
+            # command (-S/--split-string). Keep env visible so those forms
+            # remain opaque instead of attributing paths to the old cwd.
+            if env_tokens and env_tokens[0].startswith("-"):
+                return command_tokens
+            command_tokens = env_tokens
+            while command_tokens and _safe_environment_assignment(
+                    command_tokens[0]):
+                command_tokens = command_tokens[1:]
+            if command_tokens and _environment_assignment(command_tokens[0]):
+                return tokens
+            changed = True
+            continue
+        if _environment_assignment(head):
+            if not _safe_environment_assignment(head):
+                return tokens
+            command_tokens = command_tokens[1:]
+            changed = True
+            continue
     return command_tokens
 
 
@@ -1461,14 +1503,27 @@ def _classify_segment(tokens: list[str]) -> str:
 
 
 _VERDICT_RANK = {"read_only": 0, "pathed": 1, "git_write": 2, "opaque": 3}
+# Tokens that redirect stream output into a file. `>&` is excluded here and
+# handled positionally: followed by a digit it duplicates a descriptor,
+# otherwise it writes the named file.
+REDIRECT_WRITE_TOKENS = {">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>", ">|"}
+
+
+def _segment_redirects_to_file(segment: list[str]) -> bool:
+    for index, token in enumerate(segment):
+        if token in REDIRECT_WRITE_TOKENS:
+            return True
+        if token == ">&":
+            nxt = segment[index + 1] if index + 1 < len(segment) else ""
+            if not nxt.isdigit():
+                return True
+    return False
 
 
 def classify_shell_command(command: str) -> str:
     """Strongest write capability across all pipeline segments."""
     if command and (
-            "\n" in command
-            or "\r" in command
-            or _SHELL_SUBSTITUTION.search(command)
+            _SHELL_SUBSTITUTION.search(command)
             or _SHELL_DYNAMIC_EXPANSION.search(command)):
         return "opaque"
     strongest = "read_only"
@@ -1503,6 +1558,41 @@ def command_git_write(command: str) -> bool:
     for segment, _connector in _shell_command_segments(command):
         tokens = _strip_command_prefixes(segment)
         if tokens and Path(tokens[0]).name == "git" and not _git_segment_read_only(tokens):
+            return True
+    return False
+
+
+def _git_segment_shared_mutation(tokens: list[str]) -> bool:
+    """True when a git segment rewrites state shared by every worktree.
+
+    Branch deletion/rename, reflog expiry, pruning fetches, gc, tag deletion,
+    forced or deleting pushes, and worktree removal hit refs and objects that
+    all checkouts of the repository see, so per-checkout exclusivity is not
+    enough for them.
+    """
+    sub, tail = _git_segment_details(tokens)
+    flags = [item for item in tail if item.startswith("-")]
+    if sub == "branch":
+        return any(item in {"-D", "-d", "-m", "-M", "-f", "--force", "--delete",
+                            "--move", "-c", "-C", "--copy"} for item in flags)
+    if sub == "reflog":
+        return bool(tail) and tail[0] in {"expire", "delete", "drop"}
+    if sub == "fetch":
+        return any(item in {"--prune", "-p", "--prune-tags"} for item in flags)
+    if sub == "tag":
+        return any(item in {"-d", "--delete"} for item in flags)
+    if sub == "push":
+        return any(item in {"--force", "-f", "--force-with-lease", "--delete",
+                            "-d", "--prune", "--mirror"} for item in flags)
+    if sub == "worktree":
+        return bool(tail) and tail[0] in {"remove", "prune", "move"}
+    return sub in {"gc", "prune", "update-ref", "pack-refs", "filter-branch"}
+
+
+def command_git_shared_mutation(command: str) -> bool:
+    for segment, _connector in _shell_command_segments(command):
+        tokens = _strip_command_prefixes(segment)
+        if tokens and Path(tokens[0]).name == "git" and _git_segment_shared_mutation(tokens):
             return True
     return False
 
@@ -1712,6 +1802,8 @@ def guard_session(root: Path, payload: dict, env: dict) -> tuple[bool, str]:
         verdict = classify_shell_command(shell_command)
         if command_git_write(shell_command):
             command.append("--git-write")
+        if command_git_shared_mutation(shell_command):
+            command.append("--git-shared")
         if verdict == "opaque" or (verdict == "pathed" and not paths):
             # A write-capable command that yielded no checkable path must not
             # pass on the strength of an empty path list.

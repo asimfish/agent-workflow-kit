@@ -7959,6 +7959,24 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
                 "Git index/HEAD/remote mutation requires an exclusive checkout; "
                 f"other sessions are present: {owners}. Use a task worktree or finish/release them."
             )
+        if getattr(args, "git_shared", False):
+            shared_blockers = [
+                row for row in _session_rows_unlocked(root)
+                if row.get("workflow_session_key") != current_key
+                and row.get("observed_status") in {"active", "stale"}
+            ]
+            if shared_blockers:
+                owners = ", ".join(
+                    f"{row.get('workflow_session_key')}:{row.get('task')}"
+                    f"@{row.get('checkout') or '?'}"
+                    for row in shared_blockers
+                )
+                problems.append(
+                    "this Git operation rewrites refs/objects shared by every "
+                    f"worktree of this repository; live sessions elsewhere: {owners}. "
+                    "Run it only when no other conversation is active in any "
+                    "checkout or worktree, or have those sessions finish/release first."
+                )
         if getattr(args, "opaque", False) and blockers:
             owners = ", ".join(
                 f"{row.get('workflow_session_key')}:{row.get('task')}"
@@ -8405,6 +8423,7 @@ def build_parser() -> argparse.ArgumentParser:
     sg = ssub.add_parser("guard")
     sg.add_argument("--path", action="append", default=[])
     sg.add_argument("--git-write", action="store_true")
+    sg.add_argument("--git-shared", action="store_true")
     sg.add_argument("--opaque", action="store_true")
     sr = ssub.add_parser("release")
     sr.add_argument("session", nargs="?")
