@@ -1795,8 +1795,19 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             "git fetch --prune origin",
             "git gc",
             "git tag -d v1",
+            "git tag -f v1 HEAD",
+            "git tag -fa v1 -m v1 HEAD",
+            "git branch -df wt-branch",
+            "git config core.hooksPath .githooks",
+            "git config --unset core.hooksPath",
             "git push --delete origin wt-branch",
             "git push --force origin main",
+            "git push --force-with-lease=main:deadbeef origin main",
+            "git push -fu origin main",
+            "git push origin :wt-branch",
+            "git push origin +:wt-branch",
+            "git push origin +main:main",
+            "git push origin +main",
         ):
             decision = self.hook(
                 "pre-tool-use",
@@ -1807,6 +1818,21 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             payload = json.loads(decision.stdout)
             self.assertEqual(payload.get("decision"), "block", command)
             self.assertIn("worktree", payload.get("reason", ""), command)
+
+        # Read-only Git forms and ordinary non-forced pushes do not rewrite
+        # repository-wide metadata and therefore stay checkout-local.
+        for command in (
+            "git config --get core.hooksPath",
+            "git tag --list",
+            "git push origin main",
+            "git push origin main:main",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', passthrough.stdout, command)
 
     def test_allowlisted_text_tools_cannot_write_through_options_or_dsl(self):
         """Audit repro: sort -o, awk DSL redirects, yq -i, old-style tar."""

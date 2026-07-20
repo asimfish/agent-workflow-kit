@@ -79,6 +79,14 @@ path list. Command substitution, backticks, and process substitution
 anywhere in a command make the whole command opaque, including inside quoted
 literals (fail closed).
 
+Git operations that mutate repository-wide metadata require exclusivity across
+all registered worktrees, not just one checkout. This includes force-updating
+or deleting tags, mutating Git config, deleting refs with `:ref`/`+:ref` push
+refspecs, plus-prefixed force refspecs, parameterized `--force-with-lease`,
+forced/deleting pushes, branch rewrites, pruning, reflog mutation, garbage
+collection, and worktree removal. Combined short flags are interpreted by
+capability (`tag -fa`, `branch -df`, and `push -fu` cannot bypass the guard).
+
 The read-only allowlist is argument-verified, not name-based: `sort -o` and
 `uniq` with an output operand are path-checked writes, `base64 -o` likewise;
 `awk`, `yq`, and inline `perl` are opaque because their embedded languages

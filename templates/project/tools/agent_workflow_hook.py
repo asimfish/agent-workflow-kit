@@ -1565,25 +1565,46 @@ def command_git_write(command: str) -> bool:
 def _git_segment_shared_mutation(tokens: list[str]) -> bool:
     """True when a git segment rewrites state shared by every worktree.
 
-    Branch deletion/rename, reflog expiry, pruning fetches, gc, tag deletion,
-    forced or deleting pushes, and worktree removal hit refs and objects that
-    all checkouts of the repository see, so per-checkout exclusivity is not
-    enough for them.
+    Branch deletion/rename, reflog expiry, pruning fetches, config writes, gc,
+    tag deletion/force-update, forced or deleting pushes, and worktree removal
+    hit state that all checkouts of the repository see, so per-checkout
+    exclusivity is not enough for them.
     """
     sub, tail = _git_segment_details(tokens)
     flags = [item for item in tail if item.startswith("-")]
+    short_flags = {
+        char
+        for item in flags
+        if item.startswith("-") and not item.startswith("--")
+        for char in item[1:]
+    }
     if sub == "branch":
-        return any(item in {"-D", "-d", "-m", "-M", "-f", "--force", "--delete",
-                            "--move", "-c", "-C", "--copy"} for item in flags)
+        return bool(short_flags & {"D", "d", "m", "M", "f", "c", "C"}) or any(
+            item in {"--force", "--delete", "--move", "--copy"}
+            for item in flags
+        )
     if sub == "reflog":
         return bool(tail) and tail[0] in {"expire", "delete", "drop"}
     if sub == "fetch":
-        return any(item in {"--prune", "-p", "--prune-tags"} for item in flags)
+        return "p" in short_flags or any(
+            item in {"--prune", "--prune-tags"} for item in flags
+        )
+    if sub == "config":
+        return not _git_segment_read_only(tokens)
     if sub == "tag":
-        return any(item in {"-d", "--delete"} for item in flags)
+        return bool(short_flags & {"d", "f"}) or any(
+            item in {"--delete", "--force"} for item in flags
+        )
     if sub == "push":
-        return any(item in {"--force", "-f", "--force-with-lease", "--delete",
-                            "-d", "--prune", "--mirror"} for item in flags)
+        destructive_refspec = any(item.startswith(":") for item in tail)
+        force_refspec = any(item.startswith("+") and len(item) > 1 for item in tail)
+        force_or_delete_flag = bool(short_flags & {"f", "d"}) or any(
+            item in {"--force", "--force-with-lease", "--delete",
+                     "--prune", "--mirror"}
+            or item.startswith("--force-with-lease=")
+            for item in flags
+        )
+        return destructive_refspec or force_refspec or force_or_delete_flag
     if sub == "worktree":
         return bool(tail) and tail[0] in {"remove", "prune", "move"}
     return sub in {"gc", "prune", "update-ref", "pack-refs", "filter-branch"}
