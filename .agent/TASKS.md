@@ -104,3 +104,4 @@
 | T-091 | review | supervisor | `.agent/` | [.agent/tasks/T-091.md](tasks/T-091.md) | real Claude runtime recovery verification |
 | T-092 | review | supervisor | `.agent/` | [.agent/tasks/T-092.md](tasks/T-092.md) | independent gate for T-090 |
 | T-093 | review | supervisor | `.agent/` | [.agent/tasks/T-093.md](tasks/T-093.md) | independent regate for T-088 |
+| T-098 | in_progress | codex | `tools/, templates/project/, tests/, docs/, README.md, .agent/` | [.agent/tasks/T-098.md](tasks/T-098.md) | recover and complete concurrent session safeguards |

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 08:51:43",
+  "updated_at": "2026-07-20 11:50:25",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1404,6 +1404,22 @@
       "deps": [],
       "created_at": "2026-07-20 08:32:37",
       "updated_at": "2026-07-20 08:51:43"
+    },
+    "T-098": {
+      "title": "recover and complete concurrent session safeguards",
+      "status": "in_progress",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 11:49:43",
+      "updated_at": "2026-07-20 11:50:25"
     }
   }
 }

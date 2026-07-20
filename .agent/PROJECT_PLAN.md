@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-098 - recover and complete concurrent session safeguards (owner: codex)
 - [ ] T-093 - independent regate for T-088 (owner: supervisor)
 - [ ] T-092 - independent gate for T-090 (owner: supervisor)
 - [ ] T-091 - real Claude runtime recovery verification (owner: supervisor)
