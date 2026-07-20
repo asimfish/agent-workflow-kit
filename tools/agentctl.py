@@ -1044,8 +1044,43 @@ def _normalize_claim_path(root: Path, value: str) -> tuple[str | None, str | Non
     return rel, None
 
 
+def _scope_entry_base(scope_entry: str) -> str:
+    return scope_entry.strip().strip("/").rstrip("*").rstrip("/")
+
+
+def _dir_within_scope_entry(path: str, scope_entry: str) -> bool:
+    """True only when `path` is the scope entry or a descendant of it.
+
+    Directional containment: unlike `_scopes_overlap`, an ANCESTOR of the
+    scope entry is not "in scope". Writing `src` or `src/*` when the task
+    scope is `src/one/` must be rejected because it also reaches sibling
+    `src/two/`.
+    """
+    p = path.strip().strip("/")
+    s = _scope_entry_base(scope_entry)
+    if not p or not s:
+        return False
+    return p == s or p.startswith(s + "/")
+
+
 def _path_in_scope(path: str, scope: list[str]) -> bool:
-    return any(_scopes_overlap([path], [item]) for item in scope)
+    """Whether a single write target is fully contained in the task scope.
+
+    A glob only stays in scope when the directory being expanded is itself
+    inside a scope entry, so every possible match lands in scope too. A
+    non-glob path must be the scope entry or a descendant.
+    """
+    raw = str(path).strip()
+    star = raw.find("*")
+    if star != -1:
+        prefix = raw[:star]
+        slash = prefix.rfind("/")
+        globbed_dir = prefix[:slash] if slash != -1 else ""
+        if not globbed_dir:
+            # Bare glob at the checkout root (e.g. `*` or `src*`) can escape.
+            return False
+        return any(_dir_within_scope_entry(globbed_dir, item) for item in scope)
+    return any(_dir_within_scope_entry(raw, item) for item in scope)
 
 
 def _controller_owned_paths() -> tuple[tuple[str, str], ...]:

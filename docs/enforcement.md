@@ -82,6 +82,13 @@ the guarantee model remains: verified reads and path-checked writes may run
 beside peers; everything else requires an exclusive checkout or a task
 worktree.
 
+Scope membership for a single write target is directional and glob-aware: a
+path is in scope only when it is the scope entry or a descendant of it, so a
+parent directory (`src`) or a glob whose expansion spans siblings (`src/*`,
+bare `*`) is rejected when the task is scoped to `src/one/` — such a write
+would reach a peer's `src/two/`. The symmetric disjointness check between two
+task scopes is separate and unchanged.
+
 Shell parsing itself is hardened against composition tricks: newlines
 separate commands exactly like `;`, `&>`/`&>>`/`>|`/`>&file` redirects are
 recognized and their targets scope-checked, `mv` treats every source operand

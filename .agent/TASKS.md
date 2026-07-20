@@ -93,3 +93,5 @@
 | T-080 | review | supervisor | `.agent/` | [.agent/tasks/T-080.md](tasks/T-080.md) | independently review T-079 argument-verified allowlist |
 | T-081 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-081.md](tasks/T-081.md) | close newline, redirect, mv-source, and shared-ref gaps |
 | T-082 | review | supervisor | `.agent/` | [.agent/tasks/T-082.md](tasks/T-082.md) | independently review T-081 shell parse and shared-ref fixes |
+| T-088 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-088.md](tasks/T-088.md) | block ancestor and glob paths that exceed task scope |
+| T-089 | review | supervisor | `.agent/` | [.agent/tasks/T-089.md](tasks/T-089.md) | independently review T-088 scope containment |
