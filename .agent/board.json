@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 15:03:59",
+  "updated_at": "2026-07-20 15:28:52",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1448,6 +1448,32 @@
       "deps": [],
       "created_at": "2026-07-20 15:03:27",
       "updated_at": "2026-07-20 15:03:59"
+    },
+    "T-102": {
+      "title": "warn instead of silently overriding existing git hooks on init",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:11:48",
+      "updated_at": "2026-07-20 15:28:52"
+    },
+    "T-103": {
+      "title": "independently review T-102 hook override warnings",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:27:47",
+      "updated_at": "2026-07-20 15:28:52"
     }
   }
 }

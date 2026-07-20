@@ -107,3 +107,5 @@
 | T-099 | review | supervisor | `.agent/` | [.agent/tasks/T-099.md](tasks/T-099.md) | independently review T-098 loop command scope guard |
 | T-100 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-100.md](tasks/T-100.md) | refuse eval run against a checkout with a live peer session |
 | T-101 | review | supervisor | `.agent/` | [.agent/tasks/T-101.md](tasks/T-101.md) | independently review T-100 eval target isolation |
+| T-102 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-102.md](tasks/T-102.md) | warn instead of silently overriding existing git hooks on init |
+| T-103 | review | supervisor | `.agent/` | [.agent/tasks/T-103.md](tasks/T-103.md) | independently review T-102 hook override warnings |
