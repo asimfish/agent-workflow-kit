@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 13:45:55",
+  "updated_at": "2026-07-20 14:45:47",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1504,6 +1504,62 @@
       "deps": [],
       "created_at": "2026-07-20 13:44:50",
       "updated_at": "2026-07-20 13:45:55"
+    },
+    "T17F063E6115138DE-003": {
+      "title": "ignore already-published commits in pre-push scan",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".githooks/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:47:32",
+      "updated_at": "2026-07-20 14:42:14"
+    },
+    "T17F063E6115138DE-004": {
+      "title": "exclude already-published commits from pre-push validation",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "hooks/",
+        ".githooks/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:51:04",
+      "updated_at": "2026-07-20 14:42:38"
+    },
+    "TD851EF749F675DC5-001": {
+      "title": "review pre-push published-commit filter",
+      "status": "review",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:17:11",
+      "updated_at": "2026-07-20 14:43:00"
+    },
+    "T17F063E6115138DE-005": {
+      "title": "release pre-push published-commit fix",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "hooks/",
+        ".githooks/",
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:44:18",
+      "updated_at": "2026-07-20 14:45:47"
     }
   }
 }

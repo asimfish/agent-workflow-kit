@@ -7185,7 +7185,11 @@ def _check_commit_msg(root: Path, msg_file: str | None) -> list:
     return p
 
 
-def _check_prepush(root: Path, commit_range: str | None) -> list:
+def _check_prepush(
+    root: Path,
+    commit_range: str | None,
+    published_remote: str | None = None,
+) -> list:
     if not commit_range:
         return ["pre-push mode requires --commit-range"]
     p = _check_git_exclusive(root)
@@ -7193,6 +7197,9 @@ def _check_prepush(root: Path, commit_range: str | None) -> list:
     baseline = _load_json(_adoption_path(root), {}).get("ignore_commits_through")
     if baseline and _git(root, "rev-parse", "--verify", f"{baseline}^{{commit}}").strip():
         rev_args.append(f"^{baseline}")
+    configured_remotes = set(_git(root, "remote").splitlines())
+    if published_remote and published_remote in configured_remotes:
+        rev_args.extend(["--not", f"--remotes={published_remote}"])
     log = _git(root, "log", "--format=%H%x1f%s%x1f%b%x1e", *rev_args)
     if not log:
         return p
@@ -7877,7 +7884,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     elif mode == "commit-msg":
         problems = _check_commit_msg(root, args.message_file)
     elif mode == "pre-push":
-        problems = _check_prepush(root, args.commit_range)
+        problems = _check_prepush(root, args.commit_range, args.published_remote)
     elif mode == "ci":
         problems = _check_base(root) + _check_board_consistency(root) + _check_escalations(root)
     else:
@@ -8447,6 +8454,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--mode", default="manual")
     sp.add_argument("--message-file")
     sp.add_argument("--commit-range")
+    sp.add_argument(
+        "--published-remote",
+        help="Exclude commits already reachable from this configured remote's tracking refs",
+    )
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_check)
 

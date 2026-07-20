@@ -33,7 +33,8 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   else
     range="$remote_sha..$local_sha"
   fi
-  if ! python3 tools/agentctl.py check --mode pre-push --commit-range "$range"; then
+  if ! python3 tools/agentctl.py check --mode pre-push --commit-range "$range" \
+    --published-remote "$REMOTE_NAME"; then
     status=1
   fi
 done
