@@ -10,7 +10,13 @@
     "preToolUse": [
       {
         "command": "python3 tools/agent_workflow_hook.py pre-tool-use",
-        "matcher": "Shell|Bash|Write|Edit|MultiEdit",
+        "timeout": 30,
+        "failClosed": true
+      }
+    ],
+    "beforeMCPExecution": [
+      {
+        "command": "python3 tools/agent_workflow_hook.py pre-tool-use",
         "timeout": 30,
         "failClosed": true
       }

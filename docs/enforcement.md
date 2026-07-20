@@ -34,6 +34,12 @@ this session's receipt, so unrelated task lifecycles do not force a refresh on
 every peer. Plan-body edits, rule changes, this task's own row, and this task's
 own document still invalidate the receipt.
 
+Automatic task allocation uses a private checkout namespace plus the workflow
+session key to produce `T<16-hex-shard>-NNN` IDs. The namespace is stored in
+local Git metadata rather than committed project files. This prevents two full
+clones of the same board snapshot, two worktrees, or two conversations from
+silently assigning the same default ID; explicit `--new-id` values are unchanged.
+
 Shell commands whose writes cannot be statically enumerated - inline
 interpreter code (`python -c`, `node -e`), interpreter/script invocations,
 `./project-scripts`, `rsync`, `dd`, archive extraction, and download `-o`
@@ -53,7 +59,9 @@ scripts, test/build runners, archive and download tools, nested shells, and
 unknown executables — is an opaque write. Opaque writes require an active
 task session and exclusive use of the checkout: beside another live session
 they are refused with worktree guidance, because their output paths cannot
-be attributed afterwards. When another session is live in the checkout, every mutating action also
+be attributed afterwards. Worktree allocation is a pre-start transition from
+a committed `todo`/`ready` task, not an implicit migration of an active dirty
+shared checkout. When another session is live in the checkout, every mutating action also
 reconciles the working tree; a tracked file modified outside every live
 session scope (including tracked dotfiles such as `.env`) blocks further
 mutations until reverted, claimed, or committed separately by a human. A
@@ -75,12 +83,36 @@ path list. Command substitution, backticks, and process substitution
 anywhere in a command make the whole command opaque, including inside quoted
 literals (fail closed).
 
+Git operations that mutate repository-wide metadata require exclusivity across
+all registered worktrees, not just one checkout. This includes force-updating
+or deleting tags, mutating Git config, deleting refs with `:ref`/`+:ref` push
+refspecs, plus-prefixed force refspecs, parameterized `--force-with-lease`,
+forced/deleting pushes, branch rewrites, pruning, reflog mutation, garbage
+collection, and worktree removal. Combined short flags are interpreted by
+capability (`tag -fa`, `branch -df`, and `push -fu` cannot bypass the guard).
+
 The read-only allowlist is argument-verified, not name-based: `sort -o` and
 `uniq` with an output operand are path-checked writes, `base64 -o` likewise;
 `awk`, `yq`, and inline `perl` are opaque because their embedded languages
 can write arbitrary files; `sed` counts as read-only only for provably
 print-only scripts (line addresses plus `p`), and both dash and old-style
 bundled `tar` option words are recognized for extract/create/update modes.
+Git `diff`/`log`/`show --output` destinations are resolved after leading `-C`
+options and checked as file writes; external-diff/textconv configuration,
+execution flags, and pager-opening grep forms are opaque. `rg --pre`,
+`fd --exec`, `ag --pager`, `find -fprint`, `tree -o`, and both normal and
+stdin-based `xxd` output operands cannot inherit the read-only classification
+of their executable name. GNU target-directory forms are checked, `mv` claims
+its deleted sources as well as its destination, while in-place `sed`/`perl` is
+opaque because its embedded program can write additional files. Curl write-out,
+libcurl, stderr, SSL-session, and output-directory options plus `gh --web` are
+write/execution surfaces. Newlines, background/pipeline control operators,
+dynamic shell variable/positional expansion, globs in mutation targets, unsafe
+environment assignments, and cwd-changing `env` wrappers are opaque because
+their final effects cannot be proven statically.
+Host/process/remote mutations such as `sysctl -w`, `kill`, mutating `gh`
+actions, and default `wget` downloads are opaque beside peers; a conservative
+set of `gh ... view/list/status` actions remains read-only.
 Static shell parsing still cannot PROVE arbitrary commands are read-only, so
 the guarantee model remains: verified reads and path-checked writes may run
 beside peers; everything else requires an exclusive checkout or a task
@@ -134,12 +166,18 @@ one itself:
 python3 tools/agentctl.py work --agent codex --auto-create --title "<current request>" --scope "<paths>"
 ```
 
-Codex, Claude Code, and Cursor project hooks call `tools/agent_workflow_hook.py`. The session-start hook injects the protocol into context, the pre-tool hook blocks mutating tools when no active task session exists, and the stop hook reminds the agent to record progress or complete the task (which updates the plan and task doc).
+Codex, Claude Code, and Cursor project hooks call `tools/agent_workflow_hook.py`.
+Codex and Claude match every tool call; Cursor uses generic `preToolUse` plus
+`beforeShellExecution` and `beforeMCPExecution`, all routed through the same
+guard. Known structured file/notebook/MCP mutations contribute every source and
+destination path. Unknown non-read tools and pathless mutations fail closed as
+opaque beside peers. The session-start hook injects the protocol into context,
+and the stop hook reminds the agent to record progress or complete the task.
 
 ### Long-task anti-drift (focus re-injection)
 
-The session-start hook matches `startup|resume|compact`. Whenever a long task is
-resumed or its context is compacted, the hook calls `agentctl focus` and re-injects
+The session-start hook matches `startup|resume|clear|compact`. Whenever a long task is
+resumed, cleared, or its context is compacted, the hook calls `agentctl focus` and re-injects
 the active task's goal, write scope, and stage TODO plus the required reading list.
 This keeps a long-running agent anchored to its task and plan instead of drifting.
 Run `agentctl focus` manually any time to re-anchor.
@@ -150,6 +188,23 @@ parent lineage plus an optional fork-instance key. If a child inherits the
 parent's environment, `agentctl` ignores the stale owner-bound ID. If a provider
 reports identical parent/child IDs, `SessionStart` establishes an isolated local
 instance; later mutating hooks block when that instance was not propagated.
+If a nested CLI first creates a task from its host runtime and a later hook adds
+a payload session ID, the hook reuses the already-recorded runtime session rather
+than switching identities mid-task. When that payload ID was generated inside
+the nested SDK and is absent from inherited environment variables, SessionStart
+exports the normal identity and the first `agentctl work` hook claims an atomic,
+checkout-specific local binding under the Git common directory when that export
+does not reach the shell. Hook processes and the agent shell may also receive
+different runtime-variable subsets. While the binding is still pending, the
+hook tests at most one payload-derived environment for each supported provider
+variable and accepts only one active workflow session. It then persists that
+anonymous session key and stops probing. Zero matches remain pending; multiple
+matches fail closed with an ambiguity error. The record contains only hashed
+provider/runtime identities and the anonymous workflow key. Another payload
+cannot replace a fresh pending binding or an active runtime session in that
+checkout; independent worktrees use distinct binding keys. Malformed binding
+state also fails closed. Explicit fork lineage or an instance key never uses
+this fallback.
 
 ### Runtime commands
 
@@ -214,6 +269,11 @@ project hooks still depend on the client loading them, repository trust, and
 user or organization policy. A repository cannot prevent an administrator from
 disabling its native hooks; Git hooks and required GitHub checks remain the
 later enforcement layers.
+
+Project hooks are coordination guardrails, not an operating-system sandbox.
+They conservatively route unprovable commands to exclusive worktrees, but they
+cannot contain hostile code or observe side effects performed outside the client
+hook lifecycle. Use an external sandbox for untrusted execution.
 
 No local hook can infer two distinct conversations when a client exposes no
 different runtime/session/fork signal and does not run `SessionStart`. Supported

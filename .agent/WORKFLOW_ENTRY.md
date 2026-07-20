@@ -142,10 +142,11 @@ the sole bootstrap exception because it installs the identity hook itself.
   and rules to supervisors or humans.
 - Scripts, interpreters, test/build runners, and unknown executables cannot
   prove which paths they write, so they run only in an exclusive checkout.
-  When another conversation is live in the same checkout, run them from a
-  task worktree (`agentctl worktree create --task <id> --agent <name>`);
-  data-collection, training, and test tasks should plan on a worktree per
-  conversation from the start.
+  When another conversation is live in the same checkout, allocate a committed
+  `todo`/`ready` task worktree before starting that execution phase
+  (`agentctl worktree create --task <id> --agent <name>`). An active dirty task
+  is not relocated implicitly; data-collection, training, and test tasks should
+  plan on a worktree per conversation from the start.
 - Unrelated task lifecycles do not invalidate this conversation's read
   receipt: only plan-body/rule changes, this task's own index row, or this
   task's own document require re-reading plus `agentctl refresh`.
@@ -154,6 +155,10 @@ the sole bootstrap exception because it installs the identity hook itself.
   every mutating action: a tracked file changed outside every live session
   scope blocks further writes until it is reverted, claimed, or committed
   separately by a human. Write within your scope using enumerable tools.
+- Structured file/notebook/MCP writes are allowed beside peers only when every
+  source and destination path is explicit and inside scope. Unknown or pathless
+  mutating tools are opaque and require an exclusive checkout. Hooks are
+  coordination guardrails, not an OS sandbox for untrusted execution.
 - Git index, HEAD, branch, merge, and push mutations require exclusive use of a
   checkout. If another conversation is active, allocate a task-scoped worktree
   instead of bypassing the guard.

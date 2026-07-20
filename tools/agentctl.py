@@ -138,6 +138,9 @@ REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 WORKTREE_LEASES_DIR = "agent-workflow"
 WORKTREE_LEASES_FILE = "worktree-leases.json"
 WORKTREE_LEASES_LOCK = "worktree-leases.lock"
+TASK_ID_NAMESPACE_FILE = "task-id-namespace.key"
+TASK_ID_NAMESPACE_BYTES = 32
+TASK_ID_SHARD_HEX_LENGTH = 16
 EVALS_DIR = "evals"
 EVAL_SUITES_FILE = "suites.json"
 EVAL_RUNS_DIR = "runs"
@@ -258,6 +261,16 @@ def _git(root: Path, *args: str) -> str:
 
 def _git_common_dir(root: Path) -> Path | None:
     raw = _git(root, "rev-parse", "--git-common-dir")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+    return path.resolve()
+
+
+def _git_dir(root: Path) -> Path | None:
+    raw = _git(root, "rev-parse", "--git-dir")
     if not raw:
         return None
     path = Path(raw)
@@ -1423,15 +1436,45 @@ def _select_next_task(root: Path, agent: str) -> str | None:
     return candidates[0][2]
 
 
+def _task_id_namespace_key(root: Path) -> bytes:
+    git_dir = _git_dir(root)
+    base = git_dir / WORKTREE_LEASES_DIR if git_dir is not None else _state_dir(root)
+    path = base / TASK_ID_NAMESPACE_FILE
+    try:
+        key = path.read_bytes()
+    except FileNotFoundError:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        generated = secrets.token_bytes(TASK_ID_NAMESPACE_BYTES)
+        try:
+            key = generated if _create_binary_secret(path, generated) else path.read_bytes()
+        except OSError:
+            key = b""
+    except OSError:
+        key = b""
+    if len(key) != TASK_ID_NAMESPACE_BYTES:
+        fallback = f"{platform.node()}\0{root.resolve()}".encode("utf-8")
+        return hashlib.sha256(fallback).digest()
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return key
+
+
 def _next_task_id(root: Path, prefix: str = "T") -> str:
     board = _load_board(root)
+    session_key = _workflow_session_key()
+    shard = hashlib.sha256(
+        _task_id_namespace_key(root) + b"\0" + session_key.encode("utf-8")
+    ).hexdigest()[:TASK_ID_SHARD_HEX_LENGTH].upper()
+    namespaced_prefix = f"{prefix}{shard}"
     max_num = 0
-    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    pattern = re.compile(rf"^{re.escape(namespaced_prefix)}-(\d+)$")
     for tid in board.get("tasks", {}):
         m = pattern.match(tid)
         if m:
             max_num = max(max_num, int(m.group(1)))
-    return f"{prefix}-{max_num + 1:03d}"
+    return f"{namespaced_prefix}-{max_num + 1:03d}"
 
 
 # ---------- commands ----------
@@ -2413,7 +2456,7 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
         f"- By: {merged_by}\n- Recorded-by: {recorder}\n- Recorder task: {recorder_task}\n"
         f"- Pull request: {evidence.get('url') or ''}\n- Base branch: {evidence.get('baseRefName') or ''}\n"
         f"- Merge commit: {merge_oid}\n- Merged at: {evidence.get('mergedAt') or ''}\n"
-        f"- Reconciled at: {ts}\n- Note: {args.note or ''}\n",
+        f"- Reconciled at: {ts}\n- Note: {args.note or 'none'}\n",
     )
     recorder_session["last_gate"] = {
         "task": task, "decision": "approved", "source": "github-merge", "at": ts,
@@ -2525,7 +2568,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
             f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
             f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
             f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
-            f"- At: {ts}\n- Note: {args.note or ''}\n",
+            f"- At: {ts}\n- Note: {args.note or 'none'}\n",
         )
         st = _load_session(root)
         st["last_gate"] = {"task": task, "decision": "approved", "at": ts}
@@ -2544,7 +2587,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
         f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
         f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
         f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
-        f"- At: {ts}\n- Note: {args.note or ''}\n",
+        f"- At: {ts}\n- Note: {args.note or 'none'}\n",
     )
     st = _load_session(root)
     st["last_gate"] = {"task": task, "decision": "rejected", "at": ts}
@@ -7289,7 +7332,11 @@ def _check_commit_msg(root: Path, msg_file: str | None) -> list:
     return p
 
 
-def _check_prepush(root: Path, commit_range: str | None) -> list:
+def _check_prepush(
+    root: Path,
+    commit_range: str | None,
+    published_remote: str | None = None,
+) -> list:
     if not commit_range:
         return ["pre-push mode requires --commit-range"]
     p = _check_git_exclusive(root)
@@ -7297,6 +7344,9 @@ def _check_prepush(root: Path, commit_range: str | None) -> list:
     baseline = _load_json(_adoption_path(root), {}).get("ignore_commits_through")
     if baseline and _git(root, "rev-parse", "--verify", f"{baseline}^{{commit}}").strip():
         rev_args.append(f"^{baseline}")
+    configured_remotes = set(_git(root, "remote").splitlines())
+    if published_remote and published_remote in configured_remotes:
+        rev_args.extend(["--not", f"--remotes={published_remote}"])
     log = _git(root, "log", "--format=%H%x1f%s%x1f%b%x1e", *rev_args)
     if not log:
         return p
@@ -7981,7 +8031,7 @@ def cmd_check(args: argparse.Namespace) -> int:
     elif mode == "commit-msg":
         problems = _check_commit_msg(root, args.message_file)
     elif mode == "pre-push":
-        problems = _check_prepush(root, args.commit_range)
+        problems = _check_prepush(root, args.commit_range, args.published_remote)
     elif mode == "ci":
         problems = _check_base(root) + _check_board_consistency(root) + _check_escalations(root)
     else:
@@ -8132,12 +8182,14 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
             problems.append(
                 "this command's written paths cannot be enumerated, so it "
                 "requires exclusive use of this checkout; other live sessions: "
-                f"{owners}. Run script/interpreter/test/build work in a task "
-                "worktree: create the task (leave it todo) and commit its plan "
+                f"{owners}. Wait until those sessions finish/release, or put the "
+                "next execution phase in a task worktree before starting that "
+                "phase: create the task (leave it todo) and commit its plan "
                 "+ .agent/tasks doc, then `python3 tools/agentctl.py worktree "
                 "create --task <task-id> --agent <agent-name>`, cd into the "
                 "printed path, `work --agent <agent-name> --task <task-id>`, and "
-                "run the command there. Or wait until the peers finish/release."
+                "run the command there. An already-active shared-checkout task is "
+                "not relocated implicitly."
             )
         claims = []
         effective_scope = _session_effective_scope(st)
@@ -8559,6 +8611,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--mode", default="manual")
     sp.add_argument("--message-file")
     sp.add_argument("--commit-range")
+    sp.add_argument(
+        "--published-remote",
+        help="Exclude commits already reachable from this configured remote's tracking refs",
+    )
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_check)
 

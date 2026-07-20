@@ -36,10 +36,28 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T3B43382C2174B290-001 - review final main advance integration (owner: codex-gpt55-final-reviewer)
+- [x] T17F063E6115138DE-008 - integrate final main advances for concurrent release (owner: codex)
 - [ ] T-103 - independently review T-102 hook override warnings (owner: supervisor)
 - [x] T-102 - warn instead of silently overriding existing git hooks on init (owner: cursor)
 - [ ] T-101 - independently review T-100 eval target isolation (owner: supervisor)
 - [x] T-100 - refuse eval run against a checkout with a live peer session (owner: cursor)
+- [ ] T17F063E6115138DE-007 - release approved concurrent main integration (owner: codex)
+- [ ] TA74E81A93FF7EB9D-001 - review concurrent main integration and collision migration (owner: claude-sonnet-merge-reviewer)
+- [x] T17F063E6115138DE-006 - integrate concurrent main advances without history loss (owner: codex)
+- [ ] T17F063E6115138DE-005 - release pre-push published-commit fix (owner: codex)
+- [ ] TD851EF749F675DC5-001 - review pre-push published-commit filter (owner: claude-sonnet-reviewer)
+- [x] T17F063E6115138DE-004 - exclude already-published commits from pre-push validation (owner: codex)
+- [x] T17F063E6115138DE-003 - ignore already-published commits in pre-push scan (owner: codex)
+- [ ] T17F063E6115138DE-002 - package and publish approved concurrent isolation release (owner: codex)
+- [ ] TA80D9103F5316278-001 - independently review residual repo-wide Git guard closure (owner: claude-sonnet-reviewer)
+- [x] T17F063E6115138DE-001 - close residual repo-wide Git guard gaps (owner: codex)
+- [ ] T622DE1DE69A1D0F8-001 - independently review T-098 concurrent isolation recovery (owner: claude-sonnet-reviewer)
+- [ ] T-087 - close residual shared-checkout isolation boundaries (owner: codex)
+- [ ] T-086 - integrate independent T-081 review evidence (owner: codex-integrator)
+- [ ] T-085 - review T-081 resubmission and T-083/T-084 evidence (owner: independent-reviewer)
+- [ ] T-084 - independently review T-082 review record and T-083 isolation fixes (PR #17) (owner: independent-reviewer)
+- [x] T-083 - close independent review isolation gaps (owner: codex)
 - [ ] T-099 - independently review T-098 loop command scope guard (owner: supervisor)
 - [x] T-098 - enforce scope on loop check commands (owner: cursor)
 - [ ] T-097 - independently review T-096 worktree escape hatch (owner: supervisor)
@@ -190,3 +208,4 @@ Format: `- YYYY-MM-DD HH:MM:SS - <agent-or-human> - <change and reason>.`
 - 2026-07-10 13:25:00 - codex - split maturity into durable workflow, bounded execution, and operational autonomy so runtime claims match tested capability.
 - 2026-07-10 13:43:00 - codex - completed the bounded dispatch implementation and cleared stale worker allocation; M2 remains in progress pending real-session dogfood.
 - 2026-07-10 22:18:00 - codex - started M3 with resumable cycle state and explicit stop/recovery semantics before adding scheduler or worktree automation.
+- 2026-07-20 14:55:15 - codex - integrated concurrent task histories; main IDs remain canonical and feature collisions are recorded in `.agent/decisions/20260720-concurrent-task-id-collisions.md`.

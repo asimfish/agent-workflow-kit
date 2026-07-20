@@ -67,6 +67,52 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "claude-sonnet-reviewer": {
+      "role": "independent reviewer",
+      "backend": "claude",
+      "write_scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md"
+      ],
+      "tools": [
+        "read",
+        "test",
+        "gate"
+      ],
+      "model": "claude-sonnet-4-6",
+      "reasoning_effort": "",
+      "session_id": ""
+    },
+    "claude-sonnet-merge-reviewer": {
+      "role": "independent review",
+      "backend": "claude",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
+    },
+    "codex-gpt55-final-reviewer": {
+      "role": "independent review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [
+        "agentctl gate",
+        "agentctl note",
+        "agentctl finish"
+      ],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

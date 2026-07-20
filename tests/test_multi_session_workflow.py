@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -161,6 +162,105 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertEqual(unchanged.stdout, "")
 
+    def test_auto_generated_task_ids_are_namespaced_per_conversation(self):
+        for session, title, scope in (
+            ("auto-one", "automatic one", "src/auto-one/"),
+            ("auto-two", "automatic two", "src/auto-two/"),
+        ):
+            self.agentctl(
+                "work", "--agent", "codex", "--auto-create",
+                "--title", title, "--scope", scope, session=session,
+            )
+
+        first = json.loads(
+            self.agentctl("status", "--json", session="auto-one").stdout
+        )["task"]
+        second = json.loads(
+            self.agentctl("status", "--json", session="auto-two").stdout
+        )["task"]
+        self.assertRegex(first, r"^T[A-F0-9]{16}-001$")
+        self.assertRegex(second, r"^T[A-F0-9]{16}-001$")
+        self.assertNotEqual(first, second)
+
+    def test_auto_generated_task_id_sequence_is_stable_per_conversation(self):
+        session = "auto-sequence"
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create",
+            "--title", "automatic first", "--scope", "src/sequence/",
+            session=session,
+        )
+        first = json.loads(
+            self.agentctl("status", "--json", session=session).stdout
+        )["task"]
+        self.agentctl(
+            "finish", "--summary", "first sequence task complete",
+            "--tests", "task ID sequence regression", session=session,
+        )
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create",
+            "--title", "automatic second", "--scope", "src/sequence/",
+            session=session,
+        )
+        second = json.loads(
+            self.agentctl("status", "--json", session=session).stdout
+        )["task"]
+        self.assertEqual(first.rsplit("-", 1)[0], second.rsplit("-", 1)[0])
+        self.assertTrue(first.endswith("-001"), first)
+        self.assertTrue(second.endswith("-002"), second)
+
+    def test_auto_generated_task_ids_are_unique_across_full_clones(self):
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True, timeout=60)
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-qm", "test: clone fixture"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        clone_parent = Path(tempfile.mkdtemp(prefix="awk-task-id-clones-"))
+        self.addCleanup(shutil.rmtree, clone_parent, ignore_errors=True)
+        clone_ids = []
+        for name in ("clone-a", "clone-b"):
+            clone = clone_parent / name
+            subprocess.run(
+                ["git", "clone", "--no-local", "-q", str(self.root), str(clone)],
+                check=True, timeout=120,
+            )
+            env = self.env("identical-cloned-session")
+            started = subprocess.run(
+                [
+                    sys.executable, "tools/agentctl.py", "work", "--agent", "codex",
+                    "--auto-create", "--title", name, "--scope", f"src/{name}/",
+                ],
+                cwd=clone, env=env, text=True, capture_output=True, timeout=120,
+            )
+            self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+            status = subprocess.run(
+                [sys.executable, "tools/agentctl.py", "status", "--json"],
+                cwd=clone, env=env, text=True, capture_output=True, timeout=120,
+            )
+            self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+            clone_ids.append(json.loads(status.stdout)["task"])
+            raw_git_dir = subprocess.check_output(
+                ["git", "rev-parse", "--git-dir"], cwd=clone, text=True,
+            ).strip()
+            git_dir = Path(raw_git_dir)
+            if not git_dir.is_absolute():
+                git_dir = clone / git_dir
+            namespace_file = git_dir / "agent-workflow" / "task-id-namespace.key"
+            self.assertEqual(len(namespace_file.read_bytes()), 32)
+            if os.name != "nt":
+                self.assertEqual(namespace_file.stat().st_mode & 0o777, 0o600)
+
+        self.assertRegex(clone_ids[0], r"^T[A-F0-9]{16}-001$")
+        self.assertRegex(clone_ids[1], r"^T[A-F0-9]{16}-001$")
+        self.assertNotEqual(clone_ids[0], clone_ids[1])
+
     def test_hook_session_ids_persist_for_claude_and_return_cursor_environment(self):
         env_file = self.root / "claude-session.env"
         claude_env = self.bare_env()
@@ -226,6 +326,586 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             json.loads(cursor.stdout)["env"]["AGENT_WORKFLOW_SESSION_ID"],
             "cursor-conversation-2",
         )
+
+    def test_pre_tool_hook_reuses_runtime_session_when_payload_adds_session_id(self):
+        """A child CLI payload ID must not hide its runtime-owned task session."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "outer-codex-thread"
+        runtime_env["CLAUDE_CODE_SESSION_ID"] = "claude-child-session"
+        self.agentctl_env(
+            runtime_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-112", "--title", "child runtime identity",
+            "--scope", "src/claude-child/",
+        )
+
+        guarded = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": "claude-child-session",
+                "tool_name": "Bash",
+                "tool_input": {"command": "git add src/claude-child/file.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(guarded.returncode, 0, guarded.stderr)
+        self.assertNotIn("no active task session", guarded.stdout)
+
+    def test_payload_only_provider_id_binds_to_bootstrap_runtime_session(self):
+        """SDK payload IDs survive when the child shell cannot inherit them."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "outer-sdk-host"
+        payload_id = "sdk-generated-claude-session"
+
+        started = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({"session_id": payload_id, "source": "startup"}),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr)
+        # Model the SDK path reproduced by the independent reviewer: the
+        # SessionStart export is not present in later Bash subprocesses.
+        self.assertNotIn("AGENT_WORKFLOW_SESSION_ID", runtime_env)
+        bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "python3 tools/agentctl.py work --agent claude "
+                    "--auto-create --new-id T-113 --title sdk-bootstrap "
+                    "--scope src/sdk-child/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(bootstrap.returncode, 0, bootstrap.stderr)
+        self.assertNotIn('"decision": "block"', bootstrap.stdout)
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding_files = list(
+            (common_path.resolve() / "agent-workflow" / "provider-bindings").glob(
+                "host-*.json"
+            )
+        )
+        self.assertEqual(len(binding_files), 1)
+        self.assertNotIn(
+            payload_id, binding_files[0].read_text(encoding="utf-8"),
+        )
+        self.agentctl_env(
+            runtime_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-113", "--title", "sdk-bootstrap",
+            "--scope", "src/sdk-child/",
+        )
+
+        guarded = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": "git add src/sdk-child/file.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(guarded.returncode, 0, guarded.stderr)
+        self.assertNotIn("no active task session", guarded.stdout)
+        self.assertNotIn('"decision": "block"', guarded.stdout)
+
+    def test_payload_binding_recovers_shell_runtime_that_adds_provider_id(self):
+        """Hook and shell runtime fingerprints may differ by one provider ID."""
+        hook_env = self.bare_env()
+        hook_env["CODEX_THREAD_ID"] = "outer-skewed-host"
+        payload_id = "shell-injected-claude-session"
+        command = (
+            "python3 tools/agentctl.py work --agent claude --auto-create "
+            "--new-id T-118 --title skewed-shell --scope src/skewed-shell/"
+        )
+
+        bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=hook_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', bootstrap.stdout)
+
+        shell_env = hook_env.copy()
+        shell_env["CLAUDE_CODE_SESSION_ID"] = payload_id
+        self.agentctl_env(
+            shell_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-118", "--title", "skewed-shell",
+            "--scope", "src/skewed-shell/",
+        )
+        shell_status = json.loads(
+            self.agentctl_env(shell_env, "status", "--json").stdout
+        )
+
+        guarded = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=hook_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Write",
+                "tool_input": {"file_path": "src/skewed-shell/owned.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn("no active task session", guarded.stdout)
+        self.assertNotIn('"decision": "block"', guarded.stdout)
+
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=self.root,
+            text=True, capture_output=True, check=True, timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding = next(
+            (common_path.resolve() / "agent-workflow" / "provider-bindings").glob(
+                "host-*.json"
+            )
+        )
+        binding_state = json.loads(binding.read_text(encoding="utf-8"))
+        self.assertEqual(
+            binding_state["bound_session_key"],
+            shell_status["workflow_session_key"],
+        )
+        self.assertNotIn(payload_id, binding.read_text(encoding="utf-8"))
+
+    def test_payload_binding_rejects_ambiguous_derived_shell_sessions(self):
+        """More than one provider-derived shell session must fail closed."""
+        hook_env = self.bare_env()
+        hook_env["CODEX_THREAD_ID"] = "outer-ambiguous-host"
+        payload_id = "ambiguous-provider-session"
+        command = (
+            "python3 tools/agentctl.py work --agent claude --auto-create "
+            "--title ambiguous --scope src/ambiguous/"
+        )
+        bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=hook_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', bootstrap.stdout)
+
+        claude_env = hook_env.copy()
+        claude_env["CLAUDE_CODE_SESSION_ID"] = payload_id
+        cursor_env = hook_env.copy()
+        cursor_env["CURSOR_CONVERSATION_ID"] = payload_id
+        self.agentctl_env(
+            claude_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-119", "--title", "ambiguous-claude",
+            "--scope", "src/ambiguous-claude/",
+        )
+        self.agentctl_env(
+            cursor_env, "work", "--agent", "cursor", "--auto-create",
+            "--new-id", "T-120", "--title", "ambiguous-cursor",
+            "--scope", "src/ambiguous-cursor/",
+        )
+
+        guarded = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=hook_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Write",
+                "tool_input": {"file_path": "src/ambiguous-claude/owned.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        decision = json.loads(guarded.stdout)
+        self.assertEqual(decision.get("decision"), "block")
+        self.assertIn("multiple active provider-derived", decision.get("reason", ""))
+
+    def test_competing_payload_cannot_reuse_bound_runtime_session(self):
+        """One host runtime cannot silently merge two provider conversations."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "shared-sdk-host"
+        first_id = "sdk-conversation-one"
+        second_id = "sdk-conversation-two"
+
+        first_start = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({"session_id": first_id, "source": "startup"}),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(first_start.returncode, 0, first_start.stderr)
+        first_bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": first_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "python3 tools/agentctl.py work --agent claude "
+                    "--auto-create --new-id T-114 --title first-sdk-task "
+                    "--scope src/first-sdk/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', first_bootstrap.stdout)
+        self.agentctl_env(
+            runtime_env, "work", "--agent", "claude", "--auto-create",
+            "--new-id", "T-114", "--title", "first-sdk-task",
+            "--scope", "src/first-sdk/",
+        )
+
+        second_start = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({"session_id": second_id, "source": "startup"}),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(second_start.returncode, 0, second_start.stderr)
+        second_env = json.loads(second_start.stdout).get("env", {})
+        self.assertFalse(second_env.get("AGENT_WORKFLOW_SESSION_ISOLATION_ERROR"))
+
+        for command in (
+            "python3 tools/agentctl.py work --agent claude",
+            "git add src/first-sdk/stolen.py",
+        ):
+            blocked = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=self.root,
+                env=runtime_env,
+                input=json.dumps({
+                    "session_id": second_id,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                }),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            decision = json.loads(blocked.stdout)
+            self.assertEqual(decision.get("decision"), "block", command)
+            self.assertIn("already bound", decision.get("reason", ""), command)
+
+        first_guard = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": first_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": "git add src/first-sdk/owned.py"},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', first_guard.stdout)
+
+    def test_concurrent_payload_bootstrap_claims_only_one_host_runtime(self):
+        """Atomic binding prevents two simultaneous conversations from merging."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "concurrent-sdk-host"
+        processes = []
+        for payload_id in ("concurrent-provider-one", "concurrent-provider-two"):
+            processes.append(subprocess.Popen(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=self.root,
+                env=runtime_env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            ))
+        outputs = []
+        for process, payload_id in zip(
+                processes, ("concurrent-provider-one", "concurrent-provider-two")):
+            stdout, stderr = process.communicate(
+                json.dumps({
+                    "session_id": payload_id,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": (
+                        "python3 tools/agentctl.py work --agent claude "
+                        "--auto-create --title concurrent-bootstrap "
+                        "--scope src/concurrent/"
+                    )},
+                }),
+                timeout=120,
+            )
+            self.assertEqual(process.returncode, 0, stderr)
+            outputs.append(json.loads(stdout) if stdout else {})
+
+        conflicts = [
+            output.get("reason", "")
+            for output in outputs
+            if output.get("decision") == "block"
+        ]
+        self.assertEqual(len(conflicts), 1)
+        self.assertIn("already bound", conflicts[0])
+
+    def test_propagated_provider_ids_share_one_host_runtime_without_binding(self):
+        """Normal SessionStart exports keep provider conversations independent."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "shared-propagated-host"
+        sessions = []
+        for payload_id, task, scope in (
+            ("propagated-provider-one", "T-116", "src/propagated-one/"),
+            ("propagated-provider-two", "T-117", "src/propagated-two/"),
+        ):
+            started = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+                cwd=self.root,
+                env=runtime_env,
+                input=json.dumps({"session_id": payload_id, "source": "startup"}),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            self.assertEqual(started.returncode, 0, started.stderr)
+            exported = json.loads(started.stdout)["env"]
+            self.assertEqual(exported["AGENT_WORKFLOW_SESSION_ID"], payload_id)
+            work_env = runtime_env.copy()
+            work_env.update(exported)
+            command = (
+                f"python3 tools/agentctl.py work --agent claude --auto-create "
+                f"--new-id {task} --title propagated --scope {scope}"
+            )
+            bootstrap = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=self.root,
+                env=work_env,
+                input=json.dumps({
+                    "session_id": payload_id,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": command},
+                }),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            self.assertNotIn('"decision": "block"', bootstrap.stdout)
+            self.agentctl_env(
+                work_env, "work", "--agent", "claude", "--auto-create",
+                "--new-id", task, "--title", "propagated", "--scope", scope,
+            )
+            sessions.append((payload_id, work_env, scope))
+
+        statuses = [
+            json.loads(self.agentctl_env(env, "status", "--json").stdout)
+            for _, env, _ in sessions
+        ]
+        self.assertNotEqual(
+            statuses[0]["workflow_session_key"],
+            statuses[1]["workflow_session_key"],
+        )
+        for payload_id, work_env, scope in sessions:
+            guarded = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=self.root,
+                env=work_env,
+                input=json.dumps({
+                    "session_id": payload_id,
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": f"{scope}owned.py"},
+                }),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            self.assertNotIn('"decision": "block"', guarded.stdout)
+            self.assertNotIn("no active task session", guarded.stdout)
+
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=self.root,
+            text=True, capture_output=True, check=True, timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding_dir = common_path.resolve() / "agent-workflow" / "provider-bindings"
+        self.assertEqual(list(binding_dir.glob("host-*.json")), [])
+
+    def test_payload_runtime_binding_is_isolated_per_worktree(self):
+        """One host runtime can bootstrap distinct providers in distinct checkouts."""
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "add", "-A"], cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-qm", "test: worktree fixture"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        worktree_parent = Path(tempfile.mkdtemp(prefix="awk-binding-worktree-"))
+        self.addCleanup(shutil.rmtree, worktree_parent, ignore_errors=True)
+        worktree = worktree_parent / "worker"
+        added = subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "binding-worker", str(worktree)],
+            cwd=self.root, text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(added.returncode, 0, added.stdout + added.stderr)
+
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "shared-worktree-host"
+        outputs = []
+        for checkout, payload_id, scope in (
+            (self.root, "root-provider", "src/root-provider/"),
+            (worktree, "worktree-provider", "src/worktree-provider/"),
+        ):
+            guarded = subprocess.run(
+                [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+                cwd=checkout,
+                env=runtime_env,
+                input=json.dumps({
+                    "session_id": payload_id,
+                    "tool_name": "Bash",
+                    "tool_input": {"command": (
+                        "python3 tools/agentctl.py work --agent claude "
+                        f"--auto-create --title worktree-bootstrap --scope {scope}"
+                    )},
+                }),
+                text=True,
+                capture_output=True,
+                timeout=120,
+            )
+            outputs.append(guarded.stdout)
+        self.assertEqual(outputs, ["", ""])
+
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=self.root,
+            text=True, capture_output=True, check=True, timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding_dir = common_path.resolve() / "agent-workflow" / "provider-bindings"
+        self.assertEqual(len(list(binding_dir.glob("host-*.json"))), 2)
+
+    def test_corrupt_provider_binding_fails_closed(self):
+        """Malformed local identity state cannot be replaced during bootstrap."""
+        runtime_env = self.bare_env()
+        runtime_env["CODEX_THREAD_ID"] = "corrupt-binding-host"
+        payload_id = "corrupt-binding-provider"
+        started = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({"session_id": payload_id, "source": "startup"}),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(started.returncode, 0, started.stderr)
+        bootstrap = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "python3 tools/agentctl.py work --agent claude --auto-create "
+                    "--new-id T-115 --title corrupt --scope src/corrupt/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertNotIn('"decision": "block"', bootstrap.stdout)
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=self.root,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        binding = next(
+            (common_path.resolve() / "agent-workflow" / "provider-bindings").glob(
+                "host-*.json"
+            )
+        )
+        binding.write_text("{broken", encoding="utf-8")
+
+        attempted = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=runtime_env,
+            input=json.dumps({
+                "session_id": payload_id,
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "python3 tools/agentctl.py work --agent claude --auto-create "
+                    "--new-id T-115 --title corrupt --scope src/corrupt/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        decision = json.loads(attempted.stdout)
+        self.assertEqual(decision.get("decision"), "block")
+        self.assertIn("binding state is invalid", decision.get("reason", ""))
 
     def test_same_terminal_session_starts_generate_distinct_workflow_identities(self):
         shared_terminal = self.bare_env()
@@ -361,6 +1041,26 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         module_decision = json.loads(module_hook.stdout)
         self.assertEqual(module_decision["decision"], "block")
         self.assertIn("unique workflow identity", module_decision["reason"])
+
+        piped_hook = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "pre-tool-use"],
+            cwd=self.root,
+            env=terminal_only,
+            input=json.dumps({
+                "tool_name": "Bash",
+                "tool_input": {"command": (
+                    "echo audit |& python3 tools/agentctl.py task create "
+                    "--id T-195 --title unsafe --owner codex --scope src/unsafe-pipe/"
+                )},
+            }),
+            text=True,
+            capture_output=True,
+            timeout=120,
+        )
+        self.assertEqual(piped_hook.returncode, 0, piped_hook.stderr)
+        piped_decision = json.loads(piped_hook.stdout)
+        self.assertEqual(piped_decision["decision"], "block")
+        self.assertIn("unique workflow identity", piped_decision["reason"])
 
         module_direct = subprocess.run(
             [
@@ -1016,6 +1716,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             payload = json.loads(decision.stdout)
             self.assertEqual(payload.get("decision"), "block", command)
             self.assertIn("worktree", payload.get("reason", ""), command)
+            self.assertIn("before starting", payload.get("reason", ""), command)
 
         # Read-only staples and path-checked writes keep working beside peers.
         # (perl left this list in T-079: as a general-purpose language it can
@@ -1132,8 +1833,36 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             "git fetch --prune origin",
             "git gc",
             "git tag -d v1",
+            "git tag -f v1 HEAD",
+            "git tag -fa v1 -m v1 HEAD",
+            "git branch -df wt-branch",
+            "git config core.hooksPath .githooks",
+            "git config --unset core.hooksPath",
             "git push --delete origin wt-branch",
             "git push --force origin main",
+            "git push --force-with-lease=main:deadbeef origin main",
+            "git push -fu origin main",
+            "git push origin :wt-branch",
+            "git push origin +:wt-branch",
+            "git push origin +main:main",
+            "git push origin +main",
+            "git stash clear",
+            "git stash drop stash@{0}",
+            "git stash pop",
+            "git notes remove HEAD",
+            "git notes add -m note HEAD",
+            "git replace -d HEAD",
+            "git replace -f HEAD HEAD^",
+            "sudo git push --force origin main",
+            "sudo -u root git branch -D wt-branch",
+            "sudo FOO=bar git push --force origin main",
+            "nohup git tag -d v1",
+            "env FOO=bar git push -f origin main",
+            "env -C /tmp git gc",
+            "env -P /usr/bin git push -f origin main",
+            "env -S 'git push -f origin main'",
+            "sudo env FOO=bar git stash clear",
+            "sudo sh -lc 'git push --force origin main'",
         ):
             decision = self.hook(
                 "pre-tool-use",
@@ -1144,6 +1873,68 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             payload = json.loads(decision.stdout)
             self.assertEqual(payload.get("decision"), "block", command)
             self.assertIn("worktree", payload.get("reason", ""), command)
+
+        # Read-only Git forms and ordinary non-forced pushes do not rewrite
+        # repository-wide metadata and therefore stay checkout-local.
+        for command in (
+            "git config --get core.hooksPath",
+            "git config user.name",
+            "git config --local user.name",
+            "git config -f .git/config user.name",
+            "git config --type bool core.filemode",
+            "git config get user.name",
+            "git tag --list",
+            "git stash list",
+            "git stash show",
+            "git stash apply",
+            "git stash create",
+            "git notes list",
+            "git notes show HEAD",
+            "git notes get-ref",
+            "git notes --no-ref list",
+            "git replace --list",
+            "git replace -l 'refs/*'",
+            "git replace --format short -l",
+            "git push origin main",
+            "git push origin main:main",
+            "sudo git status",
+            "sudo FOO=bar git status",
+            "sudo -u git echo git push --force origin main",
+            "nohup git push origin main",
+            "env FOO=bar git config user.name",
+            "env -P /usr/bin git config user.name",
+            "sudo echo git push --force origin main",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', passthrough.stdout, command)
+
+        classifier = runpy.run_path(str(self.root / "tools" / "agent_workflow_hook.py"))
+        for command in (
+            "git config user.name",
+            "git config --local user.name",
+            "git config -f .git/config user.name",
+            "git config --type bool core.filemode",
+            "git config get user.name",
+            "git notes list",
+            "git notes show HEAD",
+            "git notes get-ref",
+            "git notes --no-ref list",
+            "git replace --list",
+            "git replace --format short -l",
+        ):
+            self.assertEqual(
+                classifier["classify_shell_command"](command),
+                "read_only",
+                command,
+            )
+            self.assertFalse(
+                classifier["command_git_shared_mutation"](command),
+                command,
+            )
 
     def test_allowlisted_text_tools_cannot_write_through_options_or_dsl(self):
         """Audit repro: sort -o, awk DSL redirects, yq -i, old-style tar."""
@@ -1193,6 +1984,220 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
                 session="one",
             )
             self.assertEqual(passthrough.stdout, "", command)
+
+    def test_read_only_commands_fail_closed_on_output_and_execution_options(self):
+        """Every admitted read command must remain read-only for these arguments."""
+        self.start("one", "T-111", "src/one/")
+        self.start("two", "T-112", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            "git diff --output=src/two/diff.txt HEAD",
+            "git log --output src/two/log.txt -1",
+            "git -C src/one diff --output=../two/leak.txt HEAD",
+            "git show --ext-diff HEAD",
+            "git stash show --ext-diff",
+            "git -c diff.external='python3 evil.py' diff",
+            "git grep --open-files-in-pager=evil needle",
+            "rg --pre 'python3 evil.py' needle .",
+            "fd --exec python3 evil.py",
+            "xxd src/one/input.bin src/two/dump.txt",
+            "xxd -r - src/two/reversed.bin",
+            "find src/one -fprint src/two/list.txt",
+            "tree -o src/two/tree.txt src/one",
+            "cp -t src/two src/one/a",
+            "cp -at src/two src/one/a",
+            "mv --target-directory=src/two src/one/a",
+            "mv -vt src/two src/one/a",
+            "mv src/two/a src/one/a",
+            "ln -s -t src/two src/one/a",
+            "ln -st src/two src/one/a",
+            "ln -s src/one/a",
+            "sed -i.bak 's/x/y/' src/two/a src/one/a",
+            "perl -pi -e 's/x/y/' src/two/a src/one/a",
+            "env --chdir=src/two touch src/one/ok",
+            "curl --write-out '%output{src/two/leak.txt}' https://example.invalid",
+            "TARGET='../two/leak' touch src/one/$TARGET",
+            "touch src/one/{ok,../two/leak}",
+            "sysctl -w kern.maxfiles=1",
+            "kill 12345",
+            "gh pr merge 1 --merge",
+            "gh pr view 1 --web",
+            "wget https://example.invalid/archive",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            payload = json.loads(decision.stdout)
+            self.assertEqual(payload.get("decision"), "block", command)
+
+        # Output paths inside the active task scope remain usable when the
+        # command exposes a concrete destination to the guard.
+        for command in (
+            "git diff --output=src/one/diff.txt HEAD",
+            "git -C src/one diff --output=diff.txt HEAD",
+            "xxd src/one/input.bin src/one/dump.txt",
+            "xxd -r - src/one/reversed.bin",
+            "find src/one -fprint src/one/list.txt",
+            "tree -o src/one/tree.txt src/one",
+            "cp -t src/one src/one/a",
+            "cp -at src/one src/one/a",
+            "mv --target-directory=src/one src/one/a",
+            "mv src/one/a src/one/b",
+            "ln -s -t src/one src/one/a",
+            "ln -s src/one/a src/one/link",
+            "curl --write-out '%output{src/one/status.txt}' https://example.invalid",
+        ):
+            admitted = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', admitted.stdout, command)
+
+        for command in (
+            "git diff --stat",
+            "git -c color.ui=never diff --stat",
+            "git stash show",
+            "rg needle .",
+            "fd needle .",
+            "xxd -l 16 src/one/input.bin",
+            "find src/one -print",
+            "tree src/one",
+            "sysctl kern.ostype",
+            "gh pr view 1",
+            "curl --write-out '%{http_code}' https://example.invalid",
+            "env LC_ALL=C grep -r Agent docs",
+        ):
+            passthrough = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertEqual(passthrough.stdout, "", command)
+
+    def test_residual_shell_escape_surfaces_fail_closed_beside_peers(self):
+        self.start("one", "T-113", "src/one/")
+        self.start("two", "T-114", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        blocked_commands = (
+            "echo ok\ntouch src/two/newline.txt",
+            "echo ok & touch src/two/background.txt",
+            "echo ok |& tee src/two/pipeline.txt",
+            "echo ok &> src/two/all-output.txt",
+            "echo ok &>> src/two/all-append.txt",
+            "echo ok >& src/two/fd-output.txt",
+            "echo ok >| src/two/clobber.txt",
+            "cat <> src/two/read-write.txt",
+            "touch src/one/$1",
+            "touch src/one/$@",
+            "rm src/*",
+            "sed -i.bak 's/x/y/' src/one/a",
+            "perl -pi -e 'open F,qq(>src/two/leak);print F qq(x)' src/one/a",
+            "GIT_SSH_COMMAND=evil git status",
+            "git -c credential.helper='!evil' status",
+            "git cat-file --filters HEAD:README.md",
+            "git help status",
+            "curl --libcurl src/two/repro.c https://example.invalid",
+            "curl --stderr src/two/curl.log https://example.invalid",
+            "curl --ssl-sessions src/two/sessions https://example.invalid",
+            "curl --output-dir src/one https://example.invalid/file",
+            "sort --compress-program=evil src/one/input",
+            "sort -T src/two src/one/input",
+            "tar --use-compress-program=evil -tf archive.tar",
+            "tar --checkpoint-action=exec=evil -tf archive.tar",
+            "cp --backup src/one/a src/one/b",
+            "mv --backup src/one/a src/one/b",
+            "ln --backup src/one/a src/one/b",
+            "nohup grep Agent README.md",
+            "export TARGET=src/two/leak",
+            "unset TARGET",
+            "set -o noclobber",
+            "cd",
+            "cd -",
+            "printf -v TARGET src/two/leak",
+        )
+        for command in blocked_commands:
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            self.assertEqual(
+                json.loads(decision.stdout).get("decision"), "block", command,
+            )
+
+        allowed_commands = (
+            "echo ok &> src/one/all-output.txt",
+            "echo ok &>> src/one/all-append.txt",
+            "echo ok >& src/one/fd-output.txt",
+            "echo ok >| src/one/clobber.txt",
+            "echo ok 2>&1",
+            "curl --libcurl src/one/repro.c https://example.invalid",
+            "curl --stderr src/one/curl.log https://example.invalid",
+            "curl --ssl-sessions src/one/sessions https://example.invalid",
+            "cd src/one && touch ok",
+            "git -c color.ui=never diff --stat",
+            "LC_ALL=C grep Agent README.md",
+            "tar -tf archive.tar",
+            "sort src/one/input",
+        )
+        for command in allowed_commands:
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', decision.stdout, command)
+
+    def test_structured_mutation_tools_are_path_checked_or_fail_closed(self):
+        self.start("one", "T-115", "src/one/")
+        self.start("two", "T-116", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        blocked_payloads = (
+            {"tool_name": "NotebookEdit", "tool_input": {
+                "notebook_path": "src/two/work.ipynb"}},
+            {"tool_name": "StrReplace", "tool_input": {
+                "file_path": "src/two/file.py"}},
+            {"tool_name": "Save", "tool_input": {"path": "src/two/file.py"}},
+            {"tool_name": "mcp__filesystem__write_file", "tool_input": {
+                "path": "src/two/file.py", "content": "x"}},
+            {"tool_name": "mcp__filesystem__move_file", "tool_input": {
+                "source": "src/one/a", "destination": "src/two/a"}},
+            {"tool_name": "apply_patch", "tool_input": {"patch": (
+                "*** Begin Patch\n*** Update File: src/one/a\n"
+                "*** Move to: src/two/a\n@@\n-x\n+y\n*** End Patch"
+            )}},
+            {"tool_name": "Task", "tool_input": {"prompt": "edit the repo"}},
+            {"tool_name": "unknown_mutator", "tool_input": {}},
+            {"tool_name": "get_and_delete", "tool_input": {}},
+        )
+        for payload in blocked_payloads:
+            decision = self.hook("pre-tool-use", payload, session="one")
+            self.assertTrue(decision.stdout.strip(), payload)
+            self.assertEqual(
+                json.loads(decision.stdout).get("decision"), "block", payload,
+            )
+
+        allowed_payloads = (
+            {"tool_name": "NotebookEdit", "tool_input": {
+                "notebook_path": "src/one/work.ipynb"}},
+            {"tool_name": "mcp__filesystem__write_file", "tool_input": {
+                "path": "src/one/file.py", "content": "x"}},
+            {"tool_name": "Read", "tool_input": {"file_path": "src/two/file.py"}},
+            {"tool_name": "mcp__filesystem__read_file", "tool_input": {
+                "path": "src/two/file.py"}},
+            {"tool_name": "update_plan", "tool_input": {"plan": []}},
+        )
+        for payload in allowed_payloads:
+            decision = self.hook("pre-tool-use", payload, session="one")
+            self.assertNotIn('"decision": "block"', decision.stdout, payload)
 
     def test_git_ref_and_config_mutations_are_not_read_only(self):
         """Audit repro: fetch, reflog expire, and branch config are writes."""
@@ -1354,6 +2359,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             "ln -s ../../etc/passwd src/one/pw",
             "ln -sf ../two/data.txt src/one/alias",
             "ln src/two/real src/one/hardlink",
+            "cd src/one && ln ../two/real",
         ):
             decision = self.hook(
                 "pre-tool-use",

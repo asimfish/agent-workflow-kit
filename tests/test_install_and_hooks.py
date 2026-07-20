@@ -257,6 +257,26 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         )
         self.assertIn("already been completed", json.loads(after_finish.stdout)["reason"])
 
+    def test_shipped_provider_hooks_cover_all_tools_mcp_and_clear(self):
+        self.init()
+        codex = json.loads((self.root / ".codex/hooks.json").read_text(encoding="utf-8"))
+        claude = json.loads((self.root / ".claude/settings.json").read_text(encoding="utf-8"))
+        cursor = json.loads((self.root / ".cursor/hooks.json").read_text(encoding="utf-8"))
+
+        for config in (codex, claude):
+            self.assertEqual(
+                config["hooks"]["SessionStart"][-1]["matcher"],
+                "startup|resume|clear|compact",
+            )
+            self.assertEqual(config["hooks"]["PreToolUse"][-1]["matcher"], "*")
+
+        cursor_pre = cursor["hooks"]["preToolUse"][-1]
+        self.assertNotIn("matcher", cursor_pre)
+        self.assertTrue(cursor_pre["failClosed"])
+        cursor_mcp = cursor["hooks"]["beforeMCPExecution"][-1]
+        self.assertEqual(cursor_mcp["timeout"], 30)
+        self.assertTrue(cursor_mcp["failClosed"])
+
 
 class IndependentGateRegressionTest(unittest.TestCase):
     def setUp(self):
@@ -343,6 +363,8 @@ class IndependentGateRegressionTest(unittest.TestCase):
         gate = (self.root / ".agent" / "gates" / "T-101.md").read_text(encoding="utf-8")
         self.assertIn("Reviewer task: T-102", gate)
         self.assertIn("Reviewer runtime: host-runtime:", gate)
+        self.assertIn("- Note: none\n", gate)
+        self.assertNotRegex(gate, r" +$")
         self.agentctl(
             "check", "--mode", "manual", runtime="reviewer-runtime",
             workflow_session="reviewer-session",

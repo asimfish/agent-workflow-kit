@@ -50,6 +50,11 @@ project content is preserved. Project-owned `.agent/` plans, tasks, rules, and
 runtime history are seeded only when absent. Re-running `init` is idempotent and
 upgrades unchanged kit-managed tools using `.agent/install-manifest.json`.
 
+On the first clone/install or after a managed hook upgrade, review and trust the
+project hooks if the client asks. In Codex, inspect `/hooks`; in Claude Code or
+Cursor, accept the project configuration prompt, then reopen the conversation
+once so `SessionStart` runs. The repository cannot approve its own hooks.
+
 If a managed tool or workflow file was edited locally, installation stops before
 making partial changes. Inspect the diff first, then explicitly replace only the
 kit-managed files when appropriate:
@@ -182,6 +187,20 @@ under the Git common directory. Hooks aggregate that state into the local
 gitignored file `.agent/state/SESSIONS.md`, show it at session start, and refresh
 it during work.
 
+Some nested CLIs expose their conversation ID only in hook payloads and do not
+export it to later shell subprocesses. `SessionStart` normally exports the
+provider identity. If that export is absent, the first `agentctl work` hook
+atomically binds the hashed payload identity to the hashed host runtime in
+checkout-local Git-common-dir state. Only that provider conversation may reuse
+the runtime-owned task; a second payload on the same pending or active runtime
+and checkout fails closed. Independent worktrees use distinct binding keys. Raw
+provider IDs and checkout paths are not written to the binding record. If the
+actual agent shell adds a provider ID that the hook process cannot see, the
+unbound record checks a bounded set of supported provider environments. Exactly
+one active session is pinned by its anonymous workflow key; multiple matches
+fail closed instead of selecting one. Once pinned, later hooks reuse that key
+without repeating candidate discovery.
+
 Forked or cloned conversations are isolated as separate runtime instances. A
 persisted workflow ID is bound to the host runtime that created it, so a child
 that inherits the parent's environment cannot use that stale ID to resume the
@@ -204,14 +223,27 @@ The coordination policy is deliberately small:
   are exclusive per checkout too. Beside another live session they are refused
   outright and pointed at a task worktree; alone, they require an active task
   session, and the working tree is reconciled after every mutating action.
-  Only an explicit read-only allowlist (`ls`, `cat`, `grep`, `rg`, `git`
-  reads, `sed`/`awk`/`perl` filters without in-place flags, and similar)
-  passes without a claim.
+  Only explicit, argument-verified read forms (`ls`, `cat`, plain `rg`/`fd`,
+  safe Git/GitHub reads, print-only `sed`, and similar) pass without a claim.
+  Tool names alone are never sufficient: Git `--output`, `find`/`tree` output
+  actions, `xxd` output operands, search-tool exec/preprocessors, and GNU
+  target-directory forms are path-checked or fail closed. Shell variable/brace
+  expansion and cwd-changing `env` wrappers are opaque; moves claim every
+  mutated operand, while programmable in-place edits and curl/Git/GitHub
+  output or execution options cannot inherit a read-only verdict.
+- Native write/edit/notebook/filesystem-MCP tools are checked by every concrete
+  source and destination path. A mutating tool with no bounded path contract,
+  including an unknown tool or delegated sub-agent action, is opaque and needs
+  an exclusive checkout. Read/search/plan tools remain usable beside peers.
 - A missing heartbeat marks a session stale but does not discard its claim.
   After inspection, an agent can explicitly release it and resume the existing
   task; task docs and working files are preserved.
 - Task/plan/log transitions are serialized with an OS advisory lock, and each
   session writes only its own atomically replaced JSON record.
+
+These hooks are coordination guardrails, not an OS sandbox. Commands with hidden
+or complex side effects belong in a managed worktree; untrusted code additionally
+needs an external sandbox appropriate to the project.
 
 Document ownership is enforced on top of scopes:
 
@@ -251,6 +283,14 @@ writes the source clone's live session records even when both processes expose
 the same host session ID. Committed plan/task files are only a snapshot across
 independent clones; use normal fetch/branch/PR integration to exchange later
 decisions. Live cross-clone coordination is intentionally not inferred.
+
+Default `work --auto-create` task IDs are also clone- and conversation-safe.
+They use `T<checkout/session shard>-NNN`; the checkout namespace is private
+local Git state and is not committed, while each conversation advances its own
+sequence. Thus branches created from the same board snapshot do not reuse the
+same automatic ID. Explicit `--new-id T-123` values remain supported and remain
+the caller's responsibility. Aggregate plan and board snapshots can still need
+ordinary Git conflict resolution when independent branches both update them.
 
 Committed `.agent` plans and task docs remain the durable memory. The generated
 session view is only live coordination, avoiding constant Git conflicts in a
@@ -561,6 +601,12 @@ uncommitted task documents, dirty baselines, duplicate task/agent leases,
 existing branches, paths overlapping another checkout, and any scope overlap
 with a nonreleased lease, including leases using the same agent name. A managed
 worker cannot override its leased task, agent, or scope during startup.
+
+Allocate the lease before the worker starts the execution phase. If an opaque
+command is denied in an already-active shared checkout, the guard does not
+pretend it can move uncommitted work automatically: wait for the peer sessions
+to finish/release, or create a new committed `todo`/`ready` phase and allocate
+that phase from a clean planning checkout.
 
 After the worker commits or removes all changes, run release from another
 worktree:
