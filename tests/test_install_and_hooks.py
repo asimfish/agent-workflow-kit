@@ -161,6 +161,40 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         self.init()
         self.agentctl("doctor")
 
+    def test_init_warns_before_overriding_existing_git_hooks(self):
+        """init repoints core.hooksPath to .githooks; it must not do so silently
+        when the project already has hooks, or its own pre-commit/lint/tests
+        stop firing without notice."""
+        # Case A: existing custom hooksPath (husky-style).
+        (self.root / ".husky").mkdir()
+        (self.root / ".husky" / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        subprocess.run(["git", "config", "core.hooksPath", ".husky"],
+                       cwd=self.root, check=True, timeout=60)
+        proc = self.init()
+        out = proc.stdout + proc.stderr
+        self.assertIn(".husky", out, out)
+        self.assertTrue(
+            "hooks" in out.lower() and ("warn" in out.lower() or "replac" in out.lower()
+                                        or "overrid" in out.lower() or "no longer" in out.lower()),
+            f"no warning about replacing an existing hooksPath:\n{out}",
+        )
+
+    def test_init_warns_about_default_git_hooks_being_bypassed(self):
+        hooks = subprocess.run(
+            ["git", "rev-parse", "--git-path", "hooks"], cwd=self.root,
+            text=True, capture_output=True, timeout=60).stdout.strip()
+        hp = self.root / hooks
+        hp.mkdir(parents=True, exist_ok=True)
+        (hp / "pre-commit").write_text("#!/bin/sh\nexit 0\n")
+        (hp / "pre-commit").chmod(0o755)
+        proc = self.init()
+        out = proc.stdout + proc.stderr
+        self.assertTrue(
+            "pre-commit" in out.lower() and ("warn" in out.lower() or "bypass" in out.lower()
+                                             or "no longer" in out.lower()),
+            f"no warning that the default .git/hooks/pre-commit will be bypassed:\n{out}",
+        )
+
     def test_unknown_managed_file_conflict_does_not_partially_install(self):
         path = self.root / ".github" / "workflows" / "agent-workflow-check.yml"
         path.parent.mkdir(parents=True)

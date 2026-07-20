@@ -98,6 +98,21 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "codex-gpt55-final-reviewer": {
+      "role": "independent review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [
+        "agentctl gate",
+        "agentctl note",
+        "agentctl finish"
+      ],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

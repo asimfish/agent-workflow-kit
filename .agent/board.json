@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 16:04:51",
+  "updated_at": "2026-07-20 16:47:59",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1423,6 +1423,58 @@
       "created_at": "2026-07-20 14:41:30",
       "updated_at": "2026-07-20 14:43:57"
     },
+    "T-100": {
+      "title": "refuse eval run against a checkout with a live peer session",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:49:01",
+      "updated_at": "2026-07-20 15:03:59"
+    },
+    "T-101": {
+      "title": "independently review T-100 eval target isolation",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:03:27",
+      "updated_at": "2026-07-20 15:03:59"
+    },
+    "T-102": {
+      "title": "warn instead of silently overriding existing git hooks on init",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:11:48",
+      "updated_at": "2026-07-20 15:28:52"
+    },
+    "T-103": {
+      "title": "independently review T-102 hook override warnings",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:27:47",
+      "updated_at": "2026-07-20 15:28:52"
+    },
     "T-083": {
       "title": "close independent review isolation gaps",
       "status": "done",
@@ -1659,7 +1711,7 @@
     },
     "T17F063E6115138DE-008": {
       "title": "integrate final main advances for concurrent release",
-      "status": "in_progress",
+      "status": "done",
       "owner": "codex",
       "scope": [
         ".agent/",
@@ -1677,7 +1729,18 @@
       ],
       "deps": [],
       "created_at": "2026-07-20 16:04:13",
-      "updated_at": "2026-07-20 16:04:51"
+      "updated_at": "2026-07-20 16:47:23"
+    },
+    "T3B43382C2174B290-001": {
+      "title": "review final main advance integration",
+      "status": "review",
+      "owner": "codex-gpt55-final-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 16:30:27",
+      "updated_at": "2026-07-20 16:47:59"
     }
   }
 }

@@ -105,6 +105,10 @@
 | T-097 | review | supervisor | `.agent/` | [.agent/tasks/T-097.md](tasks/T-097.md) | independently review T-096 worktree escape hatch |
 | T-098 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-098.md](tasks/T-098.md) | enforce scope on loop check commands |
 | T-099 | review | supervisor | `.agent/` | [.agent/tasks/T-099.md](tasks/T-099.md) | independently review T-098 loop command scope guard |
+| T-100 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-100.md](tasks/T-100.md) | refuse eval run against a checkout with a live peer session |
+| T-101 | review | supervisor | `.agent/` | [.agent/tasks/T-101.md](tasks/T-101.md) | independently review T-100 eval target isolation |
+| T-102 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-102.md](tasks/T-102.md) | warn instead of silently overriding existing git hooks on init |
+| T-103 | review | supervisor | `.agent/` | [.agent/tasks/T-103.md](tasks/T-103.md) | independently review T-102 hook override warnings |
 | T-083 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-083.md](tasks/T-083.md) | close independent review isolation gaps |
 | T-084 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-084.md](tasks/T-084.md) | independently review T-082 review record and T-083 isolation fixes (PR #17) |
 | T-085 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-085.md](tasks/T-085.md) | review T-081 resubmission and T-083/T-084 evidence |
@@ -121,4 +125,5 @@
 | T17F063E6115138DE-006 | done | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-006.md](tasks/T17F063E6115138DE-006.md) | integrate concurrent main advances without history loss |
 | TA74E81A93FF7EB9D-001 | review | claude-sonnet-merge-reviewer | `.agent/` | [.agent/tasks/TA74E81A93FF7EB9D-001.md](tasks/TA74E81A93FF7EB9D-001.md) | review concurrent main integration and collision migration |
 | T17F063E6115138DE-007 | review | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-007.md](tasks/T17F063E6115138DE-007.md) | release approved concurrent main integration |
-| T17F063E6115138DE-008 | in_progress | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/, integrations/` | [.agent/tasks/T17F063E6115138DE-008.md](tasks/T17F063E6115138DE-008.md) | integrate final main advances for concurrent release |
+| T17F063E6115138DE-008 | done | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/, integrations/` | [.agent/tasks/T17F063E6115138DE-008.md](tasks/T17F063E6115138DE-008.md) | integrate final main advances for concurrent release |
+| T3B43382C2174B290-001 | review | codex-gpt55-final-reviewer | `.agent/` | [.agent/tasks/T3B43382C2174B290-001.md](tasks/T3B43382C2174B290-001.md) | review final main advance integration |

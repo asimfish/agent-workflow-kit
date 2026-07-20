@@ -36,7 +36,12 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] T17F063E6115138DE-008 - integrate final main advances for concurrent release (owner: codex)
+- [ ] T3B43382C2174B290-001 - review final main advance integration (owner: codex-gpt55-final-reviewer)
+- [x] T17F063E6115138DE-008 - integrate final main advances for concurrent release (owner: codex)
+- [ ] T-103 - independently review T-102 hook override warnings (owner: supervisor)
+- [x] T-102 - warn instead of silently overriding existing git hooks on init (owner: cursor)
+- [ ] T-101 - independently review T-100 eval target isolation (owner: supervisor)
+- [x] T-100 - refuse eval run against a checkout with a live peer session (owner: cursor)
 - [ ] T17F063E6115138DE-007 - release approved concurrent main integration (owner: codex)
 - [ ] TA74E81A93FF7EB9D-001 - review concurrent main integration and collision migration (owner: claude-sonnet-merge-reviewer)
 - [x] T17F063E6115138DE-006 - integrate concurrent main advances without history loss (owner: codex)

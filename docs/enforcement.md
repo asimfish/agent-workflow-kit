@@ -136,6 +136,11 @@ deletion, forced or deleting pushes, and `worktree remove/move/prune` —
 require that no other conversation is live in ANY checkout of the
 repository, not just the current one.
 
+The evaluation harness is isolated too: `eval run` executes each case's argv
+in `cwd=target`, so it refuses a target checkout that has a live peer session
+(the cases could clobber that peer) and must be pointed at an isolated
+baseline/candidate clone or worktree instead.
+
 A loop's declared Check command is classified and scope-checked with the same
 rules before it runs: `loop run/auto/cycle` execute an arbitrary shell command
 outside the PreToolUse tool guard, so with a live peer sharing the checkout a
@@ -238,7 +243,7 @@ debugging and scripted migrations.
 
 ## Layer 2: Local Git Hooks
 
-Installed hooks live in `.githooks/`, and `init` sets `git config core.hooksPath .githooks`:
+Installed hooks live in `.githooks/`, and `init` sets `git config core.hooksPath .githooks`. Because that repoint bypasses any hooks the project already had, `init` warns (without aborting) when it would replace an existing `core.hooksPath` (e.g. husky) or bypass executable hooks in the default `.git/hooks`, so the operator can chain the old scripts from `.githooks/*` instead of losing them:
 
 - `pre-commit`: requires an active agent session and staged task/plan/log updates when code or data changes.
 - `commit-msg`: requires Conventional Commits and a task ID.

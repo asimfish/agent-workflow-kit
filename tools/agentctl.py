@@ -1721,11 +1721,41 @@ def cmd_init(args: argparse.Namespace) -> int:
     for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
         _bus_dir(root, kind).mkdir(parents=True, exist_ok=True)
     wired = False
+    hook_warnings: list[str] = []
     if (root / ".git").exists() and installed:
+        # Repointing core.hooksPath silently bypasses hooks the project already
+        # relies on (husky, pre-commit framework, or default .git/hooks). Warn
+        # so the operator can chain them into .githooks instead of losing them.
+        prior_hooks_path = _git(root, "config", "--get", "core.hooksPath").strip()
+        if prior_hooks_path and prior_hooks_path != ".githooks":
+            hook_warnings.append(
+                f"core.hooksPath was '{prior_hooks_path}' and is being repointed to "
+                "'.githooks'; hooks under the old path will no longer run. Chain "
+                "them from .githooks/* (call the old scripts at the end) if you "
+                "still need them."
+            )
+        elif not prior_hooks_path:
+            default_hooks = _git_common_dir(root)
+            hooks_dir = (default_hooks / "hooks") if default_hooks else (root / ".git" / "hooks")
+            existing = []
+            if hooks_dir.is_dir():
+                existing = [
+                    h.name for h in sorted(hooks_dir.iterdir())
+                    if h.is_file() and os.access(h, os.X_OK)
+                    and not h.name.endswith(".sample")
+                ]
+            if existing:
+                hook_warnings.append(
+                    "existing default git hooks will be bypassed once core.hooksPath "
+                    f"points to '.githooks': {', '.join(existing)}. Move or chain them "
+                    "into .githooks/* to keep them running."
+                )
         _git(root, "config", "core.hooksPath", ".githooks")
         wired = True
     print(f"agentctl: initialized workflow ({copied} project seed files, {len(writes)} managed writes) at {root}")
     print(f"agentctl: distributed agentctl.py + {len(installed)} git hooks into .githooks/")
+    for warning in hook_warnings:
+        print(f"agentctl: WARNING {warning}", file=sys.stderr)
     if wired:
         print("agentctl: git core.hooksPath -> .githooks")
     elif installed:
@@ -4747,6 +4777,27 @@ def _eval_run(root: Path, args: argparse.Namespace) -> int:
         target = Path(args.target or root).expanduser().resolve()
         if not target.is_dir():
             raise ValueError(f"eval target is not a directory: {target}")
+        # Eval cases run arbitrary argv in cwd=target and can write anywhere in
+        # it. If another conversation is live in the target checkout, that is a
+        # cross-session clobber channel, so refuse and require an isolated
+        # baseline/candidate clone or worktree.
+        current_key = _workflow_session_key()
+        peers = [
+            row for row in _session_rows_unlocked(target)
+            if _same_checkout(target, row)
+            and row.get("workflow_session_key") != current_key
+            and row.get("observed_status") in {"active", "stale"}
+        ]
+        if peers:
+            owners = ", ".join(
+                f"{row.get('workflow_session_key')}:{row.get('task')}" for row in peers
+            )
+            raise ValueError(
+                "eval target has a live session and eval cases run arbitrary "
+                f"commands there; refusing to clobber peers: {owners}. Run eval "
+                "against an isolated baseline/candidate clone or worktree, not a "
+                "shared live checkout."
+            )
         policy_commit, policy_dirty = _eval_git_snapshot(root)
         target_commit, target_dirty = _eval_git_snapshot(target)
     except ValueError as exc:
