@@ -140,6 +140,30 @@ class HarnessEvaluationRegressionTest(unittest.TestCase):
         )
         return json.loads(proc.stdout)
 
+    def test_eval_run_refuses_a_target_with_a_live_peer_session(self):
+        """eval cases run arbitrary argv in cwd=target; running against a
+        checkout where another session is live could clobber that peer's
+        files, so it must be refused and pointed at an isolated clone."""
+        # Two live sessions in the policy checkout itself.
+        env_a = os.environ.copy(); env_a["AGENT_WORKFLOW_SESSION_ID"] = "eval-a"
+        env_b = os.environ.copy(); env_b["AGENT_WORKFLOW_SESSION_ID"] = "eval-b"
+        self.agentctl("work", "--agent", "codex", "--auto-create", "--new-id",
+                      "T-EA", "--title", "a", "--scope", "src/one/", env=env_a, expect=0)
+        self.agentctl("work", "--agent", "cursor", "--auto-create", "--new-id",
+                      "T-EB", "--title", "b", "--scope", "src/two/", env=env_b, expect=0)
+        # Session A tries to run eval against the shared checkout (peer B live).
+        blocked = self.agentctl(
+            "eval", "run", "research-quality", "--target", str(self.root),
+            "--json", env=env_a,
+        )
+        self.assertEqual(blocked.returncode, 2, blocked.stdout + blocked.stderr)
+        self.assertIn("live session", (blocked.stdout + blocked.stderr).lower())
+        # Against an isolated clone (no live session) it still works.
+        target = self.clone_target("iso-candidate")
+        self.set_target_state(target, marker="iso")
+        report = self.run_eval(target, expect=0)
+        self.assertEqual(report["status"], "passed")
+
     def test_split_non_regression_gate_accepts_and_rejects_candidates(self):
         listed = json.loads(self.agentctl("eval", "list", "--json", expect=0).stdout)
         self.assertEqual(listed["suites"][0]["id"], "research-quality")

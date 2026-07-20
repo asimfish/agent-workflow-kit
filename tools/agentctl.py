@@ -4704,6 +4704,27 @@ def _eval_run(root: Path, args: argparse.Namespace) -> int:
         target = Path(args.target or root).expanduser().resolve()
         if not target.is_dir():
             raise ValueError(f"eval target is not a directory: {target}")
+        # Eval cases run arbitrary argv in cwd=target and can write anywhere in
+        # it. If another conversation is live in the target checkout, that is a
+        # cross-session clobber channel, so refuse and require an isolated
+        # baseline/candidate clone or worktree.
+        current_key = _workflow_session_key()
+        peers = [
+            row for row in _session_rows_unlocked(target)
+            if _same_checkout(target, row)
+            and row.get("workflow_session_key") != current_key
+            and row.get("observed_status") in {"active", "stale"}
+        ]
+        if peers:
+            owners = ", ".join(
+                f"{row.get('workflow_session_key')}:{row.get('task')}" for row in peers
+            )
+            raise ValueError(
+                "eval target has a live session and eval cases run arbitrary "
+                f"commands there; refusing to clobber peers: {owners}. Run eval "
+                "against an isolated baseline/candidate clone or worktree, not a "
+                "shared live checkout."
+            )
         policy_commit, policy_dirty = _eval_git_snapshot(root)
         target_commit, target_dirty = _eval_git_snapshot(target)
     except ValueError as exc:

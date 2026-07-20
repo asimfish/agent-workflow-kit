@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-101 - independently review T-100 eval target isolation (owner: supervisor)
+- [x] T-100 - refuse eval run against a checkout with a live peer session (owner: cursor)
 - [ ] T-099 - independently review T-098 loop command scope guard (owner: supervisor)
 - [x] T-098 - enforce scope on loop check commands (owner: cursor)
 - [ ] T-097 - independently review T-096 worktree escape hatch (owner: supervisor)
