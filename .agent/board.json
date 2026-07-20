@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 14:43:57",
+  "updated_at": "2026-07-20 15:03:59",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1422,6 +1422,32 @@
       "deps": [],
       "created_at": "2026-07-20 14:41:30",
       "updated_at": "2026-07-20 14:43:57"
+    },
+    "T-100": {
+      "title": "refuse eval run against a checkout with a live peer session",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:49:01",
+      "updated_at": "2026-07-20 15:03:59"
+    },
+    "T-101": {
+      "title": "independently review T-100 eval target isolation",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:03:27",
+      "updated_at": "2026-07-20 15:03:59"
     }
   }
 }

@@ -105,3 +105,5 @@
 | T-097 | review | supervisor | `.agent/` | [.agent/tasks/T-097.md](tasks/T-097.md) | independently review T-096 worktree escape hatch |
 | T-098 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-098.md](tasks/T-098.md) | enforce scope on loop check commands |
 | T-099 | review | supervisor | `.agent/` | [.agent/tasks/T-099.md](tasks/T-099.md) | independently review T-098 loop command scope guard |
+| T-100 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-100.md](tasks/T-100.md) | refuse eval run against a checkout with a live peer session |
+| T-101 | review | supervisor | `.agent/` | [.agent/tasks/T-101.md](tasks/T-101.md) | independently review T-100 eval target isolation |

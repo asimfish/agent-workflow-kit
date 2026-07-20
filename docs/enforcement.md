@@ -104,6 +104,11 @@ deletion, forced or deleting pushes, and `worktree remove/move/prune` —
 require that no other conversation is live in ANY checkout of the
 repository, not just the current one.
 
+The evaluation harness is isolated too: `eval run` executes each case's argv
+in `cwd=target`, so it refuses a target checkout that has a live peer session
+(the cases could clobber that peer) and must be pointed at an isolated
+baseline/candidate clone or worktree instead.
+
 A loop's declared Check command is classified and scope-checked with the same
 rules before it runs: `loop run/auto/cycle` execute an arbitrary shell command
 outside the PreToolUse tool guard, so with a live peer sharing the checkout a
