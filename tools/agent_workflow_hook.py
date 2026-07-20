@@ -927,6 +927,38 @@ _GIT_BRANCH_READ_FLAGS = re.compile(
 _GIT_VALUE_FLAGS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                     "--exec-path"}
 _GIT_EMBEDDED_EXEC_FLAGS = {"--ext-diff", "--textconv", "--filters"}
+_GIT_CONFIG_READ_ACTIONS = {"get", "list", "get-color", "get-colorbool"}
+_GIT_CONFIG_WRITE_ACTIONS = {
+    "set", "unset", "rename-section", "remove-section", "edit",
+}
+_GIT_CONFIG_READ_FLAGS = {
+    "--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l",
+    "--get-color", "--get-colorbool",
+}
+_GIT_CONFIG_WRITE_FLAGS = {
+    "--add", "--replace-all", "--unset", "--unset-all", "--rename-section",
+    "--remove-section", "--edit", "-e", "--set",
+}
+_GIT_CONFIG_VALUE_FLAGS = {"--file", "-f", "--blob", "--type", "--default"}
+_GIT_CONFIG_NEUTRAL_FLAGS = {
+    "--local", "--global", "--system", "--worktree", "--includes",
+    "--no-includes", "--null", "-z", "--name-only", "--show-origin",
+    "--show-scope", "--bool", "--int", "--bool-or-int", "--bool-or-str",
+    "--path", "--expiry-date", "--color",
+}
+_SUDO_VALUE_LONG_FLAGS = {
+    "--chdir", "--chroot", "--close-from", "--command-timeout", "--group",
+    "--host", "--other-user", "--prompt", "--role", "--type", "--user",
+}
+_SUDO_VALUE_SHORT_FLAGS = set("CDghpRTUuacrt")
+_ENV_VALUE_FLAGS = {"-u", "--unset", "-C", "--chdir", "-P"}
+_ENV_SPLIT_FLAGS = {"-S", "--split-string"}
+_ENV_BOOLEAN_FLAGS = {
+    "-i", "--ignore-environment", "-0", "--null", "-v", "--debug",
+    "--block-signal", "--default-signal", "--ignore-signal",
+    "--list-signal-handling",
+}
+_SHELL_COMMAND_EXECUTABLES = {"bash", "sh", "zsh", "dash", "ksh"}
 _GH_GLOBAL_VALUE_FLAGS = {"-R", "--repo", "--hostname"}
 _GH_READ_ACTIONS = {
     ("auth", "status"),
@@ -1288,6 +1320,94 @@ def _gh_segment_read_only(tokens: list[str]) -> bool:
     return len(words) >= 2 and (words[0], words[1]) in _GH_READ_ACTIONS
 
 
+def _git_config_read_only(tail: list[str]) -> bool:
+    """Recognize explicit reads and the legacy `config <name>` query form."""
+    if not tail:
+        return False
+    if tail[0] in _GIT_CONFIG_WRITE_ACTIONS:
+        return False
+    if tail[0] in _GIT_CONFIG_READ_ACTIONS:
+        return True
+    if any(item in _GIT_CONFIG_WRITE_FLAGS for item in tail):
+        return False
+    if any(item in _GIT_CONFIG_READ_FLAGS for item in tail):
+        return True
+
+    operands = []
+    index = 0
+    positional_only = False
+    while index < len(tail):
+        item = tail[index]
+        if positional_only:
+            operands.append(item)
+        elif item == "--":
+            positional_only = True
+        elif item in _GIT_CONFIG_VALUE_FLAGS:
+            if index + 1 >= len(tail):
+                return False
+            index += 1
+        elif any(item.startswith(flag + "=") for flag in _GIT_CONFIG_VALUE_FLAGS
+                 if flag.startswith("--")):
+            pass
+        elif item in _GIT_CONFIG_NEUTRAL_FLAGS:
+            pass
+        elif item.startswith("-"):
+            return False
+        else:
+            operands.append(item)
+        index += 1
+    return len(operands) == 1
+
+
+def _git_notes_read_only(tail: list[str]) -> bool:
+    rest = list(tail)
+    while rest and (
+            rest[0] in {"--ref", "--no-ref"}
+            or rest[0].startswith("--ref=")):
+        if rest[0] == "--ref":
+            if len(rest) < 2:
+                return False
+            rest = rest[2:]
+        else:
+            rest = rest[1:]
+    if not rest:
+        return True
+    if rest[0] in {"-h", "--help"}:
+        return True
+    return rest[0] in {"list", "show", "get-ref"}
+
+
+def _git_replace_read_only(tail: list[str]) -> bool:
+    mutating = {
+        "-d", "--delete", "-e", "--edit", "-f", "--force", "-g", "--graft",
+        "--convert-graft-file", "--raw",
+    }
+    if any(item in mutating for item in tail):
+        return False
+    positional = []
+    list_mode = False
+    index = 0
+    while index < len(tail):
+        item = tail[index]
+        if item == "--":
+            positional.extend(tail[index + 1:])
+            break
+        if item in {"-l", "--list"}:
+            list_mode = True
+        elif item == "--format":
+            if index + 1 >= len(tail):
+                return False
+            index += 1
+        elif item.startswith("--format=") or item in {"-h", "--help"}:
+            pass
+        elif item.startswith("-"):
+            return False
+        else:
+            positional.append(item)
+        index += 1
+    return not positional or (list_mode and len(positional) == 1)
+
+
 def _git_segment_read_only(tokens: list[str]) -> bool:
     sub, tail = _git_segment_details(tokens)
     if not sub:
@@ -1309,12 +1429,15 @@ def _git_segment_read_only(tokens: list[str]) -> bool:
     if sub == "reflog":
         return not tail or tail[0] in {"show"} or tail[0].startswith("-")
     if sub == "config":
-        return any(item in {"--get", "--get-all", "--get-regexp", "--list", "-l"}
-                   for item in tail)
+        return _git_config_read_only(tail)
     if sub == "tag":
         return not positional or any(item in {"-l", "--list"} for item in tail)
     if sub == "stash":
-        return bool(tail) and tail[0] in {"list", "show"}
+        return bool(tail) and tail[0] in {"list", "show", "-h", "--help"}
+    if sub == "notes":
+        return _git_notes_read_only(tail)
+    if sub == "replace":
+        return _git_replace_read_only(tail)
     if sub == "remote":
         return not tail or tail[0] in {"-v", "show", "get-url"}
     if sub == "worktree":
@@ -1595,6 +1718,13 @@ def _git_segment_shared_mutation(tokens: list[str]) -> bool:
         return bool(short_flags & {"d", "f"}) or any(
             item in {"--delete", "--force"} for item in flags
         )
+    if sub == "stash":
+        if _git_segment_read_only(tokens):
+            return False
+        action = tail[0] if tail else "push"
+        return action not in {"apply", "create"}
+    if sub in {"notes", "replace"}:
+        return not _git_segment_read_only(tokens)
     if sub == "push":
         destructive_refspec = any(item.startswith(":") for item in tail)
         force_refspec = any(item.startswith("+") and len(item) > 1 for item in tail)
@@ -1610,10 +1740,134 @@ def _git_segment_shared_mutation(tokens: list[str]) -> bool:
     return sub in {"gc", "prune", "update-ref", "pack-refs", "filter-branch"}
 
 
+def _sudo_wrapped_command(tokens: list[str]) -> list[str]:
+    rest = list(tokens[1:])
+    index = 0
+    while index < len(rest):
+        item = rest[index]
+        if item == "--":
+            return rest[index + 1:]
+        if _environment_assignment(item):
+            index += 1
+            continue
+        if not item.startswith("-") or item == "-":
+            return rest[index:]
+        if item in _SUDO_VALUE_LONG_FLAGS:
+            if index + 1 >= len(rest):
+                return []
+            index += 2
+            continue
+        if any(item.startswith(flag + "=") for flag in _SUDO_VALUE_LONG_FLAGS):
+            index += 1
+            continue
+        if item.startswith("--"):
+            index += 1
+            continue
+        short = item[1:]
+        value_at = next(
+            (offset for offset, flag in enumerate(short)
+             if flag in _SUDO_VALUE_SHORT_FLAGS),
+            None,
+        )
+        if value_at is not None and value_at == len(short) - 1:
+            if index + 1 >= len(rest):
+                return []
+            index += 2
+        else:
+            index += 1
+    return []
+
+
+def _env_wrapped_command(tokens: list[str]) -> list[str]:
+    rest = list(tokens[1:])
+    index = 0
+    while index < len(rest):
+        item = rest[index]
+        if item == "--":
+            return rest[index + 1:]
+        if _environment_assignment(item):
+            index += 1
+            continue
+        if not item.startswith("-") or item == "-":
+            return rest[index:]
+        if item in _ENV_VALUE_FLAGS:
+            if index + 1 >= len(rest):
+                return []
+            index += 2
+            continue
+        if any(item.startswith(flag + "=") for flag in _ENV_VALUE_FLAGS
+               if flag.startswith("--")):
+            index += 1
+            continue
+        if item in _ENV_SPLIT_FLAGS:
+            if index + 1 >= len(rest):
+                return []
+            try:
+                return shlex.split(rest[index + 1]) + rest[index + 2:]
+            except ValueError:
+                return []
+        if item.startswith("--split-string="):
+            try:
+                return shlex.split(item.split("=", 1)[1]) + rest[index + 1:]
+            except ValueError:
+                return []
+        if item in _ENV_BOOLEAN_FLAGS or any(
+                item.startswith(flag + "=") for flag in _ENV_BOOLEAN_FLAGS
+                if flag.startswith("--")):
+            index += 1
+            continue
+        if len(item) > 2 and item[:2] in {"-u", "-C", "-P"}:
+            index += 1
+            continue
+        if len(item) > 2 and item[:2] == "-S":
+            try:
+                return shlex.split(item[2:]) + rest[index + 1:]
+            except ValueError:
+                return []
+        return []
+    return []
+
+
+def _tokens_git_shared_mutation(tokens: list[str], depth: int = 0) -> bool:
+    """Recover Git behind execution wrappers without trusting generic writes."""
+    if depth >= 8:
+        return False
+    command_tokens = _strip_command_prefixes(tokens)
+    if not command_tokens:
+        return False
+    executable = Path(command_tokens[0]).name
+    if executable == "git":
+        return _git_segment_shared_mutation(command_tokens)
+    if executable == "sudo":
+        nested = _sudo_wrapped_command(command_tokens)
+    elif executable == "env":
+        nested = _env_wrapped_command(command_tokens)
+    elif executable == "nohup":
+        rest = command_tokens[1:]
+        nested = rest[1:] if rest and rest[0] == "--" else rest
+        if nested and nested[0] in {"--help", "--version"}:
+            return False
+    elif executable in _SHELL_COMMAND_EXECUTABLES:
+        args = command_tokens[1:]
+        for index, item in enumerate(args):
+            shell_code = item == "-c" or (
+                item.startswith("-") and not item.startswith("--")
+                and "c" in item[1:]
+            )
+            if shell_code and index + 1 < len(args):
+                return any(
+                    _tokens_git_shared_mutation(segment, depth + 1)
+                    for segment, _connector in _shell_command_segments(args[index + 1])
+                )
+        return False
+    else:
+        return False
+    return _tokens_git_shared_mutation(nested, depth + 1)
+
+
 def command_git_shared_mutation(command: str) -> bool:
     for segment, _connector in _shell_command_segments(command):
-        tokens = _strip_command_prefixes(segment)
-        if tokens and Path(tokens[0]).name == "git" and _git_segment_shared_mutation(tokens):
+        if _tokens_git_shared_mutation(segment):
             return True
     return False
 

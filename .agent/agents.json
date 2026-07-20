@@ -67,6 +67,26 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "claude-sonnet-reviewer": {
+      "role": "independent reviewer",
+      "backend": "claude",
+      "write_scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md"
+      ],
+      "tools": [
+        "read",
+        "test",
+        "gate"
+      ],
+      "model": "claude-sonnet-4-6",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

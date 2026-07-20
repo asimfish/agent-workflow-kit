@@ -36,7 +36,11 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] T-098 - recover and complete concurrent session safeguards (owner: codex)
+- [ ] T17F063E6115138DE-002 - package and publish approved concurrent isolation release (owner: codex)
+- [ ] TA80D9103F5316278-001 - independently review residual repo-wide Git guard closure (owner: claude-sonnet-reviewer)
+- [x] T17F063E6115138DE-001 - close residual repo-wide Git guard gaps (owner: codex)
+- [ ] T622DE1DE69A1D0F8-001 - independently review T-098 concurrent isolation recovery (owner: claude-sonnet-reviewer)
+- [x] T-098 - recover and complete concurrent session safeguards (owner: codex)
 - [ ] T-096 - independently review T-095 shell parse and shared-ref fixes (owner: supervisor)
 - [x] T-095 - close newline, redirect, mv-source, and shared-ref gaps (owner: cursor)
 - [ ] T-093 - independent regate for T-088 (owner: supervisor)

@@ -106,4 +106,8 @@
 | T-093 | review | supervisor | `.agent/` | [.agent/tasks/T-093.md](tasks/T-093.md) | independent regate for T-088 |
 | T-095 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-095.md](tasks/T-095.md) | close newline, redirect, mv-source, and shared-ref gaps |
 | T-096 | review | supervisor | `.agent/` | [.agent/tasks/T-096.md](tasks/T-096.md) | independently review T-095 shell parse and shared-ref fixes |
-| T-098 | in_progress | codex | `tools/, templates/project/, tests/, docs/, README.md, .agent/` | [.agent/tasks/T-098.md](tasks/T-098.md) | recover and complete concurrent session safeguards |
+| T-098 | done | codex | `tools/, templates/project/, tests/, docs/, README.md, .agent/` | [.agent/tasks/T-098.md](tasks/T-098.md) | recover and complete concurrent session safeguards |
+| T622DE1DE69A1D0F8-001 | review | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/, docs/, README.md` | [.agent/tasks/T622DE1DE69A1D0F8-001.md](tasks/T622DE1DE69A1D0F8-001.md) | independently review T-098 concurrent isolation recovery |
+| T17F063E6115138DE-001 | done | codex | `tools/agent_workflow_hook.py, templates/project/tools/agent_workflow_hook.py, tests/test_multi_session_workflow.py` | [.agent/tasks/T17F063E6115138DE-001.md](tasks/T17F063E6115138DE-001.md) | close residual repo-wide Git guard gaps |
+| TA80D9103F5316278-001 | review | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/` | [.agent/tasks/TA80D9103F5316278-001.md](tasks/TA80D9103F5316278-001.md) | independently review residual repo-wide Git guard closure |
+| T17F063E6115138DE-002 | review | codex | `.agent/, tools/, templates/project/, tests/` | [.agent/tasks/T17F063E6115138DE-002.md](tasks/T17F063E6115138DE-002.md) | package and publish approved concurrent isolation release |

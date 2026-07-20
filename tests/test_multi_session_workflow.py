@@ -3,6 +3,7 @@
 import hashlib
 import json
 import os
+import runpy
 import shutil
 import subprocess
 import sys
@@ -1808,6 +1809,23 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             "git push origin +:wt-branch",
             "git push origin +main:main",
             "git push origin +main",
+            "git stash clear",
+            "git stash drop stash@{0}",
+            "git stash pop",
+            "git notes remove HEAD",
+            "git notes add -m note HEAD",
+            "git replace -d HEAD",
+            "git replace -f HEAD HEAD^",
+            "sudo git push --force origin main",
+            "sudo -u root git branch -D wt-branch",
+            "sudo FOO=bar git push --force origin main",
+            "nohup git tag -d v1",
+            "env FOO=bar git push -f origin main",
+            "env -C /tmp git gc",
+            "env -P /usr/bin git push -f origin main",
+            "env -S 'git push -f origin main'",
+            "sudo env FOO=bar git stash clear",
+            "sudo sh -lc 'git push --force origin main'",
         ):
             decision = self.hook(
                 "pre-tool-use",
@@ -1823,9 +1841,32 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         # repository-wide metadata and therefore stay checkout-local.
         for command in (
             "git config --get core.hooksPath",
+            "git config user.name",
+            "git config --local user.name",
+            "git config -f .git/config user.name",
+            "git config --type bool core.filemode",
+            "git config get user.name",
             "git tag --list",
+            "git stash list",
+            "git stash show",
+            "git stash apply",
+            "git stash create",
+            "git notes list",
+            "git notes show HEAD",
+            "git notes get-ref",
+            "git notes --no-ref list",
+            "git replace --list",
+            "git replace -l 'refs/*'",
+            "git replace --format short -l",
             "git push origin main",
             "git push origin main:main",
+            "sudo git status",
+            "sudo FOO=bar git status",
+            "sudo -u git echo git push --force origin main",
+            "nohup git push origin main",
+            "env FOO=bar git config user.name",
+            "env -P /usr/bin git config user.name",
+            "sudo echo git push --force origin main",
         ):
             passthrough = self.hook(
                 "pre-tool-use",
@@ -1833,6 +1874,30 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
                 session="one",
             )
             self.assertNotIn('"decision": "block"', passthrough.stdout, command)
+
+        classifier = runpy.run_path(str(self.root / "tools" / "agent_workflow_hook.py"))
+        for command in (
+            "git config user.name",
+            "git config --local user.name",
+            "git config -f .git/config user.name",
+            "git config --type bool core.filemode",
+            "git config get user.name",
+            "git notes list",
+            "git notes show HEAD",
+            "git notes get-ref",
+            "git notes --no-ref list",
+            "git replace --list",
+            "git replace --format short -l",
+        ):
+            self.assertEqual(
+                classifier["classify_shell_command"](command),
+                "read_only",
+                command,
+            )
+            self.assertFalse(
+                classifier["command_git_shared_mutation"](command),
+                command,
+            )
 
     def test_allowlisted_text_tools_cannot_write_through_options_or_dsl(self):
         """Audit repro: sort -o, awk DSL redirects, yq -i, old-style tar."""

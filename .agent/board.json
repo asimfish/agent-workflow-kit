@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 12:23:54",
+  "updated_at": "2026-07-20 13:45:55",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1434,7 +1434,7 @@
     },
     "T-098": {
       "title": "recover and complete concurrent session safeguards",
-      "status": "in_progress",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/",
@@ -1446,7 +1446,64 @@
       ],
       "deps": [],
       "created_at": "2026-07-20 11:49:43",
-      "updated_at": "2026-07-20 12:23:54"
+      "updated_at": "2026-07-20 12:51:56"
+    },
+    "T622DE1DE69A1D0F8-001": {
+      "title": "independently review T-098 concurrent isolation recovery",
+      "status": "review",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:26:27",
+      "updated_at": "2026-07-20 12:54:44"
+    },
+    "T17F063E6115138DE-001": {
+      "title": "close residual repo-wide Git guard gaps",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agent_workflow_hook.py",
+        "templates/project/tools/agent_workflow_hook.py",
+        "tests/test_multi_session_workflow.py"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:56:06",
+      "updated_at": "2026-07-20 13:42:09"
+    },
+    "TA80D9103F5316278-001": {
+      "title": "independently review residual repo-wide Git guard closure",
+      "status": "review",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:26:45",
+      "updated_at": "2026-07-20 13:42:49"
+    },
+    "T17F063E6115138DE-002": {
+      "title": "package and publish approved concurrent isolation release",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:44:50",
+      "updated_at": "2026-07-20 13:45:55"
     }
   }
 }
