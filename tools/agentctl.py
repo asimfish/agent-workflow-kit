@@ -5229,14 +5229,42 @@ def _parse_time(value: str | None) -> _dt.datetime | None:
     return None
 
 
-def _checkpoint_recent(state: dict, checkpoint: str, debounce_minutes: int) -> bool:
+def _checkpoint_input_fingerprint(root: Path) -> str:
+    """Fingerprint the coordination docs a checkpoint reconciles against.
+
+    Debounce exists to skip redundant reruns, but the loop contracts promise
+    'do not rerun ... unless the plan changed'. Hash the plan, task index, and
+    board so a genuine change bypasses the time window instead of being
+    silently suppressed.
+    """
+    h = hashlib.sha256()
+    for rel in (
+        f"{WORKFLOW_DIR}/{PLAN_FILE}",
+        f"{WORKFLOW_DIR}/{TASKS_FILE}",
+        f"{WORKFLOW_DIR}/{BOARD_FILE}",
+    ):
+        p = root / rel
+        if p.is_file():
+            h.update(rel.encode("utf-8"))
+            h.update(p.read_bytes())
+    return h.hexdigest()[:16]
+
+
+def _checkpoint_recent(state: dict, checkpoint: str, debounce_minutes: int,
+                       input_hash: str | None = None) -> bool:
     if debounce_minutes <= 0:
         return False
     entry = (state.get("checkpoints") or {}).get(checkpoint) or {}
     last = _parse_time(entry.get("last_run_at"))
     if not last:
         return False
-    return (_dt.datetime.now() - last).total_seconds() < debounce_minutes * 60
+    if (_dt.datetime.now() - last).total_seconds() >= debounce_minutes * 60:
+        return False
+    # Within the window, but a coordination-doc change bypasses debounce so a
+    # changed plan is never silently skipped (per the loop contract).
+    if input_hash is not None and entry.get("last_input_hash") != input_hash:
+        return False
+    return True
 
 
 def _acquire_lock_file(path: Path, timeout_seconds: float = 10.0, stale_seconds: float = 300.0) -> int:
@@ -6152,8 +6180,9 @@ def _run_loop_checkpoint_unlocked(root: Path, checkpoint: str, *, once: bool, tr
     loop_ids = [str(x).strip() for x in loop_ids if str(x).strip()]
     strict_effective = bool(spec.get("strict")) if strict is None else bool(strict)
     debounce = int(spec.get("debounce_minutes") or 0)
+    input_hash = _checkpoint_input_fingerprint(root)
     state = _load_json(_loop_state_path(root), {"version": 1, "loops": {}, "checkpoints": {}})
-    if _checkpoint_recent(state, checkpoint, debounce) and not force:
+    if _checkpoint_recent(state, checkpoint, debounce, input_hash) and not force:
         if not quiet:
             print(f"agentctl: loop checkpoint {checkpoint} skipped (debounced {debounce}m)")
         return 0
@@ -6194,6 +6223,7 @@ def _run_loop_checkpoint_unlocked(root: Path, checkpoint: str, *, once: bool, tr
             "last_run_at": _now(),
             "last_status": aggregate,
             "last_reports": reports,
+            "last_input_hash": input_hash,
             "strict": strict_effective,
             "trigger": trigger,
             "open_follow_up": follow_up_id if failing else None,

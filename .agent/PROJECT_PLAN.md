@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-105 - independently review T-104 change-aware debounce (owner: supervisor)
+- [x] T-104 - make checkpoint debounce change-aware per its documented contract (owner: cursor)
 - [ ] T-103 - independently review T-102 hook override warnings (owner: supervisor)
 - [x] T-102 - warn instead of silently overriding existing git hooks on init (owner: cursor)
 - [ ] T-101 - independently review T-100 eval target isolation (owner: supervisor)

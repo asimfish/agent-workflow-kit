@@ -109,3 +109,5 @@
 | T-101 | review | supervisor | `.agent/` | [.agent/tasks/T-101.md](tasks/T-101.md) | independently review T-100 eval target isolation |
 | T-102 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-102.md](tasks/T-102.md) | warn instead of silently overriding existing git hooks on init |
 | T-103 | review | supervisor | `.agent/` | [.agent/tasks/T-103.md](tasks/T-103.md) | independently review T-102 hook override warnings |
+| T-104 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-104.md](tasks/T-104.md) | make checkpoint debounce change-aware per its documented contract |
+| T-105 | review | supervisor | `.agent/` | [.agent/tasks/T-105.md](tasks/T-105.md) | independently review T-104 change-aware debounce |
