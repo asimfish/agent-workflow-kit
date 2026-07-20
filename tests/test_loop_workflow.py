@@ -482,7 +482,10 @@ import signal
 spec = importlib.util.spec_from_file_location("agentctl_launch_race", "tools/agentctl.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-module.LOOP_COMMAND_LAUNCH_TIMEOUT = 0.5
+# Wide enough that the first `loop stop` below lands INSIDE the pending
+# window even on a heavily loaded machine (0.5s starved python startup),
+# yet short enough that waiting out the deadline stays cheap.
+module.LOOP_COMMAND_LAUNCH_TIMEOUT = 8.0
 original = module._cycle_runtime_update
 
 def crash_before_pid(root, runtime_id, updater, **kwargs):
@@ -514,11 +517,18 @@ raise SystemExit(module.main([
         still_arming = self.agentctl(
             "loop", "stop", "--ack-inflight", "--reason", "launch not reconciled", expect=2)
         self.assertIn("still has a live", still_arming.stdout + still_arming.stderr)
-        time.sleep(2)
+        # Wait out the pending-launch deadline (plus its 1s tolerance).
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            reconciled = self.agentctl(
+                "loop", "stop", "--ack-inflight", "--reason",
+                "launch gate expired before command execution")
+            if reconciled.returncode == 0:
+                break
+            time.sleep(0.5)
+        else:
+            self.fail("pending launch never expired into a reconcilable state")
         self.assertFalse((self.root / "runs.txt").exists())
-        self.agentctl(
-            "loop", "stop", "--ack-inflight",
-            "--reason", "launch gate expired before command execution", expect=0)
 
         completed = self.agentctl(
             "loop", "cycle", "--checkpoint", "handshake-check", "--cycles", "1", "--force",

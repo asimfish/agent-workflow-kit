@@ -195,3 +195,5 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-20 04:02:18 [T-081] Closed self-audit gaps: newline segmentation, ampersand/noclobber redirects, mv source writes, wrapper stripping, and repo-wide exclusivity for shared-ref git mutations.
 - 2026-07-20 04:21:11 [T-081] Closed self-audit gaps: newline segmentation, ampersand/noclobber redirects, mv source writes, wrapper stripping, and repo-wide exclusivity for shared-ref git mutations.
 - 2026-07-20 06:42:24 [T-082] 24/24 probes in fresh install with real second worktree; multi-session suite rerun clean from reviewer runtime; template parity confirmed; two deflaked timings verified 3x.
+- 2026-07-20 07:17:57 [T-088] Made single-path scope membership directional and glob-aware: ancestor paths (src) and cross-scope globs (src/*) that exceed the task scope are now rejected; _scopes_overlap unchanged for symmetric disjointness.
+- 2026-07-20 12:05:56 [T-089] 14/14 probes in ChemBench-style install; ancestor-glob regression and ownership suite rerun clean from reviewer runtime.

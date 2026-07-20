@@ -1301,6 +1301,38 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertEqual(read_only.stdout, "")
 
+    def test_ancestor_and_glob_paths_that_exceed_scope_are_blocked(self):
+        """Self-audit: `rm src/*` / `rm src` must not slip past a src/one scope.
+
+        A parent directory and a glob whose expansion spans sibling scopes
+        both reach another session's files even though the literal token is
+        not itself inside the peer scope.
+        """
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for path in (
+            "src",            # parent of the scope, reaches src/two
+            "src/*",          # glob spanning src/one and src/two
+            "src/two",        # sibling scope directly
+            "src/two/*",      # glob inside the peer scope
+            "*",              # checkout-root glob
+            "src/one/../two/x",  # traversal into the peer scope
+        ):
+            blocked = self.agentctl(
+                "sessions", "guard", "--path", path, session="one", expect=1,
+            )
+            self.assertIn("scope", blocked.stderr, path)
+        # Descendants and same-directory globs of the OWN scope stay allowed.
+        for path in (
+            "src/one",
+            "src/one/nested/file.py",
+            "src/one/*",
+            "src/one/**/*.py",
+        ):
+            self.agentctl("sessions", "guard", "--path", path, session="one")
+
     def test_start_rejects_unknown_task_ids_without_registering_a_claim(self):
         unknown = self.agentctl(
             "start", "--task", "T-999", "--agent", "codex",
