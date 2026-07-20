@@ -101,3 +101,4 @@
 | T-088 | blocked | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-088.md](tasks/T-088.md) | bind late provider payload ids to bootstrap runtime sessions |
 | T-089 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-089.md](tasks/T-089.md) | independently review T-088 provider bootstrap binding |
 | T-090 | in_progress | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-090.md](tasks/T-090.md) | close T-089 hook-shell runtime fingerprint skew |
+| T-091 | review | supervisor | `.agent/` | [.agent/tasks/T-091.md](tasks/T-091.md) | real Claude runtime recovery verification |
