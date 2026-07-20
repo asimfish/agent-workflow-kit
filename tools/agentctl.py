@@ -4280,6 +4280,9 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
     print(f"  task={task} agent={agent}")
     print(f"  branch={branch}")
     print(f"  path={path}")
+    print(f"  next: cd {path} && python3 tools/agentctl.py work "
+          f"--agent {agent} --task {task}")
+    print("  then run scripts/tests there; that checkout is exclusively yours.")
     return 0
 
 
@@ -8020,9 +8023,12 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
             problems.append(
                 "this command's written paths cannot be enumerated, so it "
                 "requires exclusive use of this checkout; other live sessions: "
-                f"{owners}. Run it in a task worktree (agentctl worktree create "
-                "--task <task-id> --agent <agent-name>) or wait until the peers "
-                "finish or release."
+                f"{owners}. Run script/interpreter/test/build work in a task "
+                "worktree: create the task (leave it todo) and commit its plan "
+                "+ .agent/tasks doc, then `python3 tools/agentctl.py worktree "
+                "create --task <task-id> --agent <agent-name>`, cd into the "
+                "printed path, `work --agent <agent-name> --task <task-id>`, and "
+                "run the command there. Or wait until the peers finish/release."
             )
         claims = []
         effective_scope = _session_effective_scope(st)

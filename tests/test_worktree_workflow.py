@@ -125,6 +125,72 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             self.agentctl("worktree", "list", "--json", expect=0).stdout
         )["worktrees"][-1]
 
+    def hook(self, event, payload, cwd=None, env=None):
+        return subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", event],
+            cwd=str(cwd or self.root), env=env, input=json.dumps(payload),
+            text=True, capture_output=True, timeout=120,
+        )
+
+    def test_worktree_flow_lets_a_blocked_script_run_after_relocation(self):
+        """End-to-end escape hatch: opaque command blocked beside a peer, then
+        runnable in the leased worktree after the worker starts its task."""
+        # Peer session A holds the main checkout.
+        self.agentctl(
+            "task", "create", "--id", "T-4090", "--title", "collect 4090",
+            "--owner", "codex", "--scope", "collect/m4090/", expect=0,
+        )
+        env_a = os.environ.copy()
+        env_a["AGENT_WORKFLOW_SESSION_ID"] = "sess-a"
+        self.agentctl("work", "--agent", "codex", "--task", "T-4090", env=env_a, expect=0)
+
+        # Session B has an active planning task and is blocked from running an
+        # opaque collector in the shared checkout.
+        env_b = os.environ.copy()
+        env_b["AGENT_WORKFLOW_SESSION_ID"] = "sess-b"
+        self.agentctl(
+            "task", "create", "--id", "T-PLAN", "--title", "b planning",
+            "--owner", "cursor", "--scope", "collect/plan/", env=env_b, expect=0,
+        )
+        self.agentctl("work", "--agent", "cursor", "--task", "T-PLAN", env=env_b, expect=0)
+        blocked = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "python3 collect.py"}},
+            env=env_b,
+        )
+        self.assertEqual(json.loads(blocked.stdout).get("decision"), "block")
+        self.assertIn("worktree create", json.loads(blocked.stdout)["reason"])
+
+        # B follows the guidance: create the collection task (left todo), commit
+        # its plan, allocate a worktree, and start the task inside it.
+        self.agentctl(
+            "task", "create", "--id", "T-5090", "--title", "collect 5090",
+            "--owner", "cursor", "--scope", "collect/m5090/", env=env_b, expect=0,
+        )
+        self.commit("chore(agent): plan collectors\n\nRefs: T-5090")
+        wt = self.temp / "b-worktree"
+        created = self.agentctl(
+            "worktree", "create", "--task", "T-5090", "--agent", "cursor",
+            "--path", str(wt), env=env_b, expect=0,
+        )
+        self.assertIn("cd ", created.stdout)  # actionable next step printed
+        self.agentctl("work", "--agent", "cursor", "--task", "T-5090",
+                      cwd=wt, env=env_b, expect=0)
+
+        # In the worktree B is exclusive: the opaque collector now runs.
+        freed = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "python3 collect.py"}},
+            cwd=wt, env=env_b,
+        )
+        self.assertNotIn('"decision": "block"', freed.stdout)
+        write = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "touch collect/m5090/out.json"}},
+            cwd=wt, env=env_b,
+        )
+        self.assertNotIn('"decision": "block"', write.stdout)
+
     def test_worktree_lease_lifecycle_is_shared_and_non_destructive(self):
         self.agentctl(
             "task", "create", "--id", "T-101", "--title", "parallel worker phase",

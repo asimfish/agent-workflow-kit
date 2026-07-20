@@ -101,3 +101,5 @@
 | T-093 | review | supervisor | `.agent/` | [.agent/tasks/T-093.md](tasks/T-093.md) | independently review T-092 solo scan skip |
 | T-094 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-094.md](tasks/T-094.md) | halve read-only hook latency by removing redundant status spawn |
 | T-095 | review | supervisor | `.agent/` | [.agent/tasks/T-095.md](tasks/T-095.md) | independently review T-094 read-only hook latency |
+| T-096 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-096.md](tasks/T-096.md) | make worktree escape hatch guidance actionable end to end |
+| T-097 | review | supervisor | `.agent/` | [.agent/tasks/T-097.md](tasks/T-097.md) | independently review T-096 worktree escape hatch |
