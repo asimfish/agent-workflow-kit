@@ -1678,11 +1678,41 @@ def cmd_init(args: argparse.Namespace) -> int:
     for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
         _bus_dir(root, kind).mkdir(parents=True, exist_ok=True)
     wired = False
+    hook_warnings: list[str] = []
     if (root / ".git").exists() and installed:
+        # Repointing core.hooksPath silently bypasses hooks the project already
+        # relies on (husky, pre-commit framework, or default .git/hooks). Warn
+        # so the operator can chain them into .githooks instead of losing them.
+        prior_hooks_path = _git(root, "config", "--get", "core.hooksPath").strip()
+        if prior_hooks_path and prior_hooks_path != ".githooks":
+            hook_warnings.append(
+                f"core.hooksPath was '{prior_hooks_path}' and is being repointed to "
+                "'.githooks'; hooks under the old path will no longer run. Chain "
+                "them from .githooks/* (call the old scripts at the end) if you "
+                "still need them."
+            )
+        elif not prior_hooks_path:
+            default_hooks = _git_common_dir(root)
+            hooks_dir = (default_hooks / "hooks") if default_hooks else (root / ".git" / "hooks")
+            existing = []
+            if hooks_dir.is_dir():
+                existing = [
+                    h.name for h in sorted(hooks_dir.iterdir())
+                    if h.is_file() and os.access(h, os.X_OK)
+                    and not h.name.endswith(".sample")
+                ]
+            if existing:
+                hook_warnings.append(
+                    "existing default git hooks will be bypassed once core.hooksPath "
+                    f"points to '.githooks': {', '.join(existing)}. Move or chain them "
+                    "into .githooks/* to keep them running."
+                )
         _git(root, "config", "core.hooksPath", ".githooks")
         wired = True
     print(f"agentctl: initialized workflow ({copied} project seed files, {len(writes)} managed writes) at {root}")
     print(f"agentctl: distributed agentctl.py + {len(installed)} git hooks into .githooks/")
+    for warning in hook_warnings:
+        print(f"agentctl: WARNING {warning}", file=sys.stderr)
     if wired:
         print("agentctl: git core.hooksPath -> .githooks")
     elif installed:
