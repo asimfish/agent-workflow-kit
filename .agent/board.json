@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 13:52:35",
+  "updated_at": "2026-07-20 14:43:57",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1395,6 +1395,33 @@
       "deps": [],
       "created_at": "2026-07-20 13:51:26",
       "updated_at": "2026-07-20 13:52:35"
+    },
+    "T-098": {
+      "title": "enforce scope on loop check commands",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:10:39",
+      "updated_at": "2026-07-20 14:43:57"
+    },
+    "T-099": {
+      "title": "independently review T-098 loop command scope guard",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:41:30",
+      "updated_at": "2026-07-20 14:43:57"
     }
   }
 }
