@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T-093 - independently review T-092 solo scan skip (owner: supervisor)
+- [x] T-092 - skip contamination scan when no peers to avoid over-block and cost (owner: cursor)
 - [ ] T-091 - independently review T-090 symlink guard and efficiency (owner: supervisor)
 - [x] T-090 - block symlink and hardlink creation aliasing peer scopes (owner: cursor)
 - [ ] T-089 - independently review T-088 scope containment (owner: supervisor)

@@ -912,6 +912,10 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             cwd=self.root, check=True,
         )
         self.start("one", "T-191", "src/one/")
+        # A peer is live in the checkout; the scan protects it from an escaped
+        # write landing outside every declared scope. (With no peer the scan is
+        # skipped - see test_solo_session_is_not_contamination_blocked.)
+        self.start("peer", "T-193", "src/peer/")
         self.agentctl("refresh", session="one")
         self.agentctl("sessions", "guard", "--path", "src/one/ok.py", session="one")
         # Simulate an escaped write: a tracked file outside every live scope

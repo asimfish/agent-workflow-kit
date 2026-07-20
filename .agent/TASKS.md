@@ -97,3 +97,5 @@
 | T-089 | review | supervisor | `.agent/` | [.agent/tasks/T-089.md](tasks/T-089.md) | independently review T-088 scope containment |
 | T-090 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-090.md](tasks/T-090.md) | block symlink and hardlink creation aliasing peer scopes |
 | T-091 | review | supervisor | `.agent/` | [.agent/tasks/T-091.md](tasks/T-091.md) | independently review T-090 symlink guard and efficiency |
+| T-092 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-092.md](tasks/T-092.md) | skip contamination scan when no peers to avoid over-block and cost |
+| T-093 | review | supervisor | `.agent/` | [.agent/tasks/T-093.md](tasks/T-093.md) | independently review T-092 solo scan skip |

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 12:35:35",
+  "updated_at": "2026-07-20 13:01:13",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1315,6 +1315,32 @@
       "deps": [],
       "created_at": "2026-07-20 12:31:14",
       "updated_at": "2026-07-20 12:35:35"
+    },
+    "T-092": {
+      "title": "skip contamination scan when no peers to avoid over-block and cost",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:40:16",
+      "updated_at": "2026-07-20 13:01:12"
+    },
+    "T-093": {
+      "title": "independently review T-092 solo scan skip",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:00:04",
+      "updated_at": "2026-07-20 13:01:13"
     }
   }
 }

@@ -8050,16 +8050,23 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
                             f"{other.get('workflow_session_key')} task={other.get('task')}"
                         )
             claims.append(path)
-        checkout_rows = [
-            row for row in _session_rows_unlocked(root) if _same_checkout(root, row)
-        ]
-        for path in _workspace_contamination(root, checkout_rows):
-            problems.append(
-                f"tracked file {path} was modified outside every live session scope; "
-                "a write escaped the session guards (interpreter, script, or manual "
-                "edit). Revert it, claim it through a task scope, or let a human "
-                "commit it separately before continuing"
-            )
+        # The contamination scan protects concurrent peers from an escaped
+        # write that static command inspection could not attribute. With no
+        # other live session in this checkout there is nothing to protect, so
+        # skip it entirely - this also avoids a `git status` on every write in
+        # the recommended worktree-per-session layout.
+        if blockers:
+            checkout_rows = [
+                row for row in _session_rows_unlocked(root)
+                if _same_checkout(root, row)
+            ]
+            for path in _workspace_contamination(root, checkout_rows):
+                problems.append(
+                    f"tracked file {path} was modified outside every live session scope; "
+                    "a write escaped the session guards (interpreter, script, or manual "
+                    "edit). Revert it, claim it through a task scope, or let a human "
+                    "commit it separately before continuing"
+                )
         if problems:
             for problem in sorted(set(problems)):
                 print(f"agentctl: session guard blocked: {problem}", file=sys.stderr)
