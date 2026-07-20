@@ -231,3 +231,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-20 06:42:24 [T-096] 24/24 probes in fresh install with real second worktree; multi-session suite rerun clean from reviewer runtime; template parity confirmed; two deflaked timings verified 3x.
 - 2026-07-20 11:58:00 [T-098] Merged origin/main with T-095/T-096 renumbering; combined shell wrapper/redirect parsing with provider identity and concurrent-session guards; syntax, JSON, parity, and diff checks pass.
 - 2026-07-20 12:06:28 [T-098] Post-merge verification passed: 145/145 full-suite tests in 388.998s, four focused identity/shell/shared-Git tests, manual check, doctor, py_compile, JSON validation, source/template parity, and diff checks.
+- 2026-07-20 12:10:26 [T-098] Recovered clone-safe automatic task IDs: private 32-byte checkout key plus session shard; three focused regressions and key length/0600 assertions pass; explicit IDs remain unchanged.

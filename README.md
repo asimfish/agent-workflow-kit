@@ -284,6 +284,14 @@ the same host session ID. Committed plan/task files are only a snapshot across
 independent clones; use normal fetch/branch/PR integration to exchange later
 decisions. Live cross-clone coordination is intentionally not inferred.
 
+Default `work --auto-create` task IDs are also clone- and conversation-safe.
+They use `T<checkout/session shard>-NNN`; the checkout namespace is private
+local Git state and is not committed, while each conversation advances its own
+sequence. Thus branches created from the same board snapshot do not reuse the
+same automatic ID. Explicit `--new-id T-123` values remain supported and remain
+the caller's responsibility. Aggregate plan and board snapshots can still need
+ordinary Git conflict resolution when independent branches both update them.
+
 Committed `.agent` plans and task docs remain the durable memory. The generated
 session view is only live coordination, avoiding constant Git conflicts in a
 shared Markdown file.

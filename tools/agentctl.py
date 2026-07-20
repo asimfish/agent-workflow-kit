@@ -138,6 +138,9 @@ REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 WORKTREE_LEASES_DIR = "agent-workflow"
 WORKTREE_LEASES_FILE = "worktree-leases.json"
 WORKTREE_LEASES_LOCK = "worktree-leases.lock"
+TASK_ID_NAMESPACE_FILE = "task-id-namespace.key"
+TASK_ID_NAMESPACE_BYTES = 32
+TASK_ID_SHARD_HEX_LENGTH = 16
 EVALS_DIR = "evals"
 EVAL_SUITES_FILE = "suites.json"
 EVAL_RUNS_DIR = "runs"
@@ -258,6 +261,16 @@ def _git(root: Path, *args: str) -> str:
 
 def _git_common_dir(root: Path) -> Path | None:
     raw = _git(root, "rev-parse", "--git-common-dir")
+    if not raw:
+        return None
+    path = Path(raw)
+    if not path.is_absolute():
+        path = root / path
+    return path.resolve()
+
+
+def _git_dir(root: Path) -> Path | None:
+    raw = _git(root, "rev-parse", "--git-dir")
     if not raw:
         return None
     path = Path(raw)
@@ -1388,15 +1401,45 @@ def _select_next_task(root: Path, agent: str) -> str | None:
     return candidates[0][2]
 
 
+def _task_id_namespace_key(root: Path) -> bytes:
+    git_dir = _git_dir(root)
+    base = git_dir / WORKTREE_LEASES_DIR if git_dir is not None else _state_dir(root)
+    path = base / TASK_ID_NAMESPACE_FILE
+    try:
+        key = path.read_bytes()
+    except FileNotFoundError:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        generated = secrets.token_bytes(TASK_ID_NAMESPACE_BYTES)
+        try:
+            key = generated if _create_binary_secret(path, generated) else path.read_bytes()
+        except OSError:
+            key = b""
+    except OSError:
+        key = b""
+    if len(key) != TASK_ID_NAMESPACE_BYTES:
+        fallback = f"{platform.node()}\0{root.resolve()}".encode("utf-8")
+        return hashlib.sha256(fallback).digest()
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return key
+
+
 def _next_task_id(root: Path, prefix: str = "T") -> str:
     board = _load_board(root)
+    session_key = _workflow_session_key()
+    shard = hashlib.sha256(
+        _task_id_namespace_key(root) + b"\0" + session_key.encode("utf-8")
+    ).hexdigest()[:TASK_ID_SHARD_HEX_LENGTH].upper()
+    namespaced_prefix = f"{prefix}{shard}"
     max_num = 0
-    pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
+    pattern = re.compile(rf"^{re.escape(namespaced_prefix)}-(\d+)$")
     for tid in board.get("tasks", {}):
         m = pattern.match(tid)
         if m:
             max_num = max(max_num, int(m.group(1)))
-    return f"{prefix}-{max_num + 1:03d}"
+    return f"{namespaced_prefix}-{max_num + 1:03d}"
 
 
 # ---------- commands ----------

@@ -74,4 +74,6 @@ Every worker update must include:
   the existing task rather than creating a competing duplicate.
 - Separate full Git clones do not share live session records. Treat their
   committed `.agent` documents as snapshots and reconcile through normal Git
-  branches/PRs; do not assume local presence is visible across clones.
+  branches/PRs; do not assume local presence is visible across clones. Let
+  `work --auto-create` allocate its checkout/session-namespaced ID; an explicit
+  `--new-id` must be coordinated by the caller to avoid branch collisions.

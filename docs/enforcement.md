@@ -34,6 +34,12 @@ this session's receipt, so unrelated task lifecycles do not force a refresh on
 every peer. Plan-body edits, rule changes, this task's own row, and this task's
 own document still invalidate the receipt.
 
+Automatic task allocation uses a private checkout namespace plus the workflow
+session key to produce `T<16-hex-shard>-NNN` IDs. The namespace is stored in
+local Git metadata rather than committed project files. This prevents two full
+clones of the same board snapshot, two worktrees, or two conversations from
+silently assigning the same default ID; explicit `--new-id` values are unchanged.
+
 Shell commands whose writes cannot be statically enumerated - inline
 interpreter code (`python -c`, `node -e`), interpreter/script invocations,
 `./project-scripts`, `rsync`, `dd`, archive extraction, and download `-o`

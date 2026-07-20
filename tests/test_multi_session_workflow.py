@@ -128,6 +128,105 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertEqual(unchanged.stdout, "")
 
+    def test_auto_generated_task_ids_are_namespaced_per_conversation(self):
+        for session, title, scope in (
+            ("auto-one", "automatic one", "src/auto-one/"),
+            ("auto-two", "automatic two", "src/auto-two/"),
+        ):
+            self.agentctl(
+                "work", "--agent", "codex", "--auto-create",
+                "--title", title, "--scope", scope, session=session,
+            )
+
+        first = json.loads(
+            self.agentctl("status", "--json", session="auto-one").stdout
+        )["task"]
+        second = json.loads(
+            self.agentctl("status", "--json", session="auto-two").stdout
+        )["task"]
+        self.assertRegex(first, r"^T[A-F0-9]{16}-001$")
+        self.assertRegex(second, r"^T[A-F0-9]{16}-001$")
+        self.assertNotEqual(first, second)
+
+    def test_auto_generated_task_id_sequence_is_stable_per_conversation(self):
+        session = "auto-sequence"
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create",
+            "--title", "automatic first", "--scope", "src/sequence/",
+            session=session,
+        )
+        first = json.loads(
+            self.agentctl("status", "--json", session=session).stdout
+        )["task"]
+        self.agentctl(
+            "finish", "--summary", "first sequence task complete",
+            "--tests", "task ID sequence regression", session=session,
+        )
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create",
+            "--title", "automatic second", "--scope", "src/sequence/",
+            session=session,
+        )
+        second = json.loads(
+            self.agentctl("status", "--json", session=session).stdout
+        )["task"]
+        self.assertEqual(first.rsplit("-", 1)[0], second.rsplit("-", 1)[0])
+        self.assertTrue(first.endswith("-001"), first)
+        self.assertTrue(second.endswith("-002"), second)
+
+    def test_auto_generated_task_ids_are_unique_across_full_clones(self):
+        subprocess.run(
+            ["git", "config", "user.email", "test@example.com"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "config", "user.name", "Test User"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True, timeout=60)
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-qm", "test: clone fixture"],
+            cwd=self.root, check=True, timeout=60,
+        )
+        clone_parent = Path(tempfile.mkdtemp(prefix="awk-task-id-clones-"))
+        self.addCleanup(shutil.rmtree, clone_parent, ignore_errors=True)
+        clone_ids = []
+        for name in ("clone-a", "clone-b"):
+            clone = clone_parent / name
+            subprocess.run(
+                ["git", "clone", "--no-local", "-q", str(self.root), str(clone)],
+                check=True, timeout=120,
+            )
+            env = self.env("identical-cloned-session")
+            started = subprocess.run(
+                [
+                    sys.executable, "tools/agentctl.py", "work", "--agent", "codex",
+                    "--auto-create", "--title", name, "--scope", f"src/{name}/",
+                ],
+                cwd=clone, env=env, text=True, capture_output=True, timeout=120,
+            )
+            self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+            status = subprocess.run(
+                [sys.executable, "tools/agentctl.py", "status", "--json"],
+                cwd=clone, env=env, text=True, capture_output=True, timeout=120,
+            )
+            self.assertEqual(status.returncode, 0, status.stdout + status.stderr)
+            clone_ids.append(json.loads(status.stdout)["task"])
+            raw_git_dir = subprocess.check_output(
+                ["git", "rev-parse", "--git-dir"], cwd=clone, text=True,
+            ).strip()
+            git_dir = Path(raw_git_dir)
+            if not git_dir.is_absolute():
+                git_dir = clone / git_dir
+            namespace_file = git_dir / "agent-workflow" / "task-id-namespace.key"
+            self.assertEqual(len(namespace_file.read_bytes()), 32)
+            if os.name != "nt":
+                self.assertEqual(namespace_file.stat().st_mode & 0o777, 0o600)
+
+        self.assertRegex(clone_ids[0], r"^T[A-F0-9]{16}-001$")
+        self.assertRegex(clone_ids[1], r"^T[A-F0-9]{16}-001$")
+        self.assertNotEqual(clone_ids[0], clone_ids[1])
+
     def test_hook_session_ids_persist_for_claude_and_return_cursor_environment(self):
         env_file = self.root / "claude-session.env"
         claude_env = self.bare_env()
