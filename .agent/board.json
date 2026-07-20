@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 16:02:32",
+  "updated_at": "2026-07-20 16:04:51",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1656,6 +1656,28 @@
       "deps": [],
       "created_at": "2026-07-20 15:59:21",
       "updated_at": "2026-07-20 16:02:32"
+    },
+    "T17F063E6115138DE-008": {
+      "title": "integrate final main advances for concurrent release",
+      "status": "in_progress",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".claude/",
+        ".codex/",
+        ".cursor/",
+        "hooks/",
+        "integrations/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 16:04:13",
+      "updated_at": "2026-07-20 16:04:51"
     }
   }
 }

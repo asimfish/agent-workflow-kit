@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T17F063E6115138DE-008 - integrate final main advances for concurrent release (owner: codex)
 - [ ] T17F063E6115138DE-007 - release approved concurrent main integration (owner: codex)
 - [ ] TA74E81A93FF7EB9D-001 - review concurrent main integration and collision migration (owner: claude-sonnet-merge-reviewer)
 - [x] T17F063E6115138DE-006 - integrate concurrent main advances without history loss (owner: codex)
