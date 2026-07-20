@@ -36,7 +36,9 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] T17F063E6115138DE-006 - integrate concurrent main advances without history loss (owner: codex)
+- [ ] T17F063E6115138DE-007 - release approved concurrent main integration (owner: codex)
+- [ ] TA74E81A93FF7EB9D-001 - review concurrent main integration and collision migration (owner: claude-sonnet-merge-reviewer)
+- [x] T17F063E6115138DE-006 - integrate concurrent main advances without history loss (owner: codex)
 - [ ] T17F063E6115138DE-005 - release pre-push published-commit fix (owner: codex)
 - [ ] TD851EF749F675DC5-001 - review pre-push published-commit filter (owner: claude-sonnet-reviewer)
 - [x] T17F063E6115138DE-004 - exclude already-published commits from pre-push validation (owner: codex)
@@ -45,22 +47,25 @@ instead of relying on chat memory or repeated human prompts.
 - [ ] TA80D9103F5316278-001 - independently review residual repo-wide Git guard closure (owner: claude-sonnet-reviewer)
 - [x] T17F063E6115138DE-001 - close residual repo-wide Git guard gaps (owner: codex)
 - [ ] T622DE1DE69A1D0F8-001 - independently review T-098 concurrent isolation recovery (owner: claude-sonnet-reviewer)
-- [x] T-098 - recover and complete concurrent session safeguards (owner: codex)
-- [ ] T-096 - independently review T-095 shell parse and shared-ref fixes (owner: supervisor)
-- [x] T-095 - close newline, redirect, mv-source, and shared-ref gaps (owner: cursor)
-- [ ] T-093 - independent regate for T-088 (owner: supervisor)
-- [ ] T-092 - independent gate for T-090 (owner: supervisor)
-- [ ] T-091 - real Claude runtime recovery verification (owner: supervisor)
-- [x] T-090 - close T-089 hook-shell runtime fingerprint skew (owner: codex)
-- [ ] T-089 - independently review T-088 provider bootstrap binding (owner: independent-reviewer)
-- [x] T-088 - bind late provider payload ids to bootstrap runtime sessions (owner: codex)
 - [ ] T-087 - close residual shared-checkout isolation boundaries (owner: codex)
 - [ ] T-086 - integrate independent T-081 review evidence (owner: codex-integrator)
 - [ ] T-085 - review T-081 resubmission and T-083/T-084 evidence (owner: independent-reviewer)
 - [ ] T-084 - independently review T-082 review record and T-083 isolation fixes (PR #17) (owner: independent-reviewer)
 - [x] T-083 - close independent review isolation gaps (owner: codex)
-- [ ] T-082 - independently review T-081 concurrent isolation hardening (owner: independent-reviewer)
-- [x] T-081 - make concurrent sessions worktree-safe and close read-option escapes (owner: codex)
+- [ ] T-099 - independently review T-098 loop command scope guard (owner: supervisor)
+- [x] T-098 - enforce scope on loop check commands (owner: cursor)
+- [ ] T-097 - independently review T-096 worktree escape hatch (owner: supervisor)
+- [x] T-096 - make worktree escape hatch guidance actionable end to end (owner: cursor)
+- [ ] T-095 - independently review T-094 read-only hook latency (owner: supervisor)
+- [x] T-094 - halve read-only hook latency by removing redundant status spawn (owner: cursor)
+- [ ] T-093 - independently review T-092 solo scan skip (owner: supervisor)
+- [x] T-092 - skip contamination scan when no peers to avoid over-block and cost (owner: cursor)
+- [ ] T-091 - independently review T-090 symlink guard and efficiency (owner: supervisor)
+- [x] T-090 - block symlink and hardlink creation aliasing peer scopes (owner: cursor)
+- [ ] T-089 - independently review T-088 scope containment (owner: supervisor)
+- [x] T-088 - block ancestor and glob paths that exceed task scope (owner: cursor)
+- [ ] T-082 - independently review T-081 shell parse and shared-ref fixes (owner: supervisor)
+- [x] T-081 - close newline, redirect, mv-source, and shared-ref gaps (owner: cursor)
 - [ ] T-080 - independently review T-079 argument-verified allowlist (owner: supervisor)
 - [x] T-079 - verify read-only allowlist strictly and fix git read misclassifications (owner: cursor)
 - [ ] T-078 - independently review T-077 git and shell metacharacter hardening (owner: supervisor)
@@ -197,3 +202,4 @@ Format: `- YYYY-MM-DD HH:MM:SS - <agent-or-human> - <change and reason>.`
 - 2026-07-10 13:25:00 - codex - split maturity into durable workflow, bounded execution, and operational autonomy so runtime claims match tested capability.
 - 2026-07-10 13:43:00 - codex - completed the bounded dispatch implementation and cleared stale worker allocation; M2 remains in progress pending real-session dogfood.
 - 2026-07-10 22:18:00 - codex - started M3 with resumable cycle state and explicit stop/recovery semantics before adding scheduler or worktree automation.
+- 2026-07-20 14:55:15 - codex - integrated concurrent task histories; main IDs remain canonical and feature collisions are recorded in `.agent/decisions/20260720-concurrent-task-id-collisions.md`.

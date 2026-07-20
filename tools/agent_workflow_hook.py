@@ -1948,8 +1948,28 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
             if len(positional) >= 2:
                 add_target(positional[-1])
         elif executable == "ln" and args:
-            for value in _ln_output_values(command_args):
+            output_values = _ln_output_values(command_args)
+            for value in output_values:
                 add_target(value)
+            target_dirs = _target_directory_values(command_args)
+            positionals = _positionals(
+                command_args, {"-S", "--suffix", "-t", "--target-directory"})
+            positionals = _remove_option_values(positionals, target_dirs)
+            sources = positionals if target_dirs or len(positionals) == 1 else positionals[:-1]
+            link_parent = Path(target_dirs[-1]) if target_dirs else (
+                Path(positionals[-1]).parent if len(positionals) >= 2 else Path("."))
+            is_symlink = any(
+                item == "--symbolic"
+                or (item.startswith("-") and not item.startswith("--") and "s" in item[1:])
+                for item in command_args)
+            for source in sources:
+                target_path = Path(source).expanduser()
+                if is_symlink and not target_path.is_absolute():
+                    resolved_parent = link_parent.expanduser()
+                    if not resolved_parent.is_absolute():
+                        resolved_parent = working_dir / resolved_parent
+                    target_path = resolved_parent / source
+                add_target(str(target_path))
         elif executable == "git":
             sub, tail = _git_segment_details(command_tokens)
             git_cwd = _git_effective_cwd(command_tokens, working_dir)
@@ -2210,11 +2230,14 @@ def pre_tool_use() -> int:
             "Agent Workflow Kit blocked this action because this conversation does "
             "not have a unique workflow identity. " + identity_error + ".",
         )
-    active = has_session(root, env)
     if not mutating:
-        if active:
-            heartbeat(root, env)
+        # Read-only path: refresh the heartbeat in a single spawn. The
+        # heartbeat command is a no-op (nonzero, ignored) when there is no
+        # active/owned session, so we skip the extra `status --json` spawn
+        # that `has_session` would cost on every read.
+        heartbeat(root, env)
         return 0
+    active = has_session(root, env)
     if not active:
         return block(
             "PreToolUse",

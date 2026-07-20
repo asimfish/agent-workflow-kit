@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 14:55:55",
+  "updated_at": "2026-07-20 16:02:32",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1236,30 +1236,192 @@
       "updated_at": "2026-07-20 01:09:20"
     },
     "T-081": {
-      "title": "make concurrent sessions worktree-safe and close read-option escapes",
+      "title": "close newline, redirect, mv-source, and shared-ref gaps",
       "status": "done",
-      "owner": "codex",
+      "owner": "cursor",
       "scope": [
         "tools/",
         "templates/project/",
         "tests/",
         "README.md",
-        "docs/"
+        "docs/",
+        ".agent/"
       ],
       "deps": [],
-      "created_at": "2026-07-20 01:41:06",
-      "updated_at": "2026-07-20 04:37:38"
+      "created_at": "2026-07-20 02:52:46",
+      "updated_at": "2026-07-20 06:42:26"
     },
     "T-082": {
-      "title": "independently review T-081 concurrent isolation hardening",
+      "title": "independently review T-081 shell parse and shared-ref fixes",
       "status": "review",
-      "owner": "independent-reviewer",
+      "owner": "supervisor",
       "scope": [
         ".agent/"
       ],
       "deps": [],
-      "created_at": "2026-07-20 02:35:55",
-      "updated_at": "2026-07-20 02:53:55"
+      "created_at": "2026-07-20 06:24:53",
+      "updated_at": "2026-07-20 06:42:28"
+    },
+    "T-088": {
+      "title": "block ancestor and glob paths that exceed task scope",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 07:01:51",
+      "updated_at": "2026-07-20 12:06:14"
+    },
+    "T-089": {
+      "title": "independently review T-088 scope containment",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:04:26",
+      "updated_at": "2026-07-20 12:06:14"
+    },
+    "T-090": {
+      "title": "block symlink and hardlink creation aliasing peer scopes",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:22:24",
+      "updated_at": "2026-07-20 12:35:34"
+    },
+    "T-091": {
+      "title": "independently review T-090 symlink guard and efficiency",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:31:14",
+      "updated_at": "2026-07-20 12:35:35"
+    },
+    "T-092": {
+      "title": "skip contamination scan when no peers to avoid over-block and cost",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:40:16",
+      "updated_at": "2026-07-20 13:01:12"
+    },
+    "T-093": {
+      "title": "independently review T-092 solo scan skip",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:00:04",
+      "updated_at": "2026-07-20 13:01:13"
+    },
+    "T-094": {
+      "title": "halve read-only hook latency by removing redundant status spawn",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:08:03",
+      "updated_at": "2026-07-20 13:25:25"
+    },
+    "T-095": {
+      "title": "independently review T-094 read-only hook latency",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:24:36",
+      "updated_at": "2026-07-20 13:25:25"
+    },
+    "T-096": {
+      "title": "make worktree escape hatch guidance actionable end to end",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:33:07",
+      "updated_at": "2026-07-20 13:52:34"
+    },
+    "T-097": {
+      "title": "independently review T-096 worktree escape hatch",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:51:26",
+      "updated_at": "2026-07-20 13:52:35"
+    },
+    "T-098": {
+      "title": "enforce scope on loop check commands",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:10:39",
+      "updated_at": "2026-07-20 14:43:57"
+    },
+    "T-099": {
+      "title": "independently review T-098 loop command scope guard",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:41:30",
+      "updated_at": "2026-07-20 14:43:57"
     },
     "T-083": {
       "title": "close independent review isolation gaps",
@@ -1328,125 +1490,6 @@
       "deps": [],
       "created_at": "2026-07-20 04:50:30",
       "updated_at": "2026-07-20 05:37:41"
-    },
-    "T-088": {
-      "title": "bind late provider payload ids to bootstrap runtime sessions",
-      "status": "done",
-      "owner": "codex",
-      "scope": [
-        "tools/",
-        "templates/project/",
-        "tests/",
-        "README.md",
-        "docs/",
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 05:52:25",
-      "updated_at": "2026-07-20 08:50:48"
-    },
-    "T-089": {
-      "title": "independently review T-088 provider bootstrap binding",
-      "status": "review",
-      "owner": "independent-reviewer",
-      "scope": [
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 07:00:31",
-      "updated_at": "2026-07-20 07:18:20"
-    },
-    "T-090": {
-      "title": "close T-089 hook-shell runtime fingerprint skew",
-      "status": "done",
-      "owner": "codex",
-      "scope": [
-        "tools/",
-        "templates/project/",
-        "tests/",
-        "README.md",
-        "docs/",
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 07:23:52",
-      "updated_at": "2026-07-20 08:24:31"
-    },
-    "T-091": {
-      "title": "real Claude runtime recovery verification",
-      "status": "review",
-      "owner": "supervisor",
-      "scope": [
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 08:02:12",
-      "updated_at": "2026-07-20 08:13:36"
-    },
-    "T-092": {
-      "title": "independent gate for T-090",
-      "status": "review",
-      "owner": "supervisor",
-      "scope": [
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 08:20:29",
-      "updated_at": "2026-07-20 08:24:57"
-    },
-    "T-093": {
-      "title": "independent regate for T-088",
-      "status": "review",
-      "owner": "supervisor",
-      "scope": [
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 08:32:37",
-      "updated_at": "2026-07-20 08:51:43"
-    },
-    "T-095": {
-      "title": "close newline, redirect, mv-source, and shared-ref gaps",
-      "status": "done",
-      "owner": "cursor",
-      "scope": [
-        "tools/",
-        "templates/project/",
-        "tests/",
-        "README.md",
-        "docs/",
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 02:52:46",
-      "updated_at": "2026-07-20 06:42:26"
-    },
-    "T-096": {
-      "title": "independently review T-095 shell parse and shared-ref fixes",
-      "status": "review",
-      "owner": "supervisor",
-      "scope": [
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 06:24:53",
-      "updated_at": "2026-07-20 06:42:28"
-    },
-    "T-098": {
-      "title": "recover and complete concurrent session safeguards",
-      "status": "done",
-      "owner": "codex",
-      "scope": [
-        "tools/",
-        "templates/project/",
-        "tests/",
-        "docs/",
-        "README.md",
-        ".agent/"
-      ],
-      "deps": [],
-      "created_at": "2026-07-20 11:49:43",
-      "updated_at": "2026-07-20 12:51:56"
     },
     "T622DE1DE69A1D0F8-001": {
       "title": "independently review T-098 concurrent isolation recovery",
@@ -1563,7 +1606,7 @@
     },
     "T17F063E6115138DE-006": {
       "title": "integrate concurrent main advances without history loss",
-      "status": "in_progress",
+      "status": "done",
       "owner": "codex",
       "scope": [
         ".agent/",
@@ -1580,7 +1623,39 @@
       ],
       "deps": [],
       "created_at": "2026-07-20 14:55:14",
-      "updated_at": "2026-07-20 14:55:55"
+      "updated_at": "2026-07-20 15:55:41"
+    },
+    "TA74E81A93FF7EB9D-001": {
+      "title": "review concurrent main integration and collision migration",
+      "status": "review",
+      "owner": "claude-sonnet-merge-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:24:11",
+      "updated_at": "2026-07-20 15:59:12"
+    },
+    "T17F063E6115138DE-007": {
+      "title": "release approved concurrent main integration",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".claude/",
+        ".codex/",
+        ".cursor/",
+        "hooks/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:59:21",
+      "updated_at": "2026-07-20 16:02:32"
     }
   }
 }

@@ -61,10 +61,14 @@ task session and exclusive use of the checkout: beside another live session
 they are refused with worktree guidance, because their output paths cannot
 be attributed afterwards. Worktree allocation is a pre-start transition from
 a committed `todo`/`ready` task, not an implicit migration of an active dirty
-shared checkout. Every mutating action also reconciles the working tree; a
-tracked file modified outside every live session scope (including
-tracked dotfiles such as `.env`) blocks further mutations until reverted,
-claimed, or committed separately by a human.
+shared checkout. When another session is live in the checkout, every mutating action also
+reconciles the working tree; a tracked file modified outside every live
+session scope (including tracked dotfiles such as `.env`) blocks further
+mutations until reverted, claimed, or committed separately by a human. A
+session alone in its checkout skips this scan entirely: there is no peer to
+protect, so an out-of-scope tracked edit does not block it and no `git
+status` runs on the write path — the recommended worktree-per-session layout
+stays fast.
 
 Three hardening rules close the remaining static-analysis gaps. Git
 subcommands are default-deny: only an explicit read allowlist (`status`,
@@ -114,6 +118,13 @@ the guarantee model remains: verified reads and path-checked writes may run
 beside peers; everything else requires an exclusive checkout or a task
 worktree.
 
+Scope membership for a single write target is directional and glob-aware: a
+path is in scope only when it is the scope entry or a descendant of it, so a
+parent directory (`src`) or a glob whose expansion spans siblings (`src/*`,
+bare `*`) is rejected when the task is scoped to `src/one/` — such a write
+would reach a peer's `src/two/`. The symmetric disjointness check between two
+task scopes is separate and unchanged.
+
 Shell parsing itself is hardened against composition tricks: newlines
 separate commands exactly like `;`, `&>`/`&>>`/`>|`/`>&file` redirects are
 recognized and their targets scope-checked, `mv` treats every source operand
@@ -124,6 +135,13 @@ that rewrite state shared by every worktree — branch deletion/rename/copy,
 deletion, forced or deleting pushes, and `worktree remove/move/prune` —
 require that no other conversation is live in ANY checkout of the
 repository, not just the current one.
+
+A loop's declared Check command is classified and scope-checked with the same
+rules before it runs: `loop run/auto/cycle` execute an arbitrary shell command
+outside the PreToolUse tool guard, so with a live peer sharing the checkout a
+loop command that writes outside the active task scope (or cannot prove its
+paths) fails the loop instead of running. A session alone in its checkout
+keeps full loop freedom, matching the opaque/contamination policy.
 
 Path guards enforce document ownership on top of the write scope. The active
 task's own document is always part of the effective scope, while

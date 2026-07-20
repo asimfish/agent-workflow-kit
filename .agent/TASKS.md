@@ -91,22 +91,25 @@
 | T-078 | review | supervisor | `.agent/` | [.agent/tasks/T-078.md](tasks/T-078.md) | independently review T-077 git and shell metacharacter hardening |
 | T-079 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-079.md](tasks/T-079.md) | verify read-only allowlist strictly and fix git read misclassifications |
 | T-080 | review | supervisor | `.agent/` | [.agent/tasks/T-080.md](tasks/T-080.md) | independently review T-079 argument-verified allowlist |
-| T-081 | done | codex | `tools/, templates/project/, tests/, README.md, docs/` | [.agent/tasks/T-081.md](tasks/T-081.md) | make concurrent sessions worktree-safe and close read-option escapes |
-| T-082 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-082.md](tasks/T-082.md) | independently review T-081 concurrent isolation hardening |
+| T-081 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-081.md](tasks/T-081.md) | close newline, redirect, mv-source, and shared-ref gaps |
+| T-082 | review | supervisor | `.agent/` | [.agent/tasks/T-082.md](tasks/T-082.md) | independently review T-081 shell parse and shared-ref fixes |
+| T-088 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-088.md](tasks/T-088.md) | block ancestor and glob paths that exceed task scope |
+| T-089 | review | supervisor | `.agent/` | [.agent/tasks/T-089.md](tasks/T-089.md) | independently review T-088 scope containment |
+| T-090 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-090.md](tasks/T-090.md) | block symlink and hardlink creation aliasing peer scopes |
+| T-091 | review | supervisor | `.agent/` | [.agent/tasks/T-091.md](tasks/T-091.md) | independently review T-090 symlink guard and efficiency |
+| T-092 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-092.md](tasks/T-092.md) | skip contamination scan when no peers to avoid over-block and cost |
+| T-093 | review | supervisor | `.agent/` | [.agent/tasks/T-093.md](tasks/T-093.md) | independently review T-092 solo scan skip |
+| T-094 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-094.md](tasks/T-094.md) | halve read-only hook latency by removing redundant status spawn |
+| T-095 | review | supervisor | `.agent/` | [.agent/tasks/T-095.md](tasks/T-095.md) | independently review T-094 read-only hook latency |
+| T-096 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-096.md](tasks/T-096.md) | make worktree escape hatch guidance actionable end to end |
+| T-097 | review | supervisor | `.agent/` | [.agent/tasks/T-097.md](tasks/T-097.md) | independently review T-096 worktree escape hatch |
+| T-098 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-098.md](tasks/T-098.md) | enforce scope on loop check commands |
+| T-099 | review | supervisor | `.agent/` | [.agent/tasks/T-099.md](tasks/T-099.md) | independently review T-098 loop command scope guard |
 | T-083 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-083.md](tasks/T-083.md) | close independent review isolation gaps |
 | T-084 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-084.md](tasks/T-084.md) | independently review T-082 review record and T-083 isolation fixes (PR #17) |
 | T-085 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-085.md](tasks/T-085.md) | review T-081 resubmission and T-083/T-084 evidence |
 | T-086 | review | codex-integrator | `.agent/` | [.agent/tasks/T-086.md](tasks/T-086.md) | integrate independent T-081 review evidence |
 | T-087 | review | codex | `tools/, templates/project/, tests/, README.md, docs/, .codex/, .claude/, .cursor/, .agent/` | [.agent/tasks/T-087.md](tasks/T-087.md) | close residual shared-checkout isolation boundaries |
-| T-088 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-088.md](tasks/T-088.md) | bind late provider payload ids to bootstrap runtime sessions |
-| T-089 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-089.md](tasks/T-089.md) | independently review T-088 provider bootstrap binding |
-| T-090 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-090.md](tasks/T-090.md) | close T-089 hook-shell runtime fingerprint skew |
-| T-091 | review | supervisor | `.agent/` | [.agent/tasks/T-091.md](tasks/T-091.md) | real Claude runtime recovery verification |
-| T-092 | review | supervisor | `.agent/` | [.agent/tasks/T-092.md](tasks/T-092.md) | independent gate for T-090 |
-| T-093 | review | supervisor | `.agent/` | [.agent/tasks/T-093.md](tasks/T-093.md) | independent regate for T-088 |
-| T-095 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-095.md](tasks/T-095.md) | close newline, redirect, mv-source, and shared-ref gaps |
-| T-096 | review | supervisor | `.agent/` | [.agent/tasks/T-096.md](tasks/T-096.md) | independently review T-095 shell parse and shared-ref fixes |
-| T-098 | done | codex | `tools/, templates/project/, tests/, docs/, README.md, .agent/` | [.agent/tasks/T-098.md](tasks/T-098.md) | recover and complete concurrent session safeguards |
 | T622DE1DE69A1D0F8-001 | review | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/, docs/, README.md` | [.agent/tasks/T622DE1DE69A1D0F8-001.md](tasks/T622DE1DE69A1D0F8-001.md) | independently review T-098 concurrent isolation recovery |
 | T17F063E6115138DE-001 | done | codex | `tools/agent_workflow_hook.py, templates/project/tools/agent_workflow_hook.py, tests/test_multi_session_workflow.py` | [.agent/tasks/T17F063E6115138DE-001.md](tasks/T17F063E6115138DE-001.md) | close residual repo-wide Git guard gaps |
 | TA80D9103F5316278-001 | review | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/` | [.agent/tasks/TA80D9103F5316278-001.md](tasks/TA80D9103F5316278-001.md) | independently review residual repo-wide Git guard closure |
@@ -115,4 +118,6 @@
 | T17F063E6115138DE-004 | done | codex | `.agent/, hooks/, .githooks/, tools/, templates/project/, tests/` | [.agent/tasks/T17F063E6115138DE-004.md](tasks/T17F063E6115138DE-004.md) | exclude already-published commits from pre-push validation |
 | TD851EF749F675DC5-001 | review | claude-sonnet-reviewer | `.agent/` | [.agent/tasks/TD851EF749F675DC5-001.md](tasks/TD851EF749F675DC5-001.md) | review pre-push published-commit filter |
 | T17F063E6115138DE-005 | review | codex | `.agent/, hooks/, .githooks/, tools/, tests/` | [.agent/tasks/T17F063E6115138DE-005.md](tasks/T17F063E6115138DE-005.md) | release pre-push published-commit fix |
-| T17F063E6115138DE-006 | in_progress | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-006.md](tasks/T17F063E6115138DE-006.md) | integrate concurrent main advances without history loss |
+| T17F063E6115138DE-006 | done | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-006.md](tasks/T17F063E6115138DE-006.md) | integrate concurrent main advances without history loss |
+| TA74E81A93FF7EB9D-001 | review | claude-sonnet-merge-reviewer | `.agent/` | [.agent/tasks/TA74E81A93FF7EB9D-001.md](tasks/TA74E81A93FF7EB9D-001.md) | review concurrent main integration and collision migration |
+| T17F063E6115138DE-007 | review | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-007.md](tasks/T17F063E6115138DE-007.md) | release approved concurrent main integration |

@@ -87,6 +87,17 @@
       "model": "claude-sonnet-4-6",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "claude-sonnet-merge-reviewer": {
+      "role": "independent review",
+      "backend": "claude",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

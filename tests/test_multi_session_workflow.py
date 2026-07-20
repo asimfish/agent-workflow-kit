@@ -92,6 +92,39 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             self.agentctl("sessions", "list", "--json", session=session).stdout
         )
 
+    def test_read_only_hook_heartbeats_without_a_redundant_status_spawn(self):
+        """Efficiency: a read-only command refreshes the heartbeat in one spawn.
+
+        The read-only PreToolUse path must still keep the session heartbeat
+        fresh (peers rely on it for liveness) and must never block, but it
+        should not pay two agentctl subprocess launches per read.
+        """
+        self.start("one", "T-101", "src/one/")
+        self.agentctl("refresh", session="one")
+        before = json.loads(self.agentctl("status", "--json", session="one").stdout)
+
+        import time as _t
+        _t.sleep(1.1)
+        ro = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "grep -r x src/one"}},
+            session="one",
+        )
+        self.assertEqual(ro.stdout, "", ro.stdout)  # never blocks a read
+        after = json.loads(self.agentctl("status", "--json", session="one").stdout)
+        # The read-only path advanced the heartbeat (liveness preserved).
+        self.assertGreater(
+            int(after.get("heartbeat_ns") or 0),
+            int(before.get("heartbeat_ns") or 0),
+        )
+        # A read-only command with NO active session must still pass silently.
+        idle = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "ls"}},
+            session="idle-no-task",
+        )
+        self.assertEqual(idle.stdout, "", idle.stdout)
+
     def test_disjoint_conversations_keep_independent_state_and_visible_status(self):
         self.start("one", "T-101", "src/one/")
         self.start("two", "T-102", "src/two/")
@@ -1612,6 +1645,10 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             cwd=self.root, check=True,
         )
         self.start("one", "T-191", "src/one/")
+        # A peer is live in the checkout; the scan protects it from an escaped
+        # write landing outside every declared scope. (With no peer the scan is
+        # skipped - see test_solo_session_is_not_contamination_blocked.)
+        self.start("peer", "T-193", "src/peer/")
         self.agentctl("refresh", session="one")
         self.agentctl("sessions", "guard", "--path", "src/one/ok.py", session="one")
         # Simulate an escaped write: a tracked file outside every live scope
@@ -2305,6 +2342,75 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             session="ghost",
         )
         self.assertEqual(read_only.stdout, "")
+
+    def test_symlink_creation_targeting_a_peer_scope_is_blocked(self):
+        """Self-audit: `ln -s ../peer own/link` aliases a peer's tree.
+
+        A symlink whose target resolves (relative to the link's directory)
+        outside the task scope must be refused at creation, while links whose
+        target stays inside the scope remain usable.
+        """
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            "ln -s ../two src/one/peerlink",
+            "ln -s ../../etc/passwd src/one/pw",
+            "ln -sf ../two/data.txt src/one/alias",
+            "ln src/two/real src/one/hardlink",
+            "cd src/one && ln ../two/real",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            self.assertEqual(json.loads(decision.stdout).get("decision"), "block", command)
+        # Links whose target stays inside the own scope are allowed.
+        for command in (
+            "ln -s data.txt src/one/mylink",
+            "ln -s nested/f src/one/f2",
+        ):
+            allowed = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', allowed.stdout, command)
+
+    def test_ancestor_and_glob_paths_that_exceed_scope_are_blocked(self):
+        """Self-audit: `rm src/*` / `rm src` must not slip past a src/one scope.
+
+        A parent directory and a glob whose expansion spans sibling scopes
+        both reach another session's files even though the literal token is
+        not itself inside the peer scope.
+        """
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for path in (
+            "src",            # parent of the scope, reaches src/two
+            "src/*",          # glob spanning src/one and src/two
+            "src/two",        # sibling scope directly
+            "src/two/*",      # glob inside the peer scope
+            "*",              # checkout-root glob
+            "src/one/../two/x",  # traversal into the peer scope
+        ):
+            blocked = self.agentctl(
+                "sessions", "guard", "--path", path, session="one", expect=1,
+            )
+            self.assertIn("scope", blocked.stderr, path)
+        # Descendants and same-directory globs of the OWN scope stay allowed.
+        for path in (
+            "src/one",
+            "src/one/nested/file.py",
+            "src/one/*",
+            "src/one/**/*.py",
+        ):
+            self.agentctl("sessions", "guard", "--path", path, session="one")
 
     def test_start_rejects_unknown_task_ids_without_registering_a_claim(self):
         unknown = self.agentctl(

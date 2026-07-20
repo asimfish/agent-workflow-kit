@@ -93,6 +93,62 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
             LOOP_CONTRACT.format(loop_id=loop_id, checkpoint=checkpoint, command=command),
             encoding="utf-8")
 
+    def test_loop_command_cannot_write_into_a_peer_scope(self):
+        """A loop Check command must not become a cross-session write channel.
+
+        loop run/auto/cycle execute an arbitrary shell command outside the
+        PreToolUse guard. With a live peer sharing the checkout, a loop command
+        writing into the peer's scope must be refused. (Solo sessions keep full
+        freedom, consistent with the opaque/contamination policy.)
+        """
+        (self.root / "src" / "one").mkdir(parents=True, exist_ok=True)
+        (self.root / "src" / "two").mkdir(parents=True, exist_ok=True)
+        victim = self.root / "src" / "two" / "victim.txt"
+        victim.write_text("precious\n", encoding="utf-8")
+        # Peer B (distinct session) owns src/two.
+        peer_env = os.environ.copy()
+        peer_env["AGENT_WORKFLOW_SESSION_ID"] = "loop-scope-peer"
+        peer = subprocess.run(
+            [sys.executable, "tools/agentctl.py", "work", "--agent", "cursor",
+             "--auto-create", "--new-id", "T-PEER", "--title", "peer",
+             "--scope", "src/two/"],
+            cwd=str(self.root), env=peer_env, text=True, capture_output=True, timeout=120)
+        self.assertEqual(peer.returncode, 0, peer.stdout + peer.stderr)
+        # A (the default test session) owns src/one and defines loops.
+        self.agentctl("work", "--agent", "codex", "--auto-create",
+                      "--title", "loop scope", "--scope", "src/one/,.agent/loops/",
+                      expect=0)
+
+        self.write_loop("evil", "evil", "echo pwned > src/two/victim.txt")
+        self.add_checkpoint("evil", "evil", escalate_after=3)
+        run = self.agentctl("loop", "run", "evil", "--once")
+        self.assertEqual(victim.read_text(encoding="utf-8"), "precious\n",
+                         "loop command wrote into a peer's scope")
+        self.assertNotEqual(run.returncode, 0, run.stdout + run.stderr)
+
+        # A traversal target into the peer scope is also refused.
+        self.write_loop("evil2", "evil2", "echo x > src/one/../two/sneak.txt")
+        self.add_checkpoint("evil2", "evil2", escalate_after=3)
+        self.agentctl("loop", "run", "evil2", "--once")
+        self.assertFalse((self.root / "src" / "two" / "sneak.txt").exists())
+
+        # An in-scope command still runs.
+        self.write_loop("good", "good", "echo ok > src/one/loopout.txt")
+        self.add_checkpoint("good", "good", escalate_after=3)
+        self.agentctl("loop", "run", "good", "--once", expect=0)
+        self.assertEqual((self.root / "src" / "one" / "loopout.txt").read_text().strip(), "ok")
+
+    def test_solo_loop_command_is_not_scope_restricted(self):
+        """A session alone in its checkout keeps full loop freedom (efficiency)."""
+        self.agentctl("work", "--agent", "codex", "--auto-create",
+                      "--title", "solo loop", "--scope", "src/one/,.agent/loops/",
+                      expect=0)
+        (self.root / "out").mkdir(parents=True, exist_ok=True)
+        self.write_loop("solo", "solo", "echo ok > out/result.txt")
+        self.add_checkpoint("solo", "solo", escalate_after=3)
+        self.agentctl("loop", "run", "solo", "--once", expect=0)
+        self.assertEqual((self.root / "out" / "result.txt").read_text().strip(), "ok")
+
     def add_checkpoint(self, name, loop_id, escalate_after):
         policy_path = self.root / ".agent" / "loops" / "checkpoints.json"
         policy = json.loads(policy_path.read_text(encoding="utf-8"))
@@ -482,7 +538,10 @@ import signal
 spec = importlib.util.spec_from_file_location("agentctl_launch_race", "tools/agentctl.py")
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
-module.LOOP_COMMAND_LAUNCH_TIMEOUT = 0.5
+# Wide enough that the first `loop stop` below lands INSIDE the pending
+# window even on a heavily loaded machine (0.5s starved python startup),
+# yet short enough that waiting out the deadline stays cheap.
+module.LOOP_COMMAND_LAUNCH_TIMEOUT = 8.0
 original = module._cycle_runtime_update
 
 def crash_before_pid(root, runtime_id, updater, **kwargs):
@@ -514,11 +573,18 @@ raise SystemExit(module.main([
         still_arming = self.agentctl(
             "loop", "stop", "--ack-inflight", "--reason", "launch not reconciled", expect=2)
         self.assertIn("still has a live", still_arming.stdout + still_arming.stderr)
-        time.sleep(2)
+        # Wait out the pending-launch deadline (plus its 1s tolerance).
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            reconciled = self.agentctl(
+                "loop", "stop", "--ack-inflight", "--reason",
+                "launch gate expired before command execution")
+            if reconciled.returncode == 0:
+                break
+            time.sleep(0.5)
+        else:
+            self.fail("pending launch never expired into a reconcilable state")
         self.assertFalse((self.root / "runs.txt").exists())
-        self.agentctl(
-            "loop", "stop", "--ack-inflight",
-            "--reason", "launch gate expired before command execution", expect=0)
 
         completed = self.agentctl(
             "loop", "cycle", "--checkpoint", "handshake-check", "--cycles", "1", "--force",

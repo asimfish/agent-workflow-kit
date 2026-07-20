@@ -1057,8 +1057,43 @@ def _normalize_claim_path(root: Path, value: str) -> tuple[str | None, str | Non
     return rel, None
 
 
+def _scope_entry_base(scope_entry: str) -> str:
+    return scope_entry.strip().strip("/").rstrip("*").rstrip("/")
+
+
+def _dir_within_scope_entry(path: str, scope_entry: str) -> bool:
+    """True only when `path` is the scope entry or a descendant of it.
+
+    Directional containment: unlike `_scopes_overlap`, an ANCESTOR of the
+    scope entry is not "in scope". Writing `src` or `src/*` when the task
+    scope is `src/one/` must be rejected because it also reaches sibling
+    `src/two/`.
+    """
+    p = path.strip().strip("/")
+    s = _scope_entry_base(scope_entry)
+    if not p or not s:
+        return False
+    return p == s or p.startswith(s + "/")
+
+
 def _path_in_scope(path: str, scope: list[str]) -> bool:
-    return any(_scopes_overlap([path], [item]) for item in scope)
+    """Whether a single write target is fully contained in the task scope.
+
+    A glob only stays in scope when the directory being expanded is itself
+    inside a scope entry, so every possible match lands in scope too. A
+    non-glob path must be the scope entry or a descendant.
+    """
+    raw = str(path).strip()
+    star = raw.find("*")
+    if star != -1:
+        prefix = raw[:star]
+        slash = prefix.rfind("/")
+        globbed_dir = prefix[:slash] if slash != -1 else ""
+        if not globbed_dir:
+            # Bare glob at the checkout root (e.g. `*` or `src*`) can escape.
+            return False
+        return any(_dir_within_scope_entry(globbed_dir, item) for item in scope)
+    return any(_dir_within_scope_entry(raw, item) for item in scope)
 
 
 def _controller_owned_paths() -> tuple[tuple[str, str], ...]:
@@ -4288,6 +4323,9 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
     print(f"  task={task} agent={agent}")
     print(f"  branch={branch}")
     print(f"  path={path}")
+    print(f"  next: cd {path} && python3 tools/agentctl.py work "
+          f"--agent {agent} --task {task}")
+    print("  then run scripts/tests there; that checkout is exclusively yours.")
     return 0
 
 
@@ -5650,6 +5688,52 @@ def _close_windows_job(proc: subprocess.Popen) -> bool:
     return True
 
 
+def _loop_command_scope_violation(root: Path, cmd: str) -> str | None:
+    """Return a reason string if a loop command would write outside scope.
+
+    Loop Check commands are ordinary shell writes and must obey the same
+    session scope as any other mutation. Reuse the hook's shell classifier:
+    read-only commands are fine; path-writing commands must land inside the
+    active task's effective scope; commands whose paths cannot be enumerated
+    (opaque) are refused when the checkout is shared with a live peer.
+    """
+    try:
+        import importlib.util
+        hook_path = root / "tools" / "agent_workflow_hook.py"
+        spec = importlib.util.spec_from_file_location("_awk_hook_for_loop", hook_path)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+    except Exception:  # noqa: BLE001 - if the bridge is unavailable, fail closed
+        return "unable to load the command classifier to validate loop scope"
+    verdict = hook.classify_shell_command(cmd)
+    if verdict == "read_only":
+        return None
+    st = _load_session(root)
+    # Consistent with opaque-command and contamination gating: a session alone
+    # in its checkout may write anywhere (worktree-per-loop layout stays free);
+    # scope is enforced only when a live peer shares the checkout.
+    blockers = _blocking_session_rows(root, st.get("workflow_session_key"))
+    if not blockers:
+        return None
+    scope = _session_effective_scope(st)
+    if verdict == "opaque":
+        return (f"loop command '{cmd}' cannot prove its write paths and a "
+                "peer session shares this checkout; run it in a task worktree")
+    paths = hook.shell_write_paths(cmd, root)
+    for raw in paths:
+        rel, error = _normalize_claim_path(root, raw)
+        if error:
+            return f"loop command '{cmd}' targets {raw}: {error}"
+        if rel is None:
+            continue
+        if _controller_owned_claim_error(rel):
+            return f"loop command '{cmd}' writes controller-owned {rel}"
+        if not _path_in_scope(rel, scope):
+            return (f"loop command '{cmd}' writes {rel} outside the active task "
+                    f"scope {st.get('scope') or []}")
+    return None
+
+
 def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
     """Execute the commands a custom loop contract declares; exit codes decide status."""
     checks = []
@@ -5657,6 +5741,18 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
     failed = 0
     stopped_early = False
     for cmd in spec["commands"]:
+        scope_violation = _loop_command_scope_violation(root, cmd)
+        if scope_violation:
+            return {
+                "status": "failed",
+                "read": [str(_loop_path(root, loop_id).relative_to(root))],
+                "actions": ["Refused a loop command that would write outside the task scope."],
+                "checks": [scope_violation],
+                "feedback": ["Bound the loop's Check command to the task's write scope, "
+                             "or run it from a task worktree."],
+                "memory": ["No command was launched."],
+                "next": ["Fix the loop command scope, then re-run."],
+            }
         runtime = _cycle_runtime(root, normalize=False)
         execution_lease = _loop_execution_lease(root, normalize=False)
         execution_token = (
@@ -8036,10 +8132,13 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
                 "this command's written paths cannot be enumerated, so it "
                 "requires exclusive use of this checkout; other live sessions: "
                 f"{owners}. Wait until those sessions finish/release, or put the "
-                "next execution phase in a committed todo/ready task and allocate "
-                "its managed worktree before starting that phase (agentctl "
-                "worktree create --task <task-id> --agent <agent-name>). An "
-                "already-active shared-checkout task is not relocated implicitly."
+                "next execution phase in a task worktree before starting that "
+                "phase: create the task (leave it todo) and commit its plan "
+                "+ .agent/tasks doc, then `python3 tools/agentctl.py worktree "
+                "create --task <task-id> --agent <agent-name>`, cd into the "
+                "printed path, `work --agent <agent-name> --task <task-id>`, and "
+                "run the command there. An already-active shared-checkout task is "
+                "not relocated implicitly."
             )
         claims = []
         effective_scope = _session_effective_scope(st)
@@ -8067,16 +8166,23 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
                             f"{other.get('workflow_session_key')} task={other.get('task')}"
                         )
             claims.append(path)
-        checkout_rows = [
-            row for row in _session_rows_unlocked(root) if _same_checkout(root, row)
-        ]
-        for path in _workspace_contamination(root, checkout_rows):
-            problems.append(
-                f"tracked file {path} was modified outside every live session scope; "
-                "a write escaped the session guards (interpreter, script, or manual "
-                "edit). Revert it, claim it through a task scope, or let a human "
-                "commit it separately before continuing"
-            )
+        # The contamination scan protects concurrent peers from an escaped
+        # write that static command inspection could not attribute. With no
+        # other live session in this checkout there is nothing to protect, so
+        # skip it entirely - this also avoids a `git status` on every write in
+        # the recommended worktree-per-session layout.
+        if blockers:
+            checkout_rows = [
+                row for row in _session_rows_unlocked(root)
+                if _same_checkout(root, row)
+            ]
+            for path in _workspace_contamination(root, checkout_rows):
+                problems.append(
+                    f"tracked file {path} was modified outside every live session scope; "
+                    "a write escaped the session guards (interpreter, script, or manual "
+                    "edit). Revert it, claim it through a task scope, or let a human "
+                    "commit it separately before continuing"
+                )
         if problems:
             for problem in sorted(set(problems)):
                 print(f"agentctl: session guard blocked: {problem}", file=sys.stderr)
