@@ -53,10 +53,14 @@ scripts, test/build runners, archive and download tools, nested shells, and
 unknown executables — is an opaque write. Opaque writes require an active
 task session and exclusive use of the checkout: beside another live session
 they are refused with worktree guidance, because their output paths cannot
-be attributed afterwards. Every mutating action also reconciles the working
-tree; a tracked file modified outside every live session scope (including
-tracked dotfiles such as `.env`) blocks further mutations until reverted,
-claimed, or committed separately by a human.
+be attributed afterwards. When another session is live in the checkout, every mutating action also
+reconciles the working tree; a tracked file modified outside every live
+session scope (including tracked dotfiles such as `.env`) blocks further
+mutations until reverted, claimed, or committed separately by a human. A
+session alone in its checkout skips this scan entirely: there is no peer to
+protect, so an out-of-scope tracked edit does not block it and no `git
+status` runs on the write path — the recommended worktree-per-session layout
+stays fast.
 
 Three hardening rules close the remaining static-analysis gaps. Git
 subcommands are default-deny: only an explicit read allowlist (`status`,

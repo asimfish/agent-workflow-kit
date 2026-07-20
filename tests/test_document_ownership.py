@@ -220,6 +220,32 @@ class DocumentOwnershipRegressionTest(unittest.TestCase):
         steered = self.guard("src/one/ok.py", session="one")
         self.assertEqual(steered.returncode, 0, steered.stderr)
 
+    def test_solo_session_is_not_contamination_blocked(self):
+        """Efficiency: with no peers, an out-of-scope tracked edit must not block.
+
+        The contamination scan exists to protect concurrent peers. A session
+        alone in its checkout (the recommended worktree-per-script layout) has
+        no peer to protect, so a tracked file modified outside its task scope
+        must not block its own-scope writes, and the scan should be skipped
+        entirely to avoid a git status on every write.
+        """
+        def seed_commit(message):
+            subprocess.run(
+                ["git", "-c", "core.hooksPath=", "-c", "user.email=t@t.t",
+                 "-c", "user.name=t", "commit", "-qm", message],
+                cwd=self.root, check=True, timeout=60,
+            )
+
+        (self.root / "shared.cfg").write_text("v=1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "-A"], cwd=self.root, check=True, timeout=60)
+        seed_commit("seed install and shared config")
+        self.start("solo", "T-251", "src/one/")
+        self.agentctl("refresh", session="solo")
+        # A legitimate build step rewrote a tracked file outside the task scope.
+        (self.root / "shared.cfg").write_text("v=2\n", encoding="utf-8")
+        allowed = self.guard("src/one/out.json", session="solo")
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
     def test_plan_body_edits_and_own_row_changes_still_invalidate(self):
         self.start("one", "T-231", "src/one/")
         self.agentctl("refresh", session="one")
