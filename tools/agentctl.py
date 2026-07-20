@@ -5645,6 +5645,52 @@ def _close_windows_job(proc: subprocess.Popen) -> bool:
     return True
 
 
+def _loop_command_scope_violation(root: Path, cmd: str) -> str | None:
+    """Return a reason string if a loop command would write outside scope.
+
+    Loop Check commands are ordinary shell writes and must obey the same
+    session scope as any other mutation. Reuse the hook's shell classifier:
+    read-only commands are fine; path-writing commands must land inside the
+    active task's effective scope; commands whose paths cannot be enumerated
+    (opaque) are refused when the checkout is shared with a live peer.
+    """
+    try:
+        import importlib.util
+        hook_path = root / "tools" / "agent_workflow_hook.py"
+        spec = importlib.util.spec_from_file_location("_awk_hook_for_loop", hook_path)
+        hook = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(hook)
+    except Exception:  # noqa: BLE001 - if the bridge is unavailable, fail closed
+        return "unable to load the command classifier to validate loop scope"
+    verdict = hook.classify_shell_command(cmd)
+    if verdict == "read_only":
+        return None
+    st = _load_session(root)
+    # Consistent with opaque-command and contamination gating: a session alone
+    # in its checkout may write anywhere (worktree-per-loop layout stays free);
+    # scope is enforced only when a live peer shares the checkout.
+    blockers = _blocking_session_rows(root, st.get("workflow_session_key"))
+    if not blockers:
+        return None
+    scope = _session_effective_scope(st)
+    if verdict == "opaque":
+        return (f"loop command '{cmd}' cannot prove its write paths and a "
+                "peer session shares this checkout; run it in a task worktree")
+    paths = hook.shell_write_paths(cmd, root)
+    for raw in paths:
+        rel, error = _normalize_claim_path(root, raw)
+        if error:
+            return f"loop command '{cmd}' targets {raw}: {error}"
+        if rel is None:
+            continue
+        if _controller_owned_claim_error(rel):
+            return f"loop command '{cmd}' writes controller-owned {rel}"
+        if not _path_in_scope(rel, scope):
+            return (f"loop command '{cmd}' writes {rel} outside the active task "
+                    f"scope {st.get('scope') or []}")
+    return None
+
+
 def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
     """Execute the commands a custom loop contract declares; exit codes decide status."""
     checks = []
@@ -5652,6 +5698,18 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
     failed = 0
     stopped_early = False
     for cmd in spec["commands"]:
+        scope_violation = _loop_command_scope_violation(root, cmd)
+        if scope_violation:
+            return {
+                "status": "failed",
+                "read": [str(_loop_path(root, loop_id).relative_to(root))],
+                "actions": ["Refused a loop command that would write outside the task scope."],
+                "checks": [scope_violation],
+                "feedback": ["Bound the loop's Check command to the task's write scope, "
+                             "or run it from a task worktree."],
+                "memory": ["No command was launched."],
+                "next": ["Fix the loop command scope, then re-run."],
+            }
         runtime = _cycle_runtime(root, normalize=False)
         execution_lease = _loop_execution_lease(root, normalize=False)
         execution_token = (

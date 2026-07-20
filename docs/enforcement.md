@@ -104,6 +104,13 @@ deletion, forced or deleting pushes, and `worktree remove/move/prune` —
 require that no other conversation is live in ANY checkout of the
 repository, not just the current one.
 
+A loop's declared Check command is classified and scope-checked with the same
+rules before it runs: `loop run/auto/cycle` execute an arbitrary shell command
+outside the PreToolUse tool guard, so with a live peer sharing the checkout a
+loop command that writes outside the active task scope (or cannot prove its
+paths) fails the loop instead of running. A session alone in its checkout
+keeps full loop freedom, matching the opaque/contamination policy.
+
 Path guards enforce document ownership on top of the write scope. The active
 task's own document is always part of the effective scope, while
 controller-generated files (`board.json`, `TASKS.md`, the agent registry,

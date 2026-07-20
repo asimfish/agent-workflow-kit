@@ -202,3 +202,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-20 12:51:38 [T-092] Contamination scan now only runs when a peer session is live: fixes solo over-block and skips git status on the solo write path; multi-session protection unchanged.
 - 2026-07-20 13:15:56 [T-094] Read-only PreToolUse path now heartbeats in a single agentctl spawn (was two): ~100ms/read saved, liveness and never-block semantics preserved.
 - 2026-07-20 13:41:59 [T-096] Made the opaque-command worktree escape hatch actionable: block message and worktree-create output now print the exact create/cd/work steps; added an end-to-end regression that a blocked script runs after relocation.
+- 2026-07-20 14:29:18 [T-098] Loop Check commands are now scope-checked (peer-gated) with the same classifier as tool writes, closing a cross-session write channel; solo loops keep full freedom; built-in loops and cycle lifecycle unaffected.
