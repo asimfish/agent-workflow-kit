@@ -893,7 +893,24 @@ def shell_write_paths(command: str, cwd: Path | None = None) -> list[str]:
         elif executable == "ln" and args:
             # `ln [-s] target linkname` writes the link name; a bare
             # `ln target` links into the working directory.
-            add_target(args[-1] if len(args) >= 2 else args[0])
+            link_name = args[-1] if len(args) >= 2 else args[0]
+            add_target(link_name)
+            if len(args) >= 2:
+                # Claim the target too: a link whose target is outside scope
+                # would alias a peer's tree. A SYMLINK target is resolved
+                # relative to the link's own directory; a HARD link target is
+                # resolved relative to cwd (add_target's default).
+                target = args[0]
+                is_symlink = any(
+                    item.startswith("-") and "s" in item.lstrip("-")
+                    for item in command_args)
+                target_path = Path(target).expanduser()
+                if is_symlink and not target_path.is_absolute():
+                    link_path = Path(link_name).expanduser()
+                    if not link_path.is_absolute():
+                        link_path = working_dir / link_path
+                    target_path = link_path.parent / target
+                add_target(str(target_path))
         elif executable == "git":
             sub, tail = _git_segment_details(command_tokens)
             if sub in {"restore", "rm", "mv", "checkout", "clean"}:
