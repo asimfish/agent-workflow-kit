@@ -127,3 +127,5 @@
 | T17F063E6115138DE-007 | review | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-007.md](tasks/T17F063E6115138DE-007.md) | release approved concurrent main integration |
 | T17F063E6115138DE-008 | done | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/, integrations/` | [.agent/tasks/T17F063E6115138DE-008.md](tasks/T17F063E6115138DE-008.md) | integrate final main advances for concurrent release |
 | T3B43382C2174B290-001 | review | codex-gpt55-final-reviewer | `.agent/` | [.agent/tasks/T3B43382C2174B290-001.md](tasks/T3B43382C2174B290-001.md) | review final main advance integration |
+| T-104 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-104.md](tasks/T-104.md) | make checkpoint debounce change-aware per its documented contract |
+| T-105 | review | supervisor | `.agent/` | [.agent/tasks/T-105.md](tasks/T-105.md) | independently review T-104 change-aware debounce |

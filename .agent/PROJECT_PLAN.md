@@ -38,6 +38,8 @@ instead of relying on chat memory or repeated human prompts.
 ## Task Board
 - [ ] T3B43382C2174B290-001 - review final main advance integration (owner: codex-gpt55-final-reviewer)
 - [x] T17F063E6115138DE-008 - integrate final main advances for concurrent release (owner: codex)
+- [ ] T-105 - independently review T-104 change-aware debounce (owner: supervisor)
+- [x] T-104 - make checkpoint debounce change-aware per its documented contract (owner: cursor)
 - [ ] T-103 - independently review T-102 hook override warnings (owner: supervisor)
 - [x] T-102 - warn instead of silently overriding existing git hooks on init (owner: cursor)
 - [ ] T-101 - independently review T-100 eval target isolation (owner: supervisor)

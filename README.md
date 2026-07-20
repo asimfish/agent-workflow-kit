@@ -562,6 +562,13 @@ you deliberately want every cycle to bypass checkpoint debounce. An escalated
 follow-up always blocks the runtime even with `--continue-on-failure`.
 Setting `--max-failures` above 1 also requires `--continue-on-failure`.
 
+Checkpoint debounce is change-aware: within a checkpoint's debounce window a
+rerun is skipped only when the coordination docs (`PROJECT_PLAN.md`,
+`TASKS.md`, `board.json`) are unchanged since the last run. A genuine change
+to any of them bypasses the window and runs the checkpoint, matching the
+"do not rerun ... unless the plan changed" contract; `--force` still bypasses
+unconditionally.
+
 Cycle execution is resumable but not a daemon:
 
 - `loop status` reports the latest runtime ID, owner, progress, failures, and stop reason;

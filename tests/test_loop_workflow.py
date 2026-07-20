@@ -93,6 +93,38 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
             LOOP_CONTRACT.format(loop_id=loop_id, checkpoint=checkpoint, command=command),
             encoding="utf-8")
 
+    def test_checkpoint_debounce_is_bypassed_when_coordination_docs_change(self):
+        """The plan-triage contract says 'do not rerun ... unless the plan
+        changed'. Time-only debounce silently skips a genuinely-changed plan;
+        a coordination-doc change must bypass the window."""
+        self.agentctl("work", "--agent", "codex", "--auto-create",
+                      "--title", "debounce", "--scope", "src/", expect=0)
+        # A checkpoint with a real debounce window.
+        self.write_loop("dbnc", "dbnc", "true")
+        policy_path = self.root / ".agent" / "loops" / "checkpoints.json"
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy["checkpoints"]["dbnc"] = {
+            "loops": ["dbnc"], "strict": False,
+            "debounce_minutes": 30, "escalate_after": 3,
+        }
+        policy_path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+        self.agentctl("refresh", expect=0)
+
+        first = self.agentctl("loop", "auto", "--checkpoint", "dbnc", "--once", expect=0)
+        self.assertNotIn("skipped", (first.stdout + first.stderr).lower())
+        # No change -> within 30m -> debounced.
+        second = self.agentctl("loop", "auto", "--checkpoint", "dbnc", "--once", expect=0)
+        self.assertIn("skipped", (second.stdout + second.stderr).lower())
+        # Change a coordination doc -> must run despite the window.
+        plan = self.root / ".agent" / "PROJECT_PLAN.md"
+        plan.write_text(plan.read_text(encoding="utf-8") + "\nNEW PRIORITY\n", encoding="utf-8")
+        third = self.agentctl("loop", "auto", "--checkpoint", "dbnc", "--once", expect=0)
+        self.assertNotIn("skipped", (third.stdout + third.stderr).lower(),
+                         "debounce suppressed a run after the plan changed")
+        # Unchanged again -> debounced once more.
+        fourth = self.agentctl("loop", "auto", "--checkpoint", "dbnc", "--once", expect=0)
+        self.assertIn("skipped", (fourth.stdout + fourth.stderr).lower())
+
     def test_loop_command_cannot_write_into_a_peer_scope(self):
         """A loop Check command must not become a cross-session write channel.
 
