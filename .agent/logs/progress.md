@@ -197,3 +197,5 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-20 06:42:24 [T-082] 24/24 probes in fresh install with real second worktree; multi-session suite rerun clean from reviewer runtime; template parity confirmed; two deflaked timings verified 3x.
 - 2026-07-20 07:17:57 [T-088] Made single-path scope membership directional and glob-aware: ancestor paths (src) and cross-scope globs (src/*) that exceed the task scope are now rejected; _scopes_overlap unchanged for symmetric disjointness.
 - 2026-07-20 12:05:56 [T-089] 14/14 probes in ChemBench-style install; ancestor-glob regression and ownership suite rerun clean from reviewer runtime.
+- 2026-07-20 12:22:25 [T-090] Symlink/hardlink creation now scope-checks the link target (symlink target relative to link dir, hardlink relative to cwd); efficiency audit confirmed solo sessions and own-scope work beside peers are never over-blocked.
+- 2026-07-20 12:35:34 [T-091] 9/9 link probes: peer/outside/hardlink-to-peer/cd-subdir link creations blocked, own-scope links allowed, solo python/pytest unaffected.

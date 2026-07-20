@@ -95,3 +95,5 @@
 | T-082 | review | supervisor | `.agent/` | [.agent/tasks/T-082.md](tasks/T-082.md) | independently review T-081 shell parse and shared-ref fixes |
 | T-088 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-088.md](tasks/T-088.md) | block ancestor and glob paths that exceed task scope |
 | T-089 | review | supervisor | `.agent/` | [.agent/tasks/T-089.md](tasks/T-089.md) | independently review T-088 scope containment |
+| T-090 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-090.md](tasks/T-090.md) | block symlink and hardlink creation aliasing peer scopes |
+| T-091 | review | supervisor | `.agent/` | [.agent/tasks/T-091.md](tasks/T-091.md) | independently review T-090 symlink guard and efficiency |

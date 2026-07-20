@@ -1301,6 +1301,42 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertEqual(read_only.stdout, "")
 
+    def test_symlink_creation_targeting_a_peer_scope_is_blocked(self):
+        """Self-audit: `ln -s ../peer own/link` aliases a peer's tree.
+
+        A symlink whose target resolves (relative to the link's directory)
+        outside the task scope must be refused at creation, while links whose
+        target stays inside the scope remain usable.
+        """
+        self.start("one", "T-101", "src/one/")
+        self.start("two", "T-102", "src/two/")
+        self.agentctl("refresh", session="one")
+
+        for command in (
+            "ln -s ../two src/one/peerlink",
+            "ln -s ../../etc/passwd src/one/pw",
+            "ln -sf ../two/data.txt src/one/alias",
+            "ln src/two/real src/one/hardlink",
+        ):
+            decision = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertTrue(decision.stdout.strip(), command)
+            self.assertEqual(json.loads(decision.stdout).get("decision"), "block", command)
+        # Links whose target stays inside the own scope are allowed.
+        for command in (
+            "ln -s data.txt src/one/mylink",
+            "ln -s nested/f src/one/f2",
+        ):
+            allowed = self.hook(
+                "pre-tool-use",
+                {"tool_name": "Bash", "tool_input": {"command": command}},
+                session="one",
+            )
+            self.assertNotIn('"decision": "block"', allowed.stdout, command)
+
     def test_ancestor_and_glob_paths_that_exceed_scope_are_blocked(self):
         """Self-audit: `rm src/*` / `rm src` must not slip past a src/one scope.
 
