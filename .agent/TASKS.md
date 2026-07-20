@@ -99,3 +99,5 @@
 | T-091 | review | supervisor | `.agent/` | [.agent/tasks/T-091.md](tasks/T-091.md) | independently review T-090 symlink guard and efficiency |
 | T-092 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-092.md](tasks/T-092.md) | skip contamination scan when no peers to avoid over-block and cost |
 | T-093 | review | supervisor | `.agent/` | [.agent/tasks/T-093.md](tasks/T-093.md) | independently review T-092 solo scan skip |
+| T-094 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-094.md](tasks/T-094.md) | halve read-only hook latency by removing redundant status spawn |
+| T-095 | review | supervisor | `.agent/` | [.agent/tasks/T-095.md](tasks/T-095.md) | independently review T-094 read-only hook latency |

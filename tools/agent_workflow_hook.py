@@ -1098,11 +1098,14 @@ def pre_tool_use() -> int:
             "Agent Workflow Kit blocked this action because this conversation does "
             "not have a unique workflow identity. " + identity_error + ".",
         )
-    active = has_session(root, env)
     if not mutating:
-        if active:
-            heartbeat(root, env)
+        # Read-only path: refresh the heartbeat in a single spawn. The
+        # heartbeat command is a no-op (nonzero, ignored) when there is no
+        # active/owned session, so we skip the extra `status --json` spawn
+        # that `has_session` would cost on every read.
+        heartbeat(root, env)
         return 0
+    active = has_session(root, env)
     if not active:
         return block(
             "PreToolUse",

@@ -200,3 +200,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-07-20 12:22:25 [T-090] Symlink/hardlink creation now scope-checks the link target (symlink target relative to link dir, hardlink relative to cwd); efficiency audit confirmed solo sessions and own-scope work beside peers are never over-blocked.
 - 2026-07-20 12:35:34 [T-091] 9/9 link probes: peer/outside/hardlink-to-peer/cd-subdir link creations blocked, own-scope links allowed, solo python/pytest unaffected.
 - 2026-07-20 12:51:38 [T-092] Contamination scan now only runs when a peer session is live: fixes solo over-block and skips git status on the solo write path; multi-session protection unchanged.
+- 2026-07-20 13:15:56 [T-094] Read-only PreToolUse path now heartbeats in a single agentctl spawn (was two): ~100ms/read saved, liveness and never-block semantics preserved.
