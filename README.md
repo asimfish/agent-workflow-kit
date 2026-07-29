@@ -44,11 +44,15 @@ This is equivalent to:
 python3 tools/agentctl.py init /path/to/your/project
 ```
 
-Installation is preflighted before any file is written. Existing `AGENTS.md`, PR
-template, and Codex/Claude/Cursor hook JSON are merged in managed sections while
-project content is preserved. Project-owned `.agent/` plans, tasks, rules, and
-runtime history are seeded only when absent. Re-running `init` is idempotent and
-upgrades unchanged kit-managed tools using `.agent/install-manifest.json`.
+Normal installation is preflighted before any file is written. Existing
+`AGENTS.md`, PR template, and Codex/Claude/Cursor hook JSON are merged in managed
+sections while project content is preserved. Project-owned `.agent/` plans,
+tasks, rules, and runtime history are seeded only when absent. Re-running `init`
+is idempotent.
+The install manifest records the kit version, schema, source commit, and protocol
+epoch. A protocol-changing upgrade first replaces only the managed controller
+and hook bridge with barrier-aware entrypoints, then waits while active or
+uninspected stale conversations can still write.
 
 On the first clone/install or after a managed hook upgrade, review and trust the
 project hooks if the client asks. In Codex, inspect `/hooks`; in Claude Code or
@@ -73,23 +77,26 @@ Preserve project-owned .agent plans and task history, run agentctl migrate, and
 follow its action until it returns continue. Never auto-release another session.
 ```
 
-The agent reruns the same idempotent `init`, then uses the installed read-only
-`migrate` audit. Other conversations do not need manual command sequences. The
-updated managed `AGENTS.md` block makes them audit their state before resuming.
+The agent reruns the same idempotent `init`. If writers remain, it upgrades the
+managed enforcement entrypoints, defers template/state migration, and lists the
+conversations that must finish or release. Existing supervised background runs
+may finish during this drain; new tasks, runs, resources, worktrees, and file
+writes are blocked.
 
-For conversations that are already open when the upgrade happens, use this
-one-time transition:
+After installation, a conversation created under the old protocol must re-read
+its plan and task document and run:
 
-1. Stop editing in every old conversation and let one agent finish the upgrade.
-2. Close each old conversation and reopen it in the same project. This reruns the
-   new `SessionStart` hook and gives that conversation an identity that is not
-   shared with another agent in the same terminal.
-3. Tell each reopened agent only `按 .agent 规范开始工作。` The agent runs
-   `migrate`, follows the reported action, and then claims or resumes work.
+```bash
+python3 tools/agentctl.py upgrade rebind
+```
 
-Do not keep an old-kit conversation writing while new-kit conversations are
-active in the same checkout. Reopening is required only for this transition;
-normal future conversations receive an isolated identity automatically.
+Old-epoch writes remain blocked until that explicit rebind. Reopening is only
+necessary when `migrate` reports that the client never supplied a trusted
+conversation identity.
+
+The drain barrier governs the kit-managed project entrypoints. Arbitrary copied
+old controllers and untrusted processes that ignore project hooks require an OS
+sandbox or separate access-control boundary.
 
 | Action | Agent behavior |
 |---|---|
@@ -213,8 +220,14 @@ parent and child ID and then fails to propagate the instance established by its
 The coordination policy is deliberately small:
 
 - Disjoint task scopes may work concurrently in one checkout.
-- The same task, overlapping scopes, an out-of-scope path, or a file claimed by
-  another session is blocked.
+- Task type selects isolation automatically: `code` and `experiment` use
+  managed worktrees, `maintenance` is exclusive, `docs` uses the shared
+  checkout, and `review` is read-only.
+- The same task is blocked across all linked worktrees. `maintenance` is
+  repository-wide exclusive. Overlapping scopes, out-of-scope paths, and files
+  claimed by another session are blocked inside a shared checkout.
+- One conversation owns one task at a time. It releases a planning task before
+  moving into a different task worktree.
 - Git index, HEAD, branch, merge, and push operations are exclusive per checkout.
   Parallel commit-producing work should use `agentctl worktree create`.
 - Commands whose written paths cannot be enumerated statically — interpreters
@@ -237,9 +250,20 @@ The coordination policy is deliberately small:
   an exclusive checkout. Read/search/plan tools remain usable beside peers.
 - A missing heartbeat marks a session stale but does not discard its claim.
   After inspection, an agent can explicitly release it and resume the existing
-  task; task docs and working files are preserved.
+  task; task docs and working files are preserved. A stale record whose
+  persisted absolute checkout path no longer exists is shown as `orphaned` and
+  retained for audit, but no longer blocks work. Filesystem probe errors remain
+  fail-closed as `stale`.
 - Task/plan/log transitions are serialized with an OS advisory lock, and each
   session writes only its own atomically replaced JSON record.
+- `agentctl run` owns detached commands and declared outputs. `agentctl
+  resource` atomically leases local or SSH-addressed resources such as a GPU;
+  only the holder conversation may stop or finish a run, and a private
+  single-use supervisor claim prevents replay. A supervised run releases its
+  resources only after confirmed completion. Resource release has no public
+  force-takeover option; direct and run-owned leases must present their exact
+  holder type and ID. Experiment tasks require a
+  successful run with an existing declared output before finish.
 
 These hooks are coordination guardrails, not an OS sandbox. Commands with hidden
 or complex side effects belong in a managed worktree; untrusted code additionally
@@ -269,7 +293,9 @@ session's scope is treated as an escaped write and blocks further mutations
 until it is reverted, claimed, or committed separately by a human. An explicit
 `work --auto-create --new-id/--title` request always creates and claims the
 named task instead of silently picking up another queued task that shares the
-agent name.
+agent name. Shared-task auto-creation holds one coordination lock across
+conflict preflight, task creation, and session start, so a rejected exclusive
+or overlapping claim leaves no task row or document behind.
 
 Read receipts are scope-aware so shared-index churn does not stall the room:
 another task being created or finished rewrites only its own `TASKS.md` row,
@@ -303,9 +329,11 @@ When an agent starts work, it should follow this cycle:
 1. Read `AGENTS.md`, `.agent/WORKFLOW_ENTRY.md`, the project plan, task index,
    rules, and relevant task doc.
 2. Run `agentctl work --agent <agent-name>`.
-3. If no matching task exists, create one with
-   `agentctl work --agent <agent-name> --auto-create --title "..." --scope "..."`.
-4. Work only inside the active task write scope.
+3. If no matching task exists, create one with `agentctl work --agent
+   <agent-name> --auto-create --title "..." --scope "..." --type
+   code|experiment|docs|review|maintenance|generic`.
+4. Follow the printed task capsule and work only inside the active scope or the
+   managed worktree path printed by `work`.
 5. Record meaningful progress with `agentctl note "..."`.
 6. Finish with `agentctl finish --summary "..." --tests "..."`.
 7. For an independently gated task, a registered supervisor/reviewer starts a
@@ -663,9 +691,11 @@ candidate does not control the suite or write the decision. See
 | Module | Files | Role |
 |---|---|---|
 | Entry protocol | `AGENTS.md`, `.agent/WORKFLOW_ENTRY.md` | Tells every agent how to start from the same workflow. |
-| Plan and tasks | `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, `.agent/tasks/*.md`, `.agent/board.json` | Durable plan, task contracts, status, and progress. |
+| Plan and tasks | `.agent/PROJECT_PLAN.md`, `.agent/TASKS.md`, `.agent/tasks/*.md`, `.agent/board.json` | `board.json` is canonical for task state; Markdown views carry human plans, contracts, and evidence and are checked bidirectionally. |
 | Loop runtime | `.agent/loops/*`, `agentctl loop ...` | Bounded Trigger -> Execute -> Check -> Feedback -> Memory -> Next cycles. |
 | Worktree leases | Git common dir, `agentctl worktree ...` | Isolates parallel agents with shared allocation state and non-destructive release. |
+| Execution leases | Git common dir, `agentctl lease/run/resource ...` | Attributes conversations, worktrees, background processes, outputs, and scarce resources to one task. |
+| Upgrade barrier | Install manifest, Git common upgrade state, `agentctl upgrade ...` | Drains writers, validates protocol changes, and requires old sessions to rebind. |
 | Harness evaluation | `.agent/evals/suites.json`, `.agent/state/evals/*`, `agentctl eval ...` | Keeps versioned policy separate from local signed evidence and compares held-in/held-out results before acceptance. |
 | Controller | `tools/agentctl.py` | Starts tasks, records notes, finishes tasks, runs checks and loops. |
 | Lifecycle hooks | `tools/agent_workflow_hook.py`, `.codex/`, `.claude/`, `.cursor/` | Injects workflow context and blocks mutating actions when no task is active where supported. |
@@ -673,6 +703,9 @@ candidate does not control the suite or write the decision. See
 | CI gate | `.github/workflows/agent-workflow-check.yml` | Catches bypassed local checks on GitHub. |
 | Handoffs | `.agent/handoffs/`, `.agent/bus/` | File-based packets for multi-agent task handoff. |
 | Supervisor guidance | `.agent/bus/`, `.agent/handoffs/`, `agentctl guidance ...` | Higher-capability planning models can send durable task guidance to worker agents such as Codex. |
+
+See `docs/multi-session-execution.md` for ownership, isolation, process, resource,
+upgrade, and copied-history invariants.
 
 ## GitHub Standards
 
@@ -718,6 +751,7 @@ agentctl init [path]                                install into a project
 agentctl work --agent <name>                        resume or claim work
 agentctl work --agent <name> --auto-create --title --scope
 agentctl focus                                      reprint current task focus
+agentctl capsule [--json]                           print bounded task/runtime context
 agentctl note "..."                                 record progress
 agentctl finish --summary "..." --tests "..."       move task to review
 agentctl gate approve|reject --task --by            review gate
@@ -730,6 +764,12 @@ agentctl loop list|show|run <id> --once             inspect or run one loop
 agentctl loop auto --checkpoint <name> --once       run checkpoint policy
 agentctl loop cycle --checkpoint <name> --cycles N  run a durable bounded cycle
 agentctl loop status|resume|stop                    inspect or control the latest cycle
+agentctl lease list [--json]                        inspect unified execution ownership
+agentctl run start|adopt|list|show|wait|finish|stop supervise background work
+agentctl resource acquire|status|release             lease a local or remote resource
+agentctl upgrade begin|status|validate|complete      manage a protocol drain barrier
+agentctl upgrade rebind                              bind an old session to the installed epoch
+agentctl reconcile check|render|migrate              verify or regenerate task views
 agentctl board [--json]                             show board
 agentctl check --mode manual|pre-commit|commit-msg|pre-push|ci
 agentctl doctor [--json]                            diagnose installed workflow health

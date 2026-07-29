@@ -58,14 +58,23 @@ PROVIDER_BINDING_SCHEMA = 1
 PROVIDER_BINDING_PENDING_NS = 5 * 60 * 1_000_000_000
 PROVIDER_BINDING_LOCK_STALE_NS = 30 * 1_000_000_000
 PROVIDER_BINDING_LOCK_WAIT_SECONDS = 2.0
+READ_HEARTBEAT_DEBOUNCE_SECONDS = 60.0
 AGENTCTL_ACTION_COMMANDS = frozenset({
-    "task", "agents", "handoff", "worktree", "eval", "guidance", "loop", "sessions",
+    "task", "reconcile", "agents", "handoff", "worktree", "lease", "run",
+    "resource", "eval", "guidance", "loop", "sessions", "upgrade",
 })
 IDENTITY_FREE_COMMAND_PATHS = frozenset({
     ("init",),
     ("focus",),
+    ("capsule",),
     ("board",),
     ("task", "show"),
+    ("reconcile", "check"),
+    ("lease", "list"),
+    ("run", "list"),
+    ("run", "show"),
+    ("run", "wait"),
+    ("resource", "status"),
     ("agents", "list"),
     ("handoff", "list"),
     ("handoff", "show"),
@@ -79,6 +88,8 @@ IDENTITY_FREE_COMMAND_PATHS = frozenset({
     ("check",),
     ("migrate",),
     ("sessions", "list"),
+    ("upgrade", "status"),
+    ("upgrade", "validate"),
     ("status",),
 })
 
@@ -2114,9 +2125,91 @@ def guard_session(root: Path, payload: dict, env: dict) -> tuple[bool, str]:
     return False, (result.stderr or result.stdout).strip()
 
 
-def heartbeat(root: Path, env: dict) -> None:
+def heartbeat(root: Path, env: dict) -> bool:
     agentctl = root / "tools" / "agentctl.py"
-    run([sys.executable, str(agentctl), "sessions", "heartbeat"], root, env)
+    result = run([sys.executable, str(agentctl), "sessions", "heartbeat"], root, env)
+    return result.returncode == 0
+
+
+def heartbeat_in_background(root: Path, env: dict) -> bool:
+    """Refresh liveness without adding controller latency to a read-only tool."""
+    agentctl = root / "tools" / "agentctl.py"
+    detach = {}
+    if os.name == "nt":
+        detach["creationflags"] = getattr(
+            subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+        )
+    else:
+        detach["start_new_session"] = True
+    try:
+        subprocess.Popen(
+            [sys.executable, str(agentctl), "sessions", "heartbeat"],
+            cwd=str(root), env=env, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            close_fds=True, **detach,
+        )
+        return True
+    except OSError:
+        # A spawn failure is unusual; retain the prior synchronous fallback so
+        # liveness is not silently lost on a constrained host.
+        return heartbeat(root, env)
+
+
+def _git_common_dir_fast(root: Path) -> Path | None:
+    dotgit = root / ".git"
+    if dotgit.is_dir():
+        return dotgit.resolve()
+    try:
+        line = dotgit.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    if not line.startswith("gitdir:"):
+        return None
+    git_dir = Path(line.split(":", 1)[1].strip())
+    if not git_dir.is_absolute():
+        git_dir = root / git_dir
+    git_dir = git_dir.resolve()
+    try:
+        common_value = (git_dir / "commondir").read_text(
+            encoding="utf-8"
+        ).strip()
+    except OSError:
+        return git_dir
+    common = Path(common_value)
+    if not common.is_absolute():
+        common = git_dir / common
+    return common.resolve()
+
+
+def heartbeat_if_due(root: Path, env: dict) -> None:
+    identity = "\n".join(
+        f"{name}={str(env.get(name) or '').strip()}"
+        for name in (
+            SESSION_KEY_ENV, SESSION_ID_ENV, SESSION_INSTANCE_ENV,
+            *RUNTIME_ID_ENV_NAMES,
+        )
+        if str(env.get(name) or "").strip()
+    )
+    common = _git_common_dir_fast(root)
+    if not identity or common is None:
+        heartbeat(root, env)
+        return
+    digest = hashlib.sha256(
+        f"{root.resolve()}\n{identity}".encode("utf-8")
+    ).hexdigest()[:24]
+    marker = common / "agent-workflow" / "hook-heartbeats" / digest
+    try:
+        age = time.time() - marker.stat().st_mtime
+        if age < READ_HEARTBEAT_DEBOUNCE_SECONDS:
+            return
+    except OSError:
+        pass
+    heartbeat_in_background(root, env)
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.touch()
+    except OSError:
+        pass
 
 
 def is_finalization_action(payload: dict) -> bool:
@@ -2217,13 +2310,20 @@ def pre_tool_use() -> int:
     if not (root / ".agent").exists():
         return 0
     payload = read_input()
+    initial_env = hook_environment(payload)
+    mutating = is_mutating_tool(payload)
+    controller_mutation = command_requires_agentctl_identity(payload_command(payload))
+    if not mutating and not controller_mutation:
+        # Read-only calls are the hottest path. A filesystem marker keeps
+        # liveness current without paying status + heartbeat subprocesses for
+        # every read; all mutations still take the full fail-closed path.
+        heartbeat_if_due(root, initial_env)
+        return 0
     env = resolve_existing_session_environment(
-        root, payload, hook_environment(payload),
+        root, payload, initial_env,
         claim_runtime_binding=command_is_agentctl_start(payload_command(payload)),
     )
     identity_error = session_identity_error(env)
-    mutating = is_mutating_tool(payload)
-    controller_mutation = command_requires_agentctl_identity(payload_command(payload))
     if identity_error and (mutating or controller_mutation):
         return block(
             "PreToolUse",
@@ -2231,11 +2331,10 @@ def pre_tool_use() -> int:
             "not have a unique workflow identity. " + identity_error + ".",
         )
     if not mutating:
-        # Read-only path: refresh the heartbeat in a single spawn. The
-        # heartbeat command is a no-op (nonzero, ignored) when there is no
-        # active/owned session, so we skip the extra `status --json` spawn
-        # that `has_session` would cost on every read.
-        heartbeat(root, env)
+        # `agentctl work/start` is identity-sensitive but intentionally runs
+        # before a task session exists. Provider binding above must complete;
+        # after that the controller itself owns the state transition.
+        heartbeat_if_due(root, env)
         return 0
     active = has_session(root, env)
     if not active:

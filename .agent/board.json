@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-07-20 17:06:53",
+  "updated_at": "2026-07-29 22:34:29",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1500,6 +1500,376 @@
       "deps": [],
       "created_at": "2026-07-20 17:06:12",
       "updated_at": "2026-07-20 17:06:53"
+    },
+    "TB0621800D60E51C4-001": {
+      "title": "implement unified multi-session execution architecture",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        "integrations/",
+        "docs/",
+        "README.md",
+        ".github/",
+        ".githooks/",
+        "hooks/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-23 17:38:48",
+      "updated_at": "2026-07-29 22:34:29"
+    },
+    "T-083": {
+      "title": "close independent review isolation gaps",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 02:57:49",
+      "updated_at": "2026-07-20 02:57:49",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T-084": {
+      "title": "independently review T-082 review record and T-083 isolation fixes (PR #17)",
+      "status": "review",
+      "owner": "independent-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:06:45",
+      "updated_at": "2026-07-20 04:06:45",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T-085": {
+      "title": "review T-081 resubmission and T-083/T-084 evidence",
+      "status": "review",
+      "owner": "independent-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:36:31",
+      "updated_at": "2026-07-20 04:38:29",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T-086": {
+      "title": "integrate independent T-081 review evidence",
+      "status": "review",
+      "owner": "codex-integrator",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:47:14",
+      "updated_at": "2026-07-20 04:47:14",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T-087": {
+      "title": "close residual shared-checkout isolation boundaries",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".codex/",
+        ".claude/",
+        ".cursor/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:50:30",
+      "updated_at": "2026-07-20 04:50:30",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T17F063E6115138DE-001": {
+      "title": "close residual repo-wide Git guard gaps",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agent_workflow_hook.py",
+        "templates/project/tools/agent_workflow_hook.py",
+        "tests/test_multi_session_workflow.py"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:56:06",
+      "updated_at": "2026-07-20 12:56:06",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T17F063E6115138DE-002": {
+      "title": "package and publish approved concurrent isolation release",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:44:50",
+      "updated_at": "2026-07-20 13:44:50",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:32"
+      }
+    },
+    "T17F063E6115138DE-003": {
+      "title": "ignore already-published commits in pre-push scan",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".githooks/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:47:32",
+      "updated_at": "2026-07-20 13:47:32",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-004": {
+      "title": "exclude already-published commits from pre-push validation",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "hooks/",
+        ".githooks/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:51:04",
+      "updated_at": "2026-07-20 13:51:04",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-005": {
+      "title": "release pre-push published-commit fix",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "hooks/",
+        ".githooks/",
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:44:18",
+      "updated_at": "2026-07-20 14:44:18",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-006": {
+      "title": "integrate concurrent main advances without history loss",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".claude/",
+        ".codex/",
+        ".cursor/",
+        "hooks/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:55:14",
+      "updated_at": "2026-07-20 14:55:14",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-007": {
+      "title": "release approved concurrent main integration",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".claude/",
+        ".codex/",
+        ".cursor/",
+        "hooks/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:59:21",
+      "updated_at": "2026-07-20 15:59:21",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-008": {
+      "title": "integrate final main advances for concurrent release",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".claude/",
+        ".codex/",
+        ".cursor/",
+        "hooks/",
+        "integrations/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 16:04:13",
+      "updated_at": "2026-07-20 16:04:13",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T3B43382C2174B290-001": {
+      "title": "review final main advance integration",
+      "status": "review",
+      "owner": "codex-gpt55-final-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 16:30:27",
+      "updated_at": "2026-07-20 16:30:27",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T622DE1DE69A1D0F8-001": {
+      "title": "independently review T-098 concurrent isolation recovery",
+      "status": "review",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:26:27",
+      "updated_at": "2026-07-20 12:26:27",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:35"
+      }
+    },
+    "TA74E81A93FF7EB9D-001": {
+      "title": "review concurrent main integration and collision migration",
+      "status": "review",
+      "owner": "claude-sonnet-merge-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:24:11",
+      "updated_at": "2026-07-20 15:24:11",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:35"
+      }
+    },
+    "TA80D9103F5316278-001": {
+      "title": "independently review residual repo-wide Git guard closure",
+      "status": "review",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:26:45",
+      "updated_at": "2026-07-20 13:26:45",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:37"
+      }
+    },
+    "TD851EF749F675DC5-001": {
+      "title": "review pre-push published-commit filter",
+      "status": "review",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:17:11",
+      "updated_at": "2026-07-20 14:17:11",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:37"
+      }
+    },
+    "TB0621800D60E51C4-002": {
+      "title": "independent review of unified multi-session architecture",
+      "type": "review",
+      "status": "in_progress",
+      "owner": "independent-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-23 21:30:01",
+      "updated_at": "2026-07-23 21:41:13"
     }
   }
 }

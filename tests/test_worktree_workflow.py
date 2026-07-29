@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -13,6 +14,23 @@ from unittest import mock
 
 
 KIT = Path(__file__).resolve().parents[1]
+IDENTITY_ENV = (
+    "CODEX_THREAD_ID",
+    "CLAUDE_CODE_SESSION_ID",
+    "CURSOR_CONVERSATION_ID",
+    "WHALENT_AGENT_ID",
+    "WHALENT_CODEX_INSTANCE_ID",
+    "WHALENT_COMPOSER_ID",
+    "WHALENT_FORK_SOURCE_AGENT_ID",
+    "AGENT_SESSION_ID",
+    "TERM_SESSION_ID",
+    "AGENT_WORKFLOW_SESSION_ID",
+    "AGENT_WORKFLOW_SESSION_KEY",
+    "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME",
+    "AGENT_WORKFLOW_SESSION_INSTANCE_ID",
+    "AGENT_WORKFLOW_PARENT_SESSION_KEY",
+    "AGENT_WORKFLOW_SESSION_ISOLATION_ERROR",
+)
 
 
 def path_is_relative_to(path, parent):
@@ -25,8 +43,12 @@ def path_is_relative_to(path, parent):
 
 class WorktreeWorkflowRegressionTest(unittest.TestCase):
     def setUp(self):
+        test_env = os.environ.copy()
+        for name in IDENTITY_ENV:
+            test_env.pop(name, None)
+        test_env["AGENT_WORKFLOW_SESSION_ID"] = "worktree-regression-session"
         identity = mock.patch.dict(
-            os.environ, {"AGENT_WORKFLOW_SESSION_ID": "worktree-regression-session"},
+            os.environ, test_env, clear=True,
         )
         identity.start()
         self.addCleanup(identity.stop)
@@ -132,6 +154,51 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             text=True, capture_output=True, timeout=120,
         )
 
+    def test_code_auto_create_bootstraps_an_isolated_worktree(self):
+        created = self.agentctl(
+            "work", "--agent", "codex", "--auto-create",
+            "--new-id", "T-401", "--title", "isolated code task",
+            "--scope", "src/code/", "--type", "code", expect=0,
+        )
+        match = re.search(r"^  path=(.+)$", created.stdout, re.MULTILINE)
+        self.assertIsNotNone(match, created.stdout)
+        worker = Path(match.group(1))
+        self.addCleanup(shutil.rmtree, worker, ignore_errors=True)
+
+        base_board = json.loads(
+            (self.root / ".agent" / "board.json").read_text(encoding="utf-8")
+        )
+        self.assertNotIn("T-401", base_board["tasks"])
+        worker_board = json.loads(
+            (worker / ".agent" / "board.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(worker_board["tasks"]["T-401"]["type"], "code")
+        self.assertEqual(worker_board["tasks"]["T-401"]["status"], "todo")
+
+        self.agentctl(
+            "work", "--agent", "codex", "--task", "T-401",
+            cwd=worker, expect=0,
+        )
+        status = json.loads(
+            self.agentctl("status", "--json", cwd=worker, expect=0).stdout
+        )
+        self.assertEqual(status["task"], "T-401")
+        self.assertEqual(status["isolation"], "worktree")
+
+    def test_docs_auto_create_uses_the_shared_checkout_fast_path(self):
+        self.agentctl(
+            "work", "--agent", "writer", "--auto-create",
+            "--new-id", "T-402", "--title", "shared docs task",
+            "--scope", "docs/", "--type", "docs", expect=0,
+        )
+        status = json.loads(self.agentctl("status", "--json", expect=0).stdout)
+        self.assertEqual(status["task"], "T-402")
+        self.assertEqual(status["isolation"], "shared")
+        board = json.loads(
+            (self.root / ".agent" / "board.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(board["tasks"]["T-402"]["type"], "docs")
+
     def test_worktree_flow_lets_a_blocked_script_run_after_relocation(self):
         """End-to-end escape hatch: opaque command blocked beside a peer, then
         runnable in the leased worktree after the worker starts its task."""
@@ -174,6 +241,10 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             "--path", str(wt), env=env_b, expect=0,
         )
         self.assertIn("cd ", created.stdout)  # actionable next step printed
+        self.agentctl(
+            "sessions", "release", "--reason", "move planning work to task worktree",
+            env=env_b, expect=0,
+        )
         self.agentctl("work", "--agent", "cursor", "--task", "T-5090",
                       cwd=wt, env=env_b, expect=0)
 
@@ -258,6 +329,157 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             self.agentctl("worktree", "list", "--json", expect=0).stdout
         )["worktrees"]
         self.assertEqual(final_rows[0]["observed_status"], "released")
+
+    def test_same_task_cannot_start_in_two_linked_worktrees(self):
+        self.agentctl(
+            "task", "create", "--id", "T-601", "--title", "single authority",
+            "--owner", "codex", "--scope", "src/shared/", "--type", "generic",
+            expect=0,
+        )
+        self.commit("chore(agent): plan single authority\n\nRefs: T-601")
+        first = self.temp / "authority-a"
+        second = self.temp / "authority-b"
+        self.git("worktree", "add", "-q", "-b", "test/authority-a", str(first), "HEAD")
+        self.git("worktree", "add", "-q", "-b", "test/authority-b", str(second), "HEAD")
+        env_a = os.environ.copy()
+        env_a["AGENT_WORKFLOW_SESSION_ID"] = "authority-a"
+        env_b = os.environ.copy()
+        env_b["AGENT_WORKFLOW_SESSION_ID"] = "authority-b"
+
+        self.agentctl(
+            "work", "--agent", "codex", "--task", "T-601",
+            cwd=first, env=env_a, expect=0,
+        )
+        blocked = self.agentctl(
+            "work", "--agent", "codex", "--task", "T-601",
+            cwd=second, env=env_b, expect=1,
+        )
+        self.assertIn("already claimed", blocked.stderr)
+
+    def test_exclusive_maintenance_blocks_sessions_in_other_worktrees(self):
+        created = self.agentctl(
+            "work", "--agent", "maintainer", "--auto-create",
+            "--new-id", "T-611", "--title", "exclusive maintenance",
+            "--scope", "maintenance/", "--type", "maintenance", expect=0,
+        )
+        match = re.search(r"^  path=(.+)$", created.stdout, re.MULTILINE)
+        self.assertIsNotNone(match, created.stdout)
+        worker = Path(match.group(1))
+        env_maintenance = os.environ.copy()
+        env_maintenance["AGENT_WORKFLOW_SESSION_ID"] = "maintenance-owner"
+        env_docs = os.environ.copy()
+        env_docs["AGENT_WORKFLOW_SESSION_ID"] = "docs-peer"
+        self.agentctl(
+            "work", "--agent", "maintainer", "--task", "T-611",
+            cwd=worker, env=env_maintenance, expect=0,
+        )
+        blocked = self.agentctl(
+            "work", "--agent", "writer", "--auto-create",
+            "--new-id", "T-612", "--title", "parallel docs",
+            "--scope", "docs/parallel/", "--type", "docs",
+            env=env_docs, expect=1,
+        )
+        self.assertIn("exclusive", blocked.stderr)
+        board = json.loads((self.root / ".agent" / "board.json").read_text())
+        self.assertNotIn("T-612", board["tasks"])
+        self.assertFalse((self.root / ".agent" / "tasks" / "T-612.md").exists())
+        self.assertNotIn(
+            "T-612", (self.root / ".agent" / "TASKS.md").read_text(),
+        )
+        self.assertNotIn(
+            "T-612", (self.root / ".agent" / "PROJECT_PLAN.md").read_text(),
+        )
+
+    def test_stale_session_with_missing_checkout_is_audited_but_not_authoritative(self):
+        self.agentctl(
+            "task", "create", "--id", "T-631", "--title", "old checkout",
+            "--owner", "codex", "--scope", "src/old/", "--type", "generic",
+            expect=0,
+        )
+        self.commit("chore(agent): plan orphan checkout\n\nRefs: T-631")
+        old_checkout = self.temp / "orphaned-worker"
+        self.git(
+            "worktree", "add", "-q", "-b", "test/orphaned-worker",
+            str(old_checkout), "HEAD",
+        )
+        reused_env = os.environ.copy()
+        reused_env["AGENT_WORKFLOW_SESSION_ID"] = "reused-after-orphan"
+        self.agentctl(
+            "work", "--agent", "codex", "--task", "T-631",
+            cwd=old_checkout, env=reused_env, expect=0,
+        )
+        common_raw = self.git("rev-parse", "--git-common-dir")
+        common = Path(common_raw)
+        if not common.is_absolute():
+            common = (self.root / common).resolve()
+        session_paths = list(
+            (common / "agent-workflow" / "sessions").glob("session-*.json"),
+        )
+        old_record = next(
+            path for path in session_paths
+            if json.loads(path.read_text()).get("task") == "T-631"
+        )
+        record = json.loads(old_record.read_text())
+        record["heartbeat_ns"] = 1
+        record["heartbeat_at"] = "1970-01-01 00:00:00"
+        old_record.write_text(
+            json.dumps(record, indent=2) + "\n", encoding="utf-8",
+        )
+        self.git("worktree", "remove", "--force", str(old_checkout))
+
+        rows = json.loads(
+            self.agentctl(
+                "sessions", "list", "--json", env=reused_env, expect=0,
+            ).stdout
+        )["sessions"]
+        orphaned = next(row for row in rows if row["task"] == "T-631")
+        self.assertEqual(orphaned["observed_status"], "orphaned")
+
+        started = self.agentctl(
+            "work", "--agent", "writer", "--auto-create",
+            "--new-id", "T-632", "--title", "new checkout work",
+            "--scope", "docs/new/", "--type", "docs",
+            env=reused_env, expect=0,
+        )
+        self.assertIn("started T-632", started.stdout)
+
+    def test_experiment_finish_requires_successful_declared_output(self):
+        created = self.agentctl(
+            "work", "--agent", "researcher", "--auto-create",
+            "--new-id", "T-621", "--title", "experiment output contract",
+            "--scope", "experiments/T-621/", "--type", "experiment", expect=0,
+        )
+        match = re.search(r"^  path=(.+)$", created.stdout, re.MULTILINE)
+        self.assertIsNotNone(match, created.stdout)
+        worker = Path(match.group(1))
+        env = os.environ.copy()
+        env["AGENT_WORKFLOW_SESSION_ID"] = "experiment-owner"
+        self.agentctl(
+            "work", "--agent", "researcher", "--task", "T-621",
+            cwd=worker, env=env, expect=0,
+        )
+        blocked = self.agentctl(
+            "finish", "--summary", "no output yet", "--tests", "none",
+            cwd=worker, env=env, expect=1,
+        )
+        self.assertIn("successful run with existing declared output", blocked.stderr)
+
+        started = self.agentctl(
+            "run", "start", "--output", ".agent-artifacts/T-621/result.txt", "--",
+            sys.executable, "-c",
+            "from pathlib import Path; p=Path('.agent-artifacts/T-621/result.txt'); "
+            "p.parent.mkdir(parents=True, exist_ok=True); p.write_text('ok', encoding='utf-8')",
+            cwd=worker, env=env, expect=0,
+        )
+        run_id = re.search(r"\b(run-[0-9a-f]{16})\b", started.stdout).group(1)
+        self.agentctl(
+            "run", "wait", run_id, "--timeout", "20",
+            cwd=worker, env=env, expect=0,
+        )
+        self.agentctl(
+            "finish", "--summary", "experiment output captured",
+            "--tests", "run succeeded", cwd=worker, env=env, expect=0,
+        )
 
     def test_release_refuses_a_worktree_moved_outside_the_registry(self):
         self.create_committed_task()

@@ -32,7 +32,7 @@ Define the durable project outcome in one or two paragraphs.
 Format: `- [ ] T-001 - short task title (owner: agent-id)`.
 Use `[x]` only when the task is `done`.
 
-- [ ] T-000 - Replace this starter task with real work (owner: supervisor)
+- [ ] T-000 - Replace starter task with real work (owner: supervisor)
 
 ## Agent Allocation
 

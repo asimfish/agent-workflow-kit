@@ -21,6 +21,23 @@ from pathlib import Path
 from unittest import mock
 
 KIT = Path(__file__).resolve().parents[1]
+IDENTITY_ENV = (
+    "CODEX_THREAD_ID",
+    "CLAUDE_CODE_SESSION_ID",
+    "CURSOR_CONVERSATION_ID",
+    "WHALENT_AGENT_ID",
+    "WHALENT_CODEX_INSTANCE_ID",
+    "WHALENT_COMPOSER_ID",
+    "WHALENT_FORK_SOURCE_AGENT_ID",
+    "AGENT_SESSION_ID",
+    "TERM_SESSION_ID",
+    "AGENT_WORKFLOW_SESSION_ID",
+    "AGENT_WORKFLOW_SESSION_KEY",
+    "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME",
+    "AGENT_WORKFLOW_SESSION_INSTANCE_ID",
+    "AGENT_WORKFLOW_PARENT_SESSION_KEY",
+    "AGENT_WORKFLOW_SESSION_ISOLATION_ERROR",
+)
 
 LOOP_CONTRACT = """# Loop: {loop_id}
 
@@ -62,8 +79,12 @@ $ {command}
 
 class LoopWorkflowRegressionTest(unittest.TestCase):
     def setUp(self):
+        test_env = os.environ.copy()
+        for name in IDENTITY_ENV:
+            test_env.pop(name, None)
+        test_env["AGENT_WORKFLOW_SESSION_ID"] = "loop-regression-session"
         identity = mock.patch.dict(
-            os.environ, {"AGENT_WORKFLOW_SESSION_ID": "loop-regression-session"},
+            os.environ, test_env, clear=True,
         )
         identity.start()
         self.addCleanup(identity.stop)

@@ -37,10 +37,14 @@ When working in this repository, do this before any edit or mutating command:
 3. If no existing task matches the user's request, create and start one yourself:
 
    ```bash
-   python3 tools/agentctl.py work --agent <agent-name> --auto-create --title "<current request>" --scope "<paths>"
+   python3 tools/agentctl.py work --agent <agent-name> --auto-create --title "<current request>" --scope "<paths>" --type <type>
    ```
 
-4. Follow the focus printed by `agentctl work`.
+   Choose `code`, `experiment`, `docs`, `review`, `maintenance`, or `generic`.
+   Code and experiment tasks automatically receive a managed worktree; continue
+   from the printed path and do not recreate the task in the planning checkout.
+
+4. Follow the focus and runtime capsule printed by `agentctl work`.
 
 `agentctl work` identifies the current Codex, Claude Code, or Cursor
 conversation from its host runtime, updates its own heartbeat, and prints other
@@ -52,8 +56,20 @@ assigned, for example `codex`, `claude`, `cursor`, or `agent`.
 
 ## Upgrades And Older Sessions
 
-If the kit was just reinstalled/upgraded, or this conversation began under an
-older kit version, diagnose the transition before editing:
+Installation records a protocol epoch. A protocol-changing upgrade first
+replaces the managed controller and hook bridge with barrier-aware entrypoints,
+then drains active/stale writers before migrating templates and state. During
+the drain, existing sessions may note, finish, stop their own runs, or release
+their own resources, but may not change project files or start new work.
+
+If this conversation began under an older epoch, re-read the plan and task doc,
+then bind it to the installed protocol:
+
+```bash
+python3 tools/agentctl.py upgrade rebind
+```
+
+For identity and older-layout diagnostics, also run:
 
 ```bash
 python3 tools/agentctl.py migrate
@@ -140,13 +156,17 @@ the sole bootstrap exception because it installs the identity hook itself.
   guidance bus/handoffs, eval runs, install manifest) are never edited
   directly; update them through `agentctl` commands. Leave `PROJECT_PLAN.md`
   and rules to supervisors or humans.
+- Start detached or long-running work through `agentctl run start`, declaring
+  every durable output and scarce resource. Use `run adopt` only after
+  inspecting the PID, cwd, and outputs; an adopted exit remains
+  `exited_unknown` until explicitly reconciled. Only the holder conversation
+  may stop or finish a run; the private supervisor claim is single-use.
+- Experiment tasks cannot finish until at least one successful run has an
+  existing declared output.
 - Scripts, interpreters, test/build runners, and unknown executables cannot
   prove which paths they write, so they run only in an exclusive checkout.
-  When another conversation is live in the same checkout, allocate a committed
-  `todo`/`ready` task worktree before starting that execution phase
-  (`agentctl worktree create --task <id> --agent <name>`). An active dirty task
-  is not relocated implicitly; data-collection, training, and test tasks should
-  plan on a worktree per conversation from the start.
+  `code` and `experiment` tasks therefore default to a managed worktree before
+  start. An already-active shared task is not relocated implicitly.
 - Unrelated task lifecycles do not invalidate this conversation's read
   receipt: only plan-body/rule changes, this task's own index row, or this
   task's own document require re-reading plus `agentctl refresh`.
@@ -162,6 +182,9 @@ the sole bootstrap exception because it installs the identity hook itself.
 - Git index, HEAD, branch, merge, and push mutations require exclusive use of a
   checkout. If another conversation is active, allocate a task-scoped worktree
   instead of bypassing the guard.
+- Same-task ownership and `maintenance` exclusivity are repository-wide across
+  linked worktrees. A conversation that moves from planning into another task
+  worktree must release its prior task session first.
 - A stale session remains visible and keeps its claims. After inspecting its
   task document and working tree, an agent may transfer that task by running:
 

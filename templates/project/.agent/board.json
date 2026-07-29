@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "updated_at": "initial",
+  "tasks": {
+    "T-000": {
+      "title": "Replace starter task with real work",
+      "type": "generic",
+      "status": "todo",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "initial",
+      "updated_at": "initial"
+    }
+  }
+}
