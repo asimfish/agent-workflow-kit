@@ -145,7 +145,10 @@ Terminal run leases, released resource leases, and per-run artifacts
 `run_artifact_retention_days` from `.agent/runtime-policy.json` (default 14;
 `0` disables pruning). Live and non-terminal leases, recent state, and
 `release_failed` resource leases are never pruned — the last of these flags
-manual attention.
+manual attention. Independently of retention, the same pass releases
+resource leases whose holding run already resolved: holder binding is
+fail-closed, so without this a release that hit a registry lock stall at
+run completion would strand the resource forever.
 
 ## Upgrade Barrier
 

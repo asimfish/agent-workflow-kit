@@ -672,6 +672,63 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             "claimed",
         )
 
+    def test_resources_orphaned_by_finished_runs_are_released(self):
+        from tools import agentctl as workflow
+
+        lock_root = self.root / ".orphan-locks"
+
+        def provider(name):
+            path = lock_root / name
+            path.mkdir(parents=True)
+            (path / "owner.json").write_text("{}", encoding="utf-8")
+            return {"provider": "local-mkdir", "path": str(path)}
+
+        leases = [
+            {"id": "run-tttttttttttttttt", "kind": "run", "mode": "supervised",
+             "status": "succeeded", "finished_at": workflow._now()},
+            {"id": "run-llllllllllllllll", "kind": "run", "mode": "supervised",
+             "status": "running", "heartbeat_at": workflow._now()},
+            {"id": "resource-aaaaaaaaaaaaaaaa", "kind": "resource",
+             "status": "active",
+             "holder": {"type": "run", "id": "run-tttttttttttttttt"},
+             "provider": provider("terminal-run")},
+            {"id": "resource-bbbbbbbbbbbbbbbb", "kind": "resource",
+             "status": "active",
+             "holder": {"type": "run", "id": "run-missing000000000"},
+             "provider": provider("missing-run")},
+            {"id": "resource-cccccccccccccccc", "kind": "resource",
+             "status": "active",
+             "holder": {"type": "run", "id": "run-llllllllllllllll"},
+             "provider": provider("live-run")},
+            {"id": "resource-dddddddddddddddd", "kind": "resource",
+             "status": "active",
+             "holder": {"type": "conversation", "id": "session-x"},
+             "provider": provider("conversation")},
+        ]
+        workflow._update_runtime_leases(
+            self.root, lambda data: data.setdefault("leases", []).extend(leases),
+        )
+
+        workflow._release_orphaned_run_resources(self.root)
+
+        rows = {
+            lease["id"]: lease
+            for lease in workflow._load_runtime_leases(self.root)["leases"]
+            if isinstance(lease, dict)
+        }
+        self.assertEqual(rows["resource-aaaaaaaaaaaaaaaa"]["status"], "released")
+        self.assertEqual(
+            rows["resource-aaaaaaaaaaaaaaaa"]["release_reason"],
+            "holding run finished without releasing",
+        )
+        self.assertEqual(rows["resource-bbbbbbbbbbbbbbbb"]["status"], "released")
+        self.assertEqual(rows["resource-cccccccccccccccc"]["status"], "active")
+        self.assertEqual(rows["resource-dddddddddddddddd"]["status"], "active")
+        self.assertFalse((lock_root / "terminal-run").exists())
+        self.assertFalse((lock_root / "missing-run").exists())
+        self.assertTrue((lock_root / "live-run").exists())
+        self.assertTrue((lock_root / "conversation").exists())
+
     def test_terminal_run_state_prunes_after_retention_window(self):
         from tools import agentctl as workflow
 

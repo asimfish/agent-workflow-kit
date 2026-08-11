@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 06:14:27",
+  "updated_at": "2026-08-12 06:42:31",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2073,6 +2073,20 @@
       "deps": [],
       "created_at": "2026-08-12 06:13:43",
       "updated_at": "2026-08-12 06:14:27"
+    },
+    "TA08B0CC413F151F5-008": {
+      "title": "release resources orphaned by finished runs",
+      "type": "code",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:38:06",
+      "updated_at": "2026-08-12 06:42:31"
     }
   }
 }
