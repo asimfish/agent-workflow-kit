@@ -36,7 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] TA08B0CC413F151F5-007 - retention pruning for terminal run leases and artifacts (owner: cursor)
+- [x] TBFEA0B292CCCB26E-001 - independent review of run state retention pruning (owner: independent-reviewer-2)
+- [x] TA08B0CC413F151F5-007 - retention pruning for terminal run leases and artifacts (owner: cursor)
 - [ ] T4116DD2E51AFDABA-001 - independent review of portable windows kill signal (owner: independent-reviewer-2)
 - [x] TCA99BA4AB445E207-001 - independent review of portable windows kill signal (owner: independent-reviewer-2)
 - [x] TA08B0CC413F151F5-006 - portable kill signal for windows run termination (owner: cursor)
