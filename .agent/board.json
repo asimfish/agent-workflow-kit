@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 04:12:14",
+  "updated_at": "2026-08-12 04:18:14",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1964,7 +1964,7 @@
     "TA08B0CC413F151F5-004": {
       "title": "persist supervised run terminal state through lock contention",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "cursor",
       "scope": [
         "tools/",
@@ -1972,7 +1972,19 @@
       ],
       "deps": [],
       "created_at": "2026-08-12 03:25:58",
-      "updated_at": "2026-08-12 04:12:14"
+      "updated_at": "2026-08-12 04:18:04"
+    },
+    "TF96DBC8BC409FA2D-001": {
+      "title": "independent review of supervisor persistence hardening",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 04:17:23",
+      "updated_at": "2026-08-12 04:18:14"
     }
   }
 }
