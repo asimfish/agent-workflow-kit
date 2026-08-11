@@ -36,7 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] TA08B0CC413F151F5-003 - close decided review tasks on finish and reconcile backlog (owner: cursor)
+- [x] T258C28F1DAE958F4-001 - independent review of decided-review closure (owner: independent-reviewer-2)
+- [x] TA08B0CC413F151F5-003 - close decided review tasks on finish and reconcile backlog (owner: cursor)
 - [ ] T62E2091C45F77EE5-001 - independent review of gpu watchdog test deflake (owner: independent-reviewer-2)
 - [x] TA08B0CC413F151F5-002 - widen gpu watchdog phase-exempt test timing margins (owner: cursor)
 - [ ] T8BA964DFB191095A-001 - independent review of upgrade fixture deflake (owner: independent-reviewer-2)
