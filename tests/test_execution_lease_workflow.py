@@ -521,9 +521,11 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
     def test_only_the_owner_conversation_can_stop_a_run(self):
         self.start("owner", "T-341", "outputs/T-341/")
         self.start("peer", "T-342", "outputs/T-342/")
+        # The payload must outlive the refusal/stop round trips even on slow
+        # Windows runners; run stop terminates it long before 60s.
         started = self.agentctl(
             "run", "start", "--output", "outputs/T-341/result.txt", "--",
-            sys.executable, "-c", "import time; time.sleep(5)",
+            sys.executable, "-c", "import time; time.sleep(60)",
             session="owner",
         )
         run_id = self.lease_id(started.stdout, "run")

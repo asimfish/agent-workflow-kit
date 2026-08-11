@@ -140,3 +140,4 @@
 | T258C28F1DAE958F4-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T258C28F1DAE958F4-001.md](tasks/T258C28F1DAE958F4-001.md) | independent review of decided-review closure |
 | TA08B0CC413F151F5-004 | done | cursor | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-004.md](tasks/TA08B0CC413F151F5-004.md) | persist supervised run terminal state through lock contention |
 | TF96DBC8BC409FA2D-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TF96DBC8BC409FA2D-001.md](tasks/TF96DBC8BC409FA2D-001.md) | independent review of supervisor persistence hardening |
+| TA08B0CC413F151F5-005 | review | cursor | `.github/, tests/` | [.agent/tasks/TA08B0CC413F151F5-005.md](tasks/TA08B0CC413F151F5-005.md) | verify windows run stop tree at runtime in ci |

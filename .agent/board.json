@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 04:18:14",
+  "updated_at": "2026-08-12 04:44:54",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1985,6 +1985,19 @@
       "deps": [],
       "created_at": "2026-08-12 04:17:23",
       "updated_at": "2026-08-12 04:18:14"
+    },
+    "TA08B0CC413F151F5-005": {
+      "title": "verify windows run stop tree at runtime in ci",
+      "type": "code",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        ".github/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 04:42:05",
+      "updated_at": "2026-08-12 04:44:54"
     }
   }
 }
