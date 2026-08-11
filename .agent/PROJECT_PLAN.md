@@ -36,7 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] T3D6917C0AC71CAAE-001 - isolate stale session admission and supervise idle GPU runs (owner: codex)
+- [x] T3D6917C0AC71CAAE-001 - isolate stale session admission and supervise idle GPU runs (owner: codex)
 - [ ] TB0621800D60E51C4-002 - independent review of unified multi-session architecture (owner: independent-reviewer)
 - [ ] TD851EF749F675DC5-001 - review pre-push published-commit filter (owner: claude-sonnet-reviewer)
 - [ ] TA80D9103F5316278-001 - independently review residual repo-wide Git guard closure (owner: claude-sonnet-reviewer)
@@ -56,7 +56,7 @@ instead of relying on chat memory or repeated human prompts.
 - [ ] T-085 - review T-081 resubmission and T-083/T-084 evidence (owner: independent-reviewer)
 - [ ] T-084 - independently review T-082 review record and T-083 isolation fixes (PR #17) (owner: independent-reviewer)
 - [x] T-083 - close independent review isolation gaps (owner: codex)
-- [ ] TB0621800D60E51C4-001 - implement unified multi-session execution architecture (owner: codex)
+- [x] TB0621800D60E51C4-001 - implement unified multi-session execution architecture (owner: codex)
 - [ ] T-105 - independently review T-104 change-aware debounce (owner: supervisor)
 - [x] T-104 - make checkpoint debounce change-aware per its documented contract (owner: cursor)
 - [ ] T-103 - independently review T-102 hook override warnings (owner: supervisor)

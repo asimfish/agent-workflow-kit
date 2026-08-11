@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-11 18:14:55",
+  "updated_at": "2026-08-11 22:10:14",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1503,7 +1503,7 @@
     },
     "TB0621800D60E51C4-001": {
       "title": "implement unified multi-session execution architecture",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/",
@@ -1518,7 +1518,7 @@
       ],
       "deps": [],
       "created_at": "2026-07-23 17:38:48",
-      "updated_at": "2026-07-29 22:34:29"
+      "updated_at": "2026-08-11 22:09:18"
     },
     "T-083": {
       "title": "close independent review isolation gaps",
@@ -1862,19 +1862,19 @@
     "TB0621800D60E51C4-002": {
       "title": "independent review of unified multi-session architecture",
       "type": "review",
-      "status": "in_progress",
+      "status": "review",
       "owner": "independent-reviewer",
       "scope": [
         ".agent/"
       ],
       "deps": [],
       "created_at": "2026-07-23 21:30:01",
-      "updated_at": "2026-07-23 21:41:13"
+      "updated_at": "2026-08-11 22:10:14"
     },
     "T3D6917C0AC71CAAE-001": {
       "title": "isolate stale session admission and supervise idle GPU runs",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/",
@@ -1885,7 +1885,7 @@
       ],
       "deps": [],
       "created_at": "2026-08-11 16:52:41",
-      "updated_at": "2026-08-11 18:14:55"
+      "updated_at": "2026-08-11 22:09:42"
     }
   }
 }
