@@ -683,6 +683,9 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             (path / "owner.json").write_text("{}", encoding="utf-8")
             return {"provider": "local-mkdir", "path": str(path)}
 
+        aged = (
+            workflow._dt.datetime.now() - workflow._dt.timedelta(hours=1)
+        ).strftime("%Y-%m-%d %H:%M:%S")
         leases = [
             {"id": "run-tttttttttttttttt", "kind": "run", "mode": "supervised",
              "status": "succeeded", "finished_at": workflow._now()},
@@ -693,7 +696,7 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
              "holder": {"type": "run", "id": "run-tttttttttttttttt"},
              "provider": provider("terminal-run")},
             {"id": "resource-bbbbbbbbbbbbbbbb", "kind": "resource",
-             "status": "active",
+             "status": "active", "created_at": aged,
              "holder": {"type": "run", "id": "run-missing000000000"},
              "provider": provider("missing-run")},
             {"id": "resource-cccccccccccccccc", "kind": "resource",
@@ -704,6 +707,12 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
              "status": "active",
              "holder": {"type": "conversation", "id": "session-x"},
              "provider": provider("conversation")},
+            # run start acquires resources before registering the run lease:
+            # a fresh missing-holder lease must survive the hygiene pass.
+            {"id": "resource-ffffffffffffffff", "kind": "resource",
+             "status": "active", "created_at": workflow._now(),
+             "holder": {"type": "run", "id": "run-starting00000000"},
+             "provider": provider("starting-run")},
         ]
         workflow._update_runtime_leases(
             self.root, lambda data: data.setdefault("leases", []).extend(leases),
@@ -724,10 +733,12 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         self.assertEqual(rows["resource-bbbbbbbbbbbbbbbb"]["status"], "released")
         self.assertEqual(rows["resource-cccccccccccccccc"]["status"], "active")
         self.assertEqual(rows["resource-dddddddddddddddd"]["status"], "active")
+        self.assertEqual(rows["resource-ffffffffffffffff"]["status"], "active")
         self.assertFalse((lock_root / "terminal-run").exists())
         self.assertFalse((lock_root / "missing-run").exists())
         self.assertTrue((lock_root / "live-run").exists())
         self.assertTrue((lock_root / "conversation").exists())
+        self.assertTrue((lock_root / "starting-run").exists())
 
     def test_terminal_run_state_prunes_after_retention_window(self):
         from tools import agentctl as workflow

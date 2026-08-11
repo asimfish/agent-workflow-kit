@@ -6287,7 +6287,19 @@ def _release_orphaned_run_resources(root: Path) -> None:
         if str(holder.get("type") or "") != "run":
             continue
         holder_run = runs.get(str(holder.get("id") or ""))
-        if holder_run is not None and str(holder_run.get("status") or "") not in {
+        if holder_run is None:
+            # run start acquires resources before it registers the run
+            # lease, so a concurrent hygiene pass can observe a brand-new
+            # resource whose holder is not registered yet. A missing holder
+            # only proves a pruned (terminal) run once the resource lease
+            # has aged past the grace window; unparseable timestamps stay
+            # conservative and keep the lease.
+            created = _parse_workflow_timestamp(item.get("created_at"))
+            if created is None or created >= _dt.datetime.now() - _dt.timedelta(
+                minutes=10,
+            ):
+                continue
+        elif str(holder_run.get("status") or "") not in {
             "succeeded", "failed", "cancelled",
         }:
             continue
