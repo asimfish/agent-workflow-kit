@@ -672,6 +672,89 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             "claimed",
         )
 
+    def test_terminal_run_state_prunes_after_retention_window(self):
+        from tools import agentctl as workflow
+
+        runs_dir = workflow._runtime_runs_dir(self.root)
+        old = (
+            workflow._dt.datetime.now() - workflow._dt.timedelta(days=30)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        fresh = workflow._now()
+        leases = [
+            {"id": "run-aaaaaaaaaaaaaaaa", "kind": "run", "mode": "supervised",
+             "status": "succeeded", "finished_at": old},
+            {"id": "run-bbbbbbbbbbbbbbbb", "kind": "run", "mode": "supervised",
+             "status": "succeeded", "finished_at": fresh},
+            {"id": "run-cccccccccccccccc", "kind": "run", "mode": "supervised",
+             "status": "running", "heartbeat_at": old},
+            {"id": "resource-dddddddddddddddd", "kind": "resource",
+             "status": "released", "released_at": old},
+            {"id": "resource-eeeeeeeeeeeeeeee", "kind": "resource",
+             "status": "release_failed", "released_at": old},
+        ]
+        workflow._update_runtime_leases(
+            self.root, lambda data: data.setdefault("leases", []).extend(leases),
+        )
+        for name in (
+            "run-aaaaaaaaaaaaaaaa.stdout.log",
+            "run-cccccccccccccccc.supervisor.log",
+            "run-ffffffffffffffff.supervisor.log",
+            "run-9999999999999999.command.json",
+        ):
+            (runs_dir / name).write_text("x", encoding="utf-8")
+        stale = (
+            workflow._dt.datetime.now() - workflow._dt.timedelta(days=30)
+        ).timestamp()
+        for name in (
+            "run-aaaaaaaaaaaaaaaa.stdout.log",
+            "run-cccccccccccccccc.supervisor.log",
+            "run-ffffffffffffffff.supervisor.log",
+        ):
+            os.utime(runs_dir / name, (stale, stale))
+
+        workflow._prune_terminal_run_state(self.root)
+
+        remaining = {
+            lease["id"]
+            for lease in workflow._load_runtime_leases(self.root)["leases"]
+            if isinstance(lease, dict)
+        }
+        self.assertIn("run-bbbbbbbbbbbbbbbb", remaining)
+        self.assertIn("run-cccccccccccccccc", remaining)
+        self.assertIn("resource-eeeeeeeeeeeeeeee", remaining)
+        self.assertNotIn("run-aaaaaaaaaaaaaaaa", remaining)
+        self.assertNotIn("resource-dddddddddddddddd", remaining)
+        self.assertFalse((runs_dir / "run-aaaaaaaaaaaaaaaa.stdout.log").exists())
+        self.assertTrue((runs_dir / "run-cccccccccccccccc.supervisor.log").exists())
+        self.assertFalse((runs_dir / "run-ffffffffffffffff.supervisor.log").exists())
+        self.assertTrue((runs_dir / "run-9999999999999999.command.json").exists())
+
+        policy_path = self.root / ".agent" / "runtime-policy.json"
+        if policy_path.is_file():
+            policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        else:
+            policy = {"version": 1}
+        policy["run_artifact_retention_days"] = 0
+        policy_path.write_text(
+            json.dumps(policy, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+        disabled_seed = {
+            "id": "run-1111111111111111", "kind": "run", "mode": "supervised",
+            "status": "failed", "finished_at": old,
+        }
+        workflow._update_runtime_leases(
+            self.root,
+            lambda data: data.setdefault("leases", []).append(disabled_seed),
+        )
+        workflow._prune_terminal_run_state(self.root)
+        remaining = {
+            lease["id"]
+            for lease in workflow._load_runtime_leases(self.root)["leases"]
+            if isinstance(lease, dict)
+        }
+        self.assertIn("run-1111111111111111", remaining)
+
     def test_signal_run_process_routes_windows_signals_through_taskkill(self):
         from tools import agentctl as workflow
 

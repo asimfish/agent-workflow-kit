@@ -6251,6 +6251,100 @@ def _run_release_resources(root: Path, lease: dict, reason: str) -> None:
         )
 
 
+def _parse_workflow_timestamp(value) -> _dt.datetime | None:
+    try:
+        return _dt.datetime.strptime(str(value), "%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError):
+        return None
+
+
+def _prune_terminal_run_state(root: Path) -> None:
+    """Age out terminal run/resource leases and their run artifacts.
+
+    Terminal leases and per-run logs otherwise accumulate forever: every
+    locked registry operation re-reads the growing file, and the runs
+    directory keeps stdout/stderr/supervisor logs for runs that finished
+    long ago. Live, non-terminal, and recent state is never touched, and
+    release_failed resource leases are kept because they flag manual
+    attention. Retention is `run_artifact_retention_days` in the runtime
+    policy (default 14; 0 disables pruning).
+    """
+    configured = _runtime_policy(root).get("run_artifact_retention_days", 14)
+    try:
+        retention_days = float(configured)
+    except (TypeError, ValueError):
+        retention_days = 14.0
+    if not math.isfinite(retention_days) or retention_days <= 0:
+        return
+    cutoff = _dt.datetime.now() - _dt.timedelta(days=retention_days)
+    pruned_runs: list[str] = []
+
+    def prune(data: dict) -> None:
+        kept = []
+        for lease in data.get("leases") or []:
+            if not isinstance(lease, dict):
+                kept.append(lease)
+                continue
+            kind = lease.get("kind")
+            status = str(lease.get("status") or "")
+            terminal = (
+                (kind == "run" and status in {"succeeded", "failed", "cancelled"})
+                or (kind == "resource" and status == "released")
+            )
+            if not terminal:
+                kept.append(lease)
+                continue
+            stamp = (
+                _parse_workflow_timestamp(lease.get("finished_at"))
+                or _parse_workflow_timestamp(lease.get("released_at"))
+                or _parse_workflow_timestamp(lease.get("heartbeat_at"))
+            )
+            if stamp is None or stamp >= cutoff:
+                kept.append(lease)
+                continue
+            if kind == "run" and lease.get("id"):
+                pruned_runs.append(str(lease["id"]))
+        data["leases"] = kept
+
+    try:
+        _update_runtime_leases(root, prune)
+    except TimeoutError:
+        return
+    runs_dir = _runtime_runs_dir(root)
+    artifact_suffixes = (
+        ".stdout.log", ".stderr.log", ".supervisor.log", ".command.json",
+    )
+    for lease_id in pruned_runs:
+        for suffix in artifact_suffixes:
+            try:
+                (runs_dir / f"{lease_id}{suffix}").unlink()
+            except OSError:
+                pass
+    live_ids = {
+        str(lease.get("id"))
+        for lease in _load_runtime_leases(root).get("leases") or []
+        if isinstance(lease, dict) and lease.get("id")
+    }
+    cutoff_ts = cutoff.timestamp()
+    try:
+        candidates = list(runs_dir.iterdir())
+    except OSError:
+        return
+    for path in candidates:
+        match = re.match(
+            r"^(run-[0-9a-f]{16})\."
+            r"(?:stdout\.log|stderr\.log|supervisor\.log|command\.json)$",
+            path.name,
+        )
+        if not match or match.group(1) in live_ids:
+            continue
+        try:
+            if path.stat().st_mtime < cutoff_ts:
+                path.unlink()
+        except OSError:
+            pass
+
+
 def _await_supervisor_claim(root: Path, lease_id: str, *,
                             timeout_seconds: float = 30.0,
                             poll_seconds: float = 0.05) -> str:
@@ -6587,6 +6681,11 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
 
 def _run_start(root: Path, args: argparse.Namespace) -> int:
     session = _require_session(root)
+    try:
+        _prune_terminal_run_state(root)
+    except Exception:
+        # Opportunistic hygiene must never block starting new work.
+        pass
     task = args.task or session.get("task")
     if task != session.get("task"):
         print("agentctl: a background run must belong to this conversation's active task", file=sys.stderr)

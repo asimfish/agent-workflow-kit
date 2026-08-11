@@ -139,6 +139,14 @@ the automatic-watchdog boundary. `run adopt` records an existing PID and its
 resources, but cannot retroactively create a safe private supervisor or process
 group, so it does not enable automatic GPU termination.
 
+Terminal run leases, released resource leases, and per-run artifacts
+(stdout/stderr/supervisor logs and command payloads) age out automatically:
+`run start` opportunistically prunes entries older than
+`run_artifact_retention_days` from `.agent/runtime-policy.json` (default 14;
+`0` disables pruning). Live and non-terminal leases, recent state, and
+`release_failed` resource leases are never pruned — the last of these flags
+manual attention.
+
 ## Upgrade Barrier
 
 The install manifest records schema, kit version, source commit, and protocol
