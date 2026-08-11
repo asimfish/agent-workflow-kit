@@ -142,3 +142,4 @@
 | TF96DBC8BC409FA2D-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TF96DBC8BC409FA2D-001.md](tasks/TF96DBC8BC409FA2D-001.md) | independent review of supervisor persistence hardening |
 | TA08B0CC413F151F5-005 | done | cursor | `.github/, tests/` | [.agent/tasks/TA08B0CC413F151F5-005.md](tasks/TA08B0CC413F151F5-005.md) | verify windows run stop tree at runtime in ci |
 | TA4590F0D1CAC6C44-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TA4590F0D1CAC6C44-001.md](tasks/TA4590F0D1CAC6C44-001.md) | independent review of windows run stop ci coverage |
+| TA08B0CC413F151F5-006 | review | cursor | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-006.md](tasks/TA08B0CC413F151F5-006.md) | portable kill signal for windows run termination |
