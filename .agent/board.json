@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 06:42:31",
+  "updated_at": "2026-08-12 06:48:59",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2077,7 +2077,7 @@
     "TA08B0CC413F151F5-008": {
       "title": "release resources orphaned by finished runs",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "cursor",
       "scope": [
         "tools/",
@@ -2086,7 +2086,19 @@
       ],
       "deps": [],
       "created_at": "2026-08-12 06:38:06",
-      "updated_at": "2026-08-12 06:42:31"
+      "updated_at": "2026-08-12 06:48:46"
+    },
+    "T4C7B83C03F3DE7D5-001": {
+      "title": "independent review of orphaned resource self-heal",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:48:15",
+      "updated_at": "2026-08-12 06:48:59"
     }
   }
 }
