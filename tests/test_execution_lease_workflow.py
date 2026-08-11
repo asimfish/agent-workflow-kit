@@ -566,6 +566,144 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         ).read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 1)
 
+    def workflow_common_dir(self):
+        common = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"], cwd=self.root,
+            check=True, text=True, capture_output=True, timeout=60,
+        ).stdout.strip()
+        common_path = Path(common)
+        if not common_path.is_absolute():
+            common_path = self.root / common_path
+        return common_path.resolve() / "agent-workflow"
+
+    def hold_leases_lock(self, seconds):
+        """Hold the shared lease-registry lock from the test process."""
+        import fcntl
+
+        lock_path = self.workflow_common_dir() / "execution-leases.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX)
+            time.sleep(seconds)
+        finally:
+            os.close(fd)
+
+    def wait_run_with_diagnostics(self, run_id, session="one"):
+        """run wait that surfaces the supervisor's stderr log on failure."""
+        proc = subprocess.run(
+            [sys.executable, "tools/agentctl.py", "run", "wait", run_id,
+             "--timeout", "60"],
+            cwd=self.root, env=self.env(session), text=True,
+            capture_output=True, timeout=150,
+        )
+        if proc.returncode != 0:
+            log_path = (
+                self.workflow_common_dir() / "runs" / f"{run_id}.supervisor.log"
+            )
+            try:
+                log = log_path.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                log = f"<unreadable: {exc}>"
+            self.fail(
+                f"run wait rc={proc.returncode}: {proc.stdout}{proc.stderr}\n"
+                f"supervisor log ({log_path}):\n{log}"
+            )
+        return proc
+
+    def test_await_supervisor_claim_flags_pre_claim_death_and_slow_start(self):
+        from tools import agentctl as workflow
+
+        dead = subprocess.Popen([sys.executable, "-c", "raise SystemExit(3)"])
+        dead.wait()
+        alive = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+        )
+        self.addCleanup(alive.kill)
+        leases = [
+            {
+                "id": "run-preclaimdead001",
+                "kind": "run", "mode": "supervised", "status": "starting",
+                "processes": [],
+                "supervisor_process": {
+                    "role": "supervisor", "pid": dead.pid,
+                    "birth_marker": "test:never-matches",
+                },
+            },
+            {
+                "id": "run-slowclaim000001",
+                "kind": "run", "mode": "supervised", "status": "starting",
+                "processes": [],
+                "supervisor_process": {
+                    "role": "supervisor", "pid": alive.pid,
+                    "birth_marker": workflow._process_birth_marker(alive.pid),
+                },
+            },
+            {
+                "id": "run-claimed00000001",
+                "kind": "run", "mode": "supervised", "status": "starting",
+                "processes": [],
+                "supervisor_claimed_at": "2026-01-01 00:00:00",
+                "supervisor_process": {},
+            },
+        ]
+        workflow._update_runtime_leases(
+            self.root, lambda data: data.setdefault("leases", []).extend(leases),
+        )
+        self.assertEqual(
+            workflow._await_supervisor_claim(
+                self.root, "run-preclaimdead001", timeout_seconds=5.0,
+            ),
+            "died",
+        )
+        self.assertEqual(
+            workflow._await_supervisor_claim(
+                self.root, "run-slowclaim000001", timeout_seconds=0.3,
+            ),
+            "pending",
+        )
+        self.assertEqual(
+            workflow._await_supervisor_claim(
+                self.root, "run-claimed00000001", timeout_seconds=0.3,
+            ),
+            "claimed",
+        )
+
+    @unittest.skipIf(os.name != "posix", "flock-based contention fixture")
+    def test_supervisor_persists_terminal_state_through_lock_contention(self):
+        self.start("one", "T-354", "outputs/T-354/")
+        command = (
+            "from pathlib import Path; import time; "
+            "p=Path('outputs/T-354/out.txt'); p.parent.mkdir(parents=True, exist_ok=True); "
+            "p.write_text('done', encoding='utf-8'); time.sleep(3)"
+        )
+        started = self.agentctl(
+            "run", "start", "--output", "outputs/T-354/out.txt", "--",
+            sys.executable, "-c", command, session="one",
+        )
+        run_id = self.lease_id(started.stdout, "run")
+        shown = json.loads(
+            self.agentctl("run", "show", run_id, "--json", session="one").stdout
+        )["runs"][0]
+        # run start now confirms the supervisor claim before returning.
+        self.assertTrue(shown.get("supervisor_claimed_at"), shown)
+        deadline = time.monotonic() + 30
+        while True:
+            if shown["status"] == "running":
+                break
+            if time.monotonic() >= deadline:
+                self.fail(f"run never became observable as running: {shown}")
+            time.sleep(0.05)
+            shown = json.loads(
+                self.agentctl("run", "show", run_id, "--json", session="one").stdout
+            )["runs"][0]
+        # Deny the registry lock across the child's exit so the terminal
+        # write and the interleaved heartbeats must survive contention
+        # instead of crashing the supervisor or marking the run failed.
+        self.hold_leases_lock(13.0)
+        waited = self.wait_run_with_diagnostics(run_id)
+        self.assertIn("succeeded", waited.stdout)
+
     def test_loop_lease_keeps_creator_attribution_when_queried_by_peer(self):
         self.start("creator", "T-361", "outputs/T-361/")
         self.start("peer", "T-362", "outputs/T-362/")

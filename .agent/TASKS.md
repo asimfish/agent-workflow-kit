@@ -138,3 +138,4 @@
 | T62E2091C45F77EE5-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T62E2091C45F77EE5-001.md](tasks/T62E2091C45F77EE5-001.md) | independent review of gpu watchdog test deflake |
 | TA08B0CC413F151F5-003 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-003.md](tasks/TA08B0CC413F151F5-003.md) | close decided review tasks on finish and reconcile backlog |
 | T258C28F1DAE958F4-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T258C28F1DAE958F4-001.md](tasks/T258C28F1DAE958F4-001.md) | independent review of decided-review closure |
+| TA08B0CC413F151F5-004 | review | cursor | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-004.md](tasks/TA08B0CC413F151F5-004.md) | persist supervised run terminal state through lock contention |
