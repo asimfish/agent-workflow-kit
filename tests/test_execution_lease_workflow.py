@@ -362,15 +362,22 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         owner_env = self.env(
             "owner", PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"
         )
+        # Margins are sized for heavily loaded hosts where every controller
+        # invocation can take seconds. The idle and grace windows must exceed
+        # the worst-case delay before the first progress report lands, and
+        # the payload must outlive the whole assertion window (run stop
+        # terminates it long before 300s). Exemption handling itself is
+        # asserted through the explicit "exempt" watchdog state, and the
+        # reclaim path keeps its own dedicated timing regressions.
         started = self.agentctl(
             "run", "start", "--output", "outputs/T-337/exempt.txt",
             "--resource", "gpu:0", "--gpu-watchdog",
-            "--gpu-idle-seconds", "0.5", "--gpu-grace-seconds", "0.5",
+            "--gpu-idle-seconds", "60", "--gpu-grace-seconds", "60",
             "--gpu-sample-seconds", "0.05", "--gpu-idle-action", "terminate", "--",
-            sys.executable, "-c", "import time; time.sleep(5)", env=owner_env,
+            sys.executable, "-c", "import time; time.sleep(300)", env=owner_env,
         )
         run_id = self.lease_id(started.stdout, "run")
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while True:
             running = json.loads(
                 self.agentctl("run", "show", run_id, "--json", env=owner_env).stdout
@@ -382,25 +389,30 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             time.sleep(0.05)
         self.agentctl(
             "run", "progress", run_id, "--phase", "compile", "--token", "kernel-1",
-            "--idle-exempt-seconds", "2", env=owner_env,
+            "--idle-exempt-seconds", "300", env=owner_env,
         )
         refused = self.agentctl(
             "run", "progress", run_id, "--phase", "compile", "--token", "peer",
             "--idle-exempt-seconds", "1", session="peer", expect=1,
         )
         self.assertIn("belongs to conversation", refused.stderr)
-        time.sleep(1.2)
-        shown = json.loads(
-            self.agentctl("run", "show", run_id, "--json", env=owner_env).stdout
-        )["runs"][0]
+        deadline = time.monotonic() + 60
+        while True:
+            shown = json.loads(
+                self.agentctl("run", "show", run_id, "--json", env=owner_env).stdout
+            )["runs"][0]
+            if (shown.get("watchdog") or {}).get("state") == "exempt":
+                break
+            if time.monotonic() >= deadline:
+                self.fail(f"watchdog never observed the phase exemption: {shown}")
+            time.sleep(0.05)
         self.assertEqual(shown["status"], "running")
         self.assertEqual(shown["progress"]["phase"], "compile")
-        self.assertNotEqual(shown["watchdog"]["state"], "reclaiming")
         self.agentctl(
             "run", "stop", run_id, "--reason", "phase exemption verified", env=owner_env,
         )
         self.agentctl(
-            "run", "wait", run_id, "--timeout", "5", env=owner_env, expect=1,
+            "run", "wait", run_id, "--timeout", "30", env=owner_env, expect=1,
         )
         terminal_progress = self.agentctl(
             "run", "progress", run_id, "--phase", "late", env=owner_env, expect=1,

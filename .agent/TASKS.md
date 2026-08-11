@@ -134,3 +134,4 @@
 | T3D6917C0AC71CAAE-001 | done | codex | `tools/, templates/project/tools/, tests/, docs/, README.md` | [.agent/tasks/T3D6917C0AC71CAAE-001.md](tasks/T3D6917C0AC71CAAE-001.md) | isolate stale session admission and supervise idle GPU runs |
 | TA08B0CC413F151F5-001 | done | cursor | `tests/` | [.agent/tasks/TA08B0CC413F151F5-001.md](tasks/TA08B0CC413F151F5-001.md) | make upgrade barrier legacy fixture hermetic |
 | T8BA964DFB191095A-001 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T8BA964DFB191095A-001.md](tasks/T8BA964DFB191095A-001.md) | independent review of upgrade fixture deflake |
+| TA08B0CC413F151F5-002 | review | cursor | `tests/` | [.agent/tasks/TA08B0CC413F151F5-002.md](tasks/TA08B0CC413F151F5-002.md) | widen gpu watchdog phase-exempt test timing margins |
