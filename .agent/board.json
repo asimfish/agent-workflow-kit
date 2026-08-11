@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 05:15:03",
+  "updated_at": "2026-08-12 06:10:06",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2047,6 +2047,20 @@
       "deps": [],
       "created_at": "2026-08-12 05:12:34",
       "updated_at": "2026-08-12 05:15:03"
+    },
+    "TA08B0CC413F151F5-007": {
+      "title": "retention pruning for terminal run leases and artifacts",
+      "type": "code",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:05:52",
+      "updated_at": "2026-08-12 06:10:06"
     }
   }
 }
