@@ -125,11 +125,14 @@ class UpgradeBarrierWorkflowRegressionTest(unittest.TestCase):
         )
 
     def install_legacy_entrypoint(self):
-        legacy = subprocess.run(
-            ["git", "show", "origin/main:tools/agentctl.py"],
-            cwd=KIT, check=True, capture_output=True, timeout=60,
-        ).stdout
-        self.assertNotEqual(legacy, (KIT / "tools" / "agentctl.py").read_bytes())
+        # Synthesize the legacy build instead of reading origin/main so the
+        # fixture stays hermetic: on a push to main the ref equals the kit
+        # file and can no longer represent an older install. The installed
+        # bytes are never executed; the barrier only needs their hash to
+        # match the legacy manifest while differing from the kit build.
+        current = (KIT / "tools" / "agentctl.py").read_bytes()
+        legacy = current + b"\n# legacy-entrypoint fixture: pre-upgrade build marker\n"
+        self.assertNotEqual(legacy, current)
         (self.root / "tools" / "agentctl.py").write_bytes(legacy)
 
     def test_manifest_records_version_schema_source_and_protocol(self):

@@ -132,3 +132,5 @@
 | TD851EF749F675DC5-001 | review | claude-sonnet-reviewer | `.agent/` | [.agent/tasks/TD851EF749F675DC5-001.md](tasks/TD851EF749F675DC5-001.md) | review pre-push published-commit filter |
 | TB0621800D60E51C4-002 | review | independent-reviewer | `.agent/` | [.agent/tasks/TB0621800D60E51C4-002.md](tasks/TB0621800D60E51C4-002.md) | independent review of unified multi-session architecture |
 | T3D6917C0AC71CAAE-001 | done | codex | `tools/, templates/project/tools/, tests/, docs/, README.md` | [.agent/tasks/T3D6917C0AC71CAAE-001.md](tasks/T3D6917C0AC71CAAE-001.md) | isolate stale session admission and supervise idle GPU runs |
+| TA08B0CC413F151F5-001 | done | cursor | `tests/` | [.agent/tasks/TA08B0CC413F151F5-001.md](tasks/TA08B0CC413F151F5-001.md) | make upgrade barrier legacy fixture hermetic |
+| T8BA964DFB191095A-001 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T8BA964DFB191095A-001.md](tasks/T8BA964DFB191095A-001.md) | independent review of upgrade fixture deflake |

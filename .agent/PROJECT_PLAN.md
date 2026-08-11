@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T8BA964DFB191095A-001 - independent review of upgrade fixture deflake (owner: independent-reviewer-2)
+- [x] TA08B0CC413F151F5-001 - make upgrade barrier legacy fixture hermetic (owner: cursor)
 - [x] T3D6917C0AC71CAAE-001 - isolate stale session admission and supervise idle GPU runs (owner: codex)
 - [ ] TB0621800D60E51C4-002 - independent review of unified multi-session architecture (owner: independent-reviewer)
 - [ ] TD851EF749F675DC5-001 - review pre-push published-commit filter (owner: claude-sonnet-reviewer)
