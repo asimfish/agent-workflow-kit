@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 05:06:39",
+  "updated_at": "2026-08-12 05:10:21",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2014,7 +2014,7 @@
     "TA08B0CC413F151F5-006": {
       "title": "portable kill signal for windows run termination",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "cursor",
       "scope": [
         "tools/",
@@ -2022,7 +2022,19 @@
       ],
       "deps": [],
       "created_at": "2026-08-12 05:01:39",
-      "updated_at": "2026-08-12 05:06:39"
+      "updated_at": "2026-08-12 05:10:06"
+    },
+    "TCA99BA4AB445E207-001": {
+      "title": "independent review of portable windows kill signal",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 05:09:35",
+      "updated_at": "2026-08-12 05:10:21"
     }
   }
 }
