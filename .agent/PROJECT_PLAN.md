@@ -36,6 +36,10 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] T5CCA8C280CC6FDD5-001 - independent review of missing-holder grace window (owner: independent-reviewer-2)
+- [x] TA08B0CC413F151F5-009 - grace window for missing-holder resource release (owner: cursor)
+- [x] T4C7B83C03F3DE7D5-001 - independent review of orphaned resource self-heal (owner: independent-reviewer-2)
+- [x] TA08B0CC413F151F5-008 - release resources orphaned by finished runs (owner: cursor)
 - [x] TBFEA0B292CCCB26E-001 - independent review of run state retention pruning (owner: independent-reviewer-2)
 - [x] TA08B0CC413F151F5-007 - retention pruning for terminal run leases and artifacts (owner: cursor)
 - [ ] T4116DD2E51AFDABA-001 - independent review of portable windows kill signal (owner: independent-reviewer-2)

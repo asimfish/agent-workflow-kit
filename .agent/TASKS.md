@@ -147,3 +147,7 @@
 | T4116DD2E51AFDABA-001 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T4116DD2E51AFDABA-001.md](tasks/T4116DD2E51AFDABA-001.md) | independent review of portable windows kill signal |
 | TA08B0CC413F151F5-007 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-007.md](tasks/TA08B0CC413F151F5-007.md) | retention pruning for terminal run leases and artifacts |
 | TBFEA0B292CCCB26E-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TBFEA0B292CCCB26E-001.md](tasks/TBFEA0B292CCCB26E-001.md) | independent review of run state retention pruning |
+| TA08B0CC413F151F5-008 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-008.md](tasks/TA08B0CC413F151F5-008.md) | release resources orphaned by finished runs |
+| T4C7B83C03F3DE7D5-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T4C7B83C03F3DE7D5-001.md](tasks/T4C7B83C03F3DE7D5-001.md) | independent review of orphaned resource self-heal |
+| TA08B0CC413F151F5-009 | done | cursor | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-009.md](tasks/TA08B0CC413F151F5-009.md) | grace window for missing-holder resource release |
+| T5CCA8C280CC6FDD5-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T5CCA8C280CC6FDD5-001.md](tasks/T5CCA8C280CC6FDD5-001.md) | independent review of missing-holder grace window |

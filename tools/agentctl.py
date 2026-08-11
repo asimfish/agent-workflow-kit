@@ -6258,6 +6258,81 @@ def _parse_workflow_timestamp(value) -> _dt.datetime | None:
         return None
 
 
+def _release_orphaned_run_resources(root: Path) -> None:
+    """Release resource leases whose holding run already finished.
+
+    The supervisor releases its resources when a run resolves, but a
+    registry lock stall at exactly that moment used to strand the lease
+    forever: holder binding is fail-closed, so no conversation could
+    release a run-held resource afterwards. The holding run's terminal
+    (or already pruned) lease in the same registry is the release
+    evidence; conversation-held and live-run resources are never touched.
+    """
+    leases = [
+        item for item in _load_runtime_leases(root).get("leases") or []
+        if isinstance(item, dict)
+    ]
+    runs = {
+        str(item.get("id")): item
+        for item in leases
+        if item.get("kind") == "run" and item.get("id")
+    }
+    orphaned = []
+    for item in leases:
+        if item.get("kind") != "resource":
+            continue
+        if item.get("status") in {"released", "release_failed"}:
+            continue
+        holder = item.get("holder") or {}
+        if str(holder.get("type") or "") != "run":
+            continue
+        holder_run = runs.get(str(holder.get("id") or ""))
+        if holder_run is None:
+            # run start acquires resources before it registers the run
+            # lease, so a concurrent hygiene pass can observe a brand-new
+            # resource whose holder is not registered yet. A missing holder
+            # only proves a pruned (terminal) run once the resource lease
+            # has aged past the grace window; unparseable timestamps stay
+            # conservative and keep the lease.
+            created = _parse_workflow_timestamp(item.get("created_at"))
+            if created is None or created >= _dt.datetime.now() - _dt.timedelta(
+                minutes=10,
+            ):
+                continue
+        elif str(holder_run.get("status") or "") not in {
+            "succeeded", "failed", "cancelled",
+        }:
+            continue
+        orphaned.append(dict(item))
+    if not orphaned:
+        return
+    release_errors = {
+        str(item.get("id") or ""): _external_resource_release(item.get("provider") or {})
+        for item in orphaned
+    }
+
+    def update(data: dict) -> None:
+        for item in data.get("leases") or []:
+            if not isinstance(item, dict) or item.get("kind") != "resource":
+                continue
+            lease_id = str(item.get("id") or "")
+            if lease_id not in release_errors:
+                continue
+            if item.get("status") in {"released", "release_failed"}:
+                continue
+            error = release_errors[lease_id]
+            item["status"] = "release_failed" if error else "released"
+            item["released_at"] = _now()
+            item["release_reason"] = "holding run finished without releasing"
+            item["release_error"] = error
+            item["heartbeat_at"] = _now()
+
+    try:
+        _update_runtime_leases(root, update)
+    except TimeoutError:
+        return
+
+
 def _prune_terminal_run_state(root: Path) -> None:
     """Age out terminal run/resource leases and their run artifacts.
 
@@ -6267,8 +6342,11 @@ def _prune_terminal_run_state(root: Path) -> None:
     long ago. Live, non-terminal, and recent state is never touched, and
     release_failed resource leases are kept because they flag manual
     attention. Retention is `run_artifact_retention_days` in the runtime
-    policy (default 14; 0 disables pruning).
+    policy (default 14; 0 disables pruning). Releasing resources orphaned
+    by finished runs is correctness rather than hygiene, so it always runs
+    regardless of the retention setting.
     """
+    _release_orphaned_run_resources(root)
     configured = _runtime_policy(root).get("run_artifact_retention_days", 14)
     try:
         retention_days = float(configured)
@@ -6667,15 +6745,23 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
         )
         return 2
     if completed:
-        try:
-            _run_release_resources(root, completed, f"run {final_status}")
-        except TimeoutError:
-            print(
-                f"agentctl: run {lease_id} recorded {final_status} but resource "
-                "release hit lease registry lock contention; release or "
-                "reconcile the resources manually",
-                file=sys.stderr,
-            )
+        release_delay = 1.0
+        for release_attempt in range(3):
+            try:
+                _run_release_resources(root, completed, f"run {final_status}")
+                break
+            except TimeoutError:
+                if release_attempt == 2:
+                    print(
+                        f"agentctl: run {lease_id} recorded {final_status} but "
+                        "resource release hit lease registry lock contention; "
+                        "the orphaned leases release automatically on the next "
+                        "run start",
+                        file=sys.stderr,
+                    )
+                else:
+                    time.sleep(release_delay)
+                    release_delay = min(release_delay * 2.0, 4.0)
     return 0 if final_status == "succeeded" else 1
 
 

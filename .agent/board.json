@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 06:14:27",
+  "updated_at": "2026-08-12 06:57:00",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2073,6 +2073,57 @@
       "deps": [],
       "created_at": "2026-08-12 06:13:43",
       "updated_at": "2026-08-12 06:14:27"
+    },
+    "TA08B0CC413F151F5-008": {
+      "title": "release resources orphaned by finished runs",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:38:06",
+      "updated_at": "2026-08-12 06:48:46"
+    },
+    "T4C7B83C03F3DE7D5-001": {
+      "title": "independent review of orphaned resource self-heal",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:48:15",
+      "updated_at": "2026-08-12 06:48:59"
+    },
+    "TA08B0CC413F151F5-009": {
+      "title": "grace window for missing-holder resource release",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:50:34",
+      "updated_at": "2026-08-12 06:56:47"
+    },
+    "T5CCA8C280CC6FDD5-001": {
+      "title": "independent review of missing-holder grace window",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:56:19",
+      "updated_at": "2026-08-12 06:57:00"
     }
   }
 }
