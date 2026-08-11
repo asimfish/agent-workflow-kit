@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "artifact_roots": [
+    ".agent-artifacts"
+  ],
+  "runtime_roots": [
+    ".cache"
+  ],
+  "task_types": {
+    "code": {
+      "isolation": "worktree"
+    },
+    "experiment": {
+      "isolation": "worktree",
+      "requires_outputs": true
+    },
+    "docs": {
+      "isolation": "shared"
+    },
+    "review": {
+      "isolation": "read-only"
+    },
+    "maintenance": {
+      "isolation": "exclusive"
+    },
+    "generic": {
+      "isolation": "shared"
+    }
+  },
+  "performance": {
+    "hook_target_ms": 200,
+    "session_resume_target_ms": 2000,
+    "full_reconcile_at": [
+      "finish",
+      "ci",
+      "upgrade"
+    ]
+  }
+}

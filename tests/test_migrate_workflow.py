@@ -164,7 +164,7 @@ class MigrationWorkflowRegressionTest(unittest.TestCase):
         self.assertEqual(report["current_session"]["key"], "default")
         self.assertEqual(report["current_session"]["source"], "untrusted_identity")
 
-    def test_stale_peer_requires_inspection_and_is_never_auto_released(self):
+    def test_identifiable_stale_peer_is_advisory_and_never_auto_released(self):
         stale_env = self.env("stale-conversation")
         self.start(stale_env, "T-304", "src/stale/")
         record = self.session_records()[0]
@@ -173,12 +173,21 @@ class MigrationWorkflowRegressionTest(unittest.TestCase):
         record.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         before = record.read_bytes()
 
-        report = self.migrate(self.env("replacement-conversation"), expect=1)
+        report = self.migrate(self.env("replacement-conversation"))
 
-        self.assertEqual(report["action"], "inspect_stale")
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["action"], "continue")
         self.assertEqual([row["task"] for row in report["sessions"]["stale"]], ["T-304"])
+        self.assertTrue(any("T-304" in warning for warning in report["warnings"]))
+        self.assertTrue(any("sessions list" in step for step in report["next_steps"]))
         self.assertEqual(record.read_bytes(), before)
         self.assertNotEqual(json.loads(record.read_text(encoding="utf-8"))["presence_status"], "released")
+
+        self.start(
+            self.env("replacement-conversation"),
+            "T-309",
+            "src/replacement/",
+        )
 
     def test_managed_install_drift_or_legacy_manifest_requires_repair(self):
         managed = self.root / "tools" / "agent_workflow_hook.py"

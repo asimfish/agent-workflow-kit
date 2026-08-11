@@ -16,6 +16,9 @@ Commands:
   guidance   create/list/show/ack/dispatch/verify supervisor guidance packets
   handoff    create/list/show/close cross-agent task packets
   worktree   create/list/release task-scoped worktree leases
+  lease      list the normalized conversation/worktree/run/resource leases
+  run        start/adopt/list/wait/finish/stop durable background runs
+  resource   acquire/status/release project and remote resource leases
   eval       run and compare deterministic baseline/candidate verifier suites
   loop       run/status/resume/stop bounded project loops and checkpoints
   sessions   list/heartbeat/guard/release concurrent conversation claims
@@ -50,6 +53,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from typing import Protocol
 from urllib.parse import urlparse
 
 WORKFLOW_DIR = ".agent"
@@ -66,19 +70,31 @@ PARENT_SESSION_KEY_ENV = "AGENT_WORKFLOW_PARENT_SESSION_KEY"
 SESSION_ISOLATION_ERROR_ENV = "AGENT_WORKFLOW_SESSION_ISOLATION_ERROR"
 COMMAND_ACTION_ATTRS = {
     "task": "task_action",
+    "reconcile": "reconcile_action",
     "agents": "agents_action",
     "handoff": "handoff_action",
     "worktree": "worktree_action",
+    "lease": "lease_action",
+    "run": "run_action",
+    "resource": "resource_action",
     "eval": "eval_action",
     "guidance": "guidance_action",
     "loop": "loop_action",
     "sessions": "sessions_action",
+    "upgrade": "upgrade_action",
 }
 IDENTITY_FREE_COMMAND_PATHS = frozenset({
     ("init",),
     ("focus",),
+    ("capsule",),
     ("board",),
     ("task", "show"),
+    ("reconcile", "check"),
+    ("lease", "list"),
+    ("run", "list"),
+    ("run", "show"),
+    ("run", "wait"),
+    ("resource", "status"),
     ("agents", "list"),
     ("handoff", "list"),
     ("handoff", "show"),
@@ -92,6 +108,8 @@ IDENTITY_FREE_COMMAND_PATHS = frozenset({
     ("check",),
     ("migrate",),
     ("sessions", "list"),
+    ("upgrade", "status"),
+    ("upgrade", "validate"),
     ("status",),
 })
 LOCKS_DIR = "locks"
@@ -99,6 +117,11 @@ BOARD_FILE = "board.json"
 AGENTS_FILE = "agents.json"
 ADOPTION_FILE = "adoption.json"
 INSTALL_MANIFEST_FILE = "install-manifest.json"
+KIT_VERSION = "0.5.0"
+INSTALL_SCHEMA_VERSION = 2
+PROTOCOL_EPOCH = 2
+LEGACY_PROTOCOL_EPOCH = 1
+UPGRADE_STATE_FILE = "upgrade-state.json"
 PLAN_FILE = "PROJECT_PLAN.md"
 TASKS_FILE = "TASKS.md"
 TASKS_DIR = "tasks"
@@ -138,6 +161,16 @@ REASONING_EFFORT_RE = re.compile(r"^[a-z][a-z0-9_-]{0,31}$")
 WORKTREE_LEASES_DIR = "agent-workflow"
 WORKTREE_LEASES_FILE = "worktree-leases.json"
 WORKTREE_LEASES_LOCK = "worktree-leases.lock"
+RUNTIME_LEASES_FILE = "execution-leases.json"
+RUNTIME_LEASES_LOCK = "execution-leases.lock"
+RUNTIME_RUNS_DIR = "runs"
+RUNTIME_POLICY_FILE = "runtime-policy.json"
+RESOURCE_LOCK_ENV = "AGENT_WORKFLOW_RESOURCE_LOCK_DIR"
+RESOURCE_REMOTE_PREFIX = "ssh://"
+RUN_ID_ENV = "AGENT_WORKFLOW_RUN_ID"
+RUN_HEARTBEAT_SECONDS = 2.0
+TASK_TYPES = {"code", "experiment", "docs", "review", "maintenance", "generic"}
+ISOLATION_MODES = {"auto", "shared", "worktree", "read-only", "exclusive"}
 TASK_ID_NAMESPACE_FILE = "task-id-namespace.key"
 TASK_ID_NAMESPACE_BYTES = 32
 TASK_ID_SHARD_HEX_LENGTH = 16
@@ -184,6 +217,7 @@ COMMIT_TYPES = ("feat", "fix", "docs", "refactor", "test", "chore", "perf", "ci"
 
 CONVENTIONAL_RE = re.compile(r"^(?:" + "|".join(COMMIT_TYPES) + r")(?:\([^)]+\))?!?: .+")
 TASK_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
+TASK_RECORD_ID_RE = re.compile(r"[A-Z][A-Z0-9]*-[A-Z0-9][A-Z0-9._-]*")
 SECRET_RES = [
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
@@ -558,6 +592,25 @@ def _session_observed_status(st: dict) -> str:
     return "active"
 
 
+def _session_checkout_is_orphaned(st: dict) -> bool:
+    if _session_observed_status(st) != "stale":
+        return False
+    checkout = str(st.get("checkout") or "").strip()
+    if not checkout:
+        return False
+    path = Path(checkout)
+    if not path.is_absolute():
+        return False
+    try:
+        path.stat()
+    except (FileNotFoundError, NotADirectoryError):
+        return True
+    except OSError:
+        # Permission and transient filesystem failures remain fail-closed.
+        return False
+    return False
+
+
 def _session_rows_unlocked(root: Path) -> list[dict]:
     rows: list[dict] = []
     seen: set[tuple[str, str]] = set()
@@ -579,7 +632,10 @@ def _session_rows_unlocked(root: Path) -> list[dict]:
             continue
         seen.add(identity)
         row["workflow_session_key"] = key
-        row["observed_status"] = _session_observed_status(row)
+        observed_status = _session_observed_status(row)
+        if observed_status == "stale" and _session_checkout_is_orphaned(row):
+            observed_status = "orphaned"
+        row["observed_status"] = observed_status
         age = _session_age_seconds(row)
         row["heartbeat_age_seconds"] = None if age is None else round(age, 3)
         row["_record_path"] = str(path)
@@ -593,6 +649,156 @@ def _session_rows_unlocked(root: Path) -> list[dict]:
 
 def _public_session_row(row: dict) -> dict:
     return {key: value for key, value in row.items() if not key.startswith("_")}
+
+
+def _is_kit_source_checkout(root: Path) -> bool:
+    return (root / "templates" / "project").is_dir() and _kit_root() == root
+
+
+def _installed_protocol_epoch(root: Path) -> int:
+    manifest = _load_json(root / WORKFLOW_DIR / INSTALL_MANIFEST_FILE, {})
+    if isinstance(manifest, dict) and manifest:
+        try:
+            return int(manifest.get("protocol_epoch") or LEGACY_PROTOCOL_EPOCH)
+        except (TypeError, ValueError, OverflowError):
+            return LEGACY_PROTOCOL_EPOCH
+    if _is_kit_source_checkout(root):
+        return PROTOCOL_EPOCH
+    return LEGACY_PROTOCOL_EPOCH
+
+
+def _session_protocol_epoch(root: Path, session: dict) -> int:
+    try:
+        return int(session.get("protocol_epoch") or (
+            PROTOCOL_EPOCH if _is_kit_source_checkout(root) else LEGACY_PROTOCOL_EPOCH
+        ))
+    except (TypeError, ValueError, OverflowError):
+        return LEGACY_PROTOCOL_EPOCH
+
+
+def _upgrade_state_path(root: Path) -> Path:
+    common = _git_common_dir(root)
+    if common is not None:
+        return common / WORKTREE_LEASES_DIR / UPGRADE_STATE_FILE
+    return root / WORKFLOW_DIR / STATE_DIR / UPGRADE_STATE_FILE
+
+
+def _load_upgrade_state(root: Path) -> dict:
+    installed = _installed_protocol_epoch(root)
+    state = _load_json(_upgrade_state_path(root), {})
+    if not isinstance(state, dict) or not state:
+        return {
+            "state": "steady",
+            "installed_epoch": installed,
+            "target_epoch": installed,
+        }
+    state.setdefault("state", "steady")
+    state.setdefault("installed_epoch", installed)
+    state.setdefault("target_epoch", installed)
+    return state
+
+
+def _upgrade_blocking_sessions(root: Path) -> list[dict]:
+    return [
+        row for row in _session_rows_unlocked(root)
+        if row.get("observed_status") in {"active", "stale"}
+    ]
+
+
+_UPGRADE_DRAIN_ALLOWED = frozenset({
+    ("note",),
+    ("complete",),
+    ("finish",),
+    ("refresh",),
+    ("focus",),
+    ("capsule",),
+    ("board",),
+    ("task", "show"),
+    ("reconcile", "check"),
+    ("lease", "list"),
+    ("run", "list"),
+    ("run", "show"),
+    ("run", "wait"),
+    ("run", "finish"),
+    ("run", "stop"),
+    ("_run-supervise",),
+    ("resource", "status"),
+    ("resource", "release"),
+    ("worktree", "list"),
+    ("worktree", "release"),
+    ("loop", "status"),
+    ("loop", "stop"),
+    ("check",),
+    ("doctor",),
+    ("migrate",),
+    ("sessions", "list"),
+    ("sessions", "heartbeat"),
+    ("sessions", "release"),
+    ("status",),
+    ("upgrade", "begin"),
+    ("upgrade", "status"),
+    ("upgrade", "validate"),
+    ("upgrade", "complete"),
+    ("upgrade", "rebind"),
+})
+_PROTOCOL_MISMATCH_ALLOWED = frozenset({
+    ("focus",),
+    ("capsule",),
+    ("board",),
+    ("task", "show"),
+    ("lease", "list"),
+    ("run", "list"),
+    ("run", "show"),
+    ("run", "wait"),
+    ("run", "finish"),
+    ("run", "stop"),
+    ("_run-supervise",),
+    ("resource", "status"),
+    ("resource", "release"),
+    ("worktree", "list"),
+    ("worktree", "release"),
+    ("loop", "status"),
+    ("loop", "stop"),
+    ("check",),
+    ("doctor",),
+    ("migrate",),
+    ("sessions", "list"),
+    ("sessions", "release"),
+    ("status",),
+    ("upgrade", "status"),
+    ("upgrade", "validate"),
+    ("upgrade", "rebind"),
+})
+
+
+def _upgrade_command_error(root: Path, args: argparse.Namespace) -> str:
+    path = _agentctl_command_path(args)
+    if path in {("init",), ("upgrade", "status"), ("upgrade", "validate"),
+                ("upgrade", "begin"), ("upgrade", "complete"),
+                ("upgrade", "rebind")}:
+        return ""
+    state = _load_upgrade_state(root)
+    if state.get("state") in {"draining", "validating"} and path not in _UPGRADE_DRAIN_ALLOWED:
+        return (
+            f"workflow upgrade is {state.get('state')} "
+            f"(epoch {state.get('installed_epoch')} -> {state.get('target_epoch')}); "
+            "new work and repository writes are blocked until active sessions release "
+            "and `agentctl upgrade complete` succeeds"
+        )
+    _key, session, _source, _record_path, _identity_error = (
+        _migration_current_record(root)
+    )
+    if not session.get("task"):
+        return ""
+    installed = _installed_protocol_epoch(root)
+    observed = _session_protocol_epoch(root, session)
+    if observed != installed and path not in _PROTOCOL_MISMATCH_ALLOWED:
+        return (
+            f"this conversation is bound to workflow protocol epoch {observed}, "
+            f"but the checkout uses epoch {installed}; re-read the plan and task "
+            "document, then run `python3 tools/agentctl.py upgrade rebind`"
+        )
+    return ""
 
 
 def _write_atomic_text(path: Path, content: str) -> None:
@@ -680,6 +886,112 @@ def _adoption_path(root: Path) -> Path:
 
 def _install_manifest_path(root: Path) -> Path:
     return root / WORKFLOW_DIR / INSTALL_MANIFEST_FILE
+
+
+def _save_upgrade_state(root: Path, state: dict) -> None:
+    state["updated_at"] = _now()
+    _save_json(_upgrade_state_path(root), state)
+
+
+def _upgrade_barrier_plan(root: Path, kit: Path,
+                          force_managed: bool) -> list[tuple[str, Path, str]]:
+    manifest = _load_json(_install_manifest_path(root), {})
+    old_hashes = manifest.get("managed_files") or {}
+    plan = []
+    for rel in ("tools/agentctl.py", "tools/agent_workflow_hook.py"):
+        source = kit / rel
+        if not source.is_file():
+            raise ValueError(f"upgrade barrier source is missing: {rel}")
+        destination = root / rel
+        desired = _read(source)
+        desired_hash = hashlib.sha256(desired.encode("utf-8")).hexdigest()
+        current = _read(destination)
+        current_hash = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        recorded_hash = str(old_hashes.get(rel) or "")
+        if (destination.exists() and current_hash != desired_hash
+                and recorded_hash and current_hash != recorded_hash
+                and not force_managed):
+            raise ValueError(
+                f"{rel} differs from its recorded managed version; inspect it "
+                "or rerun init with --force-managed before upgrading"
+            )
+        plan.append((rel, destination, desired))
+    return plan
+
+
+def _bootstrap_upgrade_barrier(
+        plan: list[tuple[str, Path, str]]) -> list[str]:
+    installed = []
+    for rel, destination, desired in plan:
+        if _read(destination) != desired:
+            _write_atomic_text(destination, desired)
+        try:
+            os.chmod(destination, 0o755)
+        except OSError:
+            pass
+        installed.append(rel)
+    return installed
+
+
+def _prepare_install_upgrade(root: Path, kit: Path,
+                             force_managed: bool = False) -> tuple[dict | None, list[dict]]:
+    manifest_path = _install_manifest_path(root)
+    installed_before = (
+        manifest_path.is_file()
+        or (root / "tools" / "agentctl.py").is_file()
+        or (root / WORKFLOW_DIR / PLAN_FILE).is_file()
+    )
+    if not installed_before or _is_kit_source_checkout(root):
+        return None, []
+    from_epoch = _installed_protocol_epoch(root)
+    if from_epoch > PROTOCOL_EPOCH:
+        raise ValueError(
+            f"refusing workflow downgrade from protocol epoch {from_epoch} "
+            f"to {PROTOCOL_EPOCH}"
+        )
+    if from_epoch == PROTOCOL_EPOCH:
+        return None, []
+    state = {
+        "state": "draining",
+        "installed_epoch": from_epoch,
+        "target_epoch": PROTOCOL_EPOCH,
+        "target_version": KIT_VERSION,
+        "started_at": _now(),
+        "initiated_by": "agentctl init",
+    }
+    blockers = _upgrade_blocking_sessions(root)
+    state["blocking_sessions"] = [
+        {
+            "session": row.get("workflow_session_key"),
+            "task": row.get("task"),
+            "status": row.get("observed_status"),
+            "checkout": row.get("checkout"),
+        }
+        for row in blockers
+    ]
+    if not blockers:
+        state["state"] = "validating"
+        state["drained_at"] = _now()
+    barrier_plan = _upgrade_barrier_plan(root, kit, force_managed)
+    _save_upgrade_state(root, state)
+    state["barrier_entrypoints"] = _bootstrap_upgrade_barrier(barrier_plan)
+    state["barrier_bootstrapped_at"] = _now()
+    _save_upgrade_state(root, state)
+    return state, blockers
+
+
+def _finish_install_upgrade(root: Path, context: dict | None) -> None:
+    if context is None:
+        return
+    _save_upgrade_state(root, {
+        "state": "steady",
+        "installed_epoch": PROTOCOL_EPOCH,
+        "target_epoch": PROTOCOL_EPOCH,
+        "target_version": KIT_VERSION,
+        "started_at": context.get("started_at"),
+        "completed_at": _now(),
+        "initiated_by": context.get("initiated_by") or "agentctl init",
+    })
 
 
 def _load_agents(root: Path) -> dict:
@@ -1008,25 +1320,38 @@ def _blocking_session_rows(root: Path, current_key: str | None = None) -> list[d
 
 
 def _session_start_conflicts(root: Path, session_key: str, task: str,
-                             scope: list[str]) -> list[str]:
+                             scope: list[str], isolation: str = "shared") -> list[str]:
     conflicts = []
     for row in _session_rows_unlocked(root):
-        if not _same_checkout(root, row):
-            continue
         if row.get("observed_status") not in {"active", "stale"}:
             continue
         other_key = row.get("workflow_session_key") or "default"
         other_task = row.get("task") or "unknown"
+        same_checkout = _same_checkout(root, row)
+        other_isolation = str(row.get("isolation") or "shared")
         if other_key == session_key:
             if other_task != task:
                 conflicts.append(
                     f"this conversation already owns active task {other_task}; finish or release it first"
+                )
+            elif not same_checkout:
+                conflicts.append(
+                    f"this conversation already owns task {task} in checkout "
+                    f"{row.get('checkout')}; release it before changing checkouts"
                 )
             continue
         if other_task == task:
             conflicts.append(
                 f"task {task} is already claimed by session {other_key} ({row.get('observed_status')})"
             )
+        elif isolation == "exclusive" or other_isolation == "exclusive":
+            conflicts.append(
+                f"exclusive task ownership conflicts with session {other_key} "
+                f"task={other_task} isolation={other_isolation} "
+                f"({row.get('observed_status')})"
+            )
+        elif not same_checkout:
+            continue
         elif not scope or not (row.get("scope") or []):
             conflicts.append(
                 f"write scopes cannot be proven disjoint from session {other_key} "
@@ -1059,6 +1384,30 @@ def _normalize_claim_path(root: Path, value: str) -> tuple[str | None, str | Non
 
 def _scope_entry_base(scope_entry: str) -> str:
     return scope_entry.strip().strip("/").rstrip("*").rstrip("/")
+
+
+def _scope_entry_error(scope_entry: str) -> str | None:
+    value = str(scope_entry or "").strip()
+    if not value:
+        return "scope entries cannot be empty"
+    if any(char in value for char in "*?["):
+        return (
+            f"scope entry '{value}' uses a glob; declare the containing directory "
+            "instead so ownership is deterministic"
+        )
+    normalized = value.replace("\\", "/")
+    if normalized.startswith("/") or re.match(r"^[A-Za-z]:/", normalized):
+        return f"scope entry '{value}' must be relative to the project checkout"
+    parts = [part for part in normalized.strip("/").split("/") if part]
+    if not parts or parts == ["."] or ".." in parts:
+        return f"scope entry '{value}' must name a bounded project path"
+    return None
+
+
+def _scope_errors(scope: list[str]) -> list[str]:
+    return [
+        error for error in (_scope_entry_error(item) for item in scope) if error
+    ]
 
 
 def _dir_within_scope_entry(path: str, scope_entry: str) -> bool:
@@ -1436,6 +1785,17 @@ def _select_next_task(root: Path, agent: str) -> str | None:
     return candidates[0][2]
 
 
+def _task_isolation(root: Path, task: dict, requested: str | None = None) -> str:
+    if requested and requested != "auto":
+        return requested
+    task_type = str(task.get("type") or "generic")
+    policy = _runtime_policy(root)
+    configured = ((policy.get("task_types") or {}).get(task_type) or {}).get("isolation")
+    if configured in ISOLATION_MODES:
+        return str(configured)
+    return "worktree" if task_type in {"code", "experiment", "maintenance"} else "shared"
+
+
 def _task_id_namespace_key(root: Path) -> bytes:
     git_dir = _git_dir(root)
     base = git_dir / WORKTREE_LEASES_DIR if git_dir is not None else _state_dir(root)
@@ -1646,9 +2006,23 @@ def _init_install_plan(root: Path, kit: Path, src: Path, *, force_managed: bool)
             if _read(destination) != merged:
                 writes[destination] = merged
 
+    source_commit = _git(kit, "rev-parse", "HEAD") or "uncommitted"
+    manifest_changed = (
+        manifest.get("version") != INSTALL_SCHEMA_VERSION
+        or manifest.get("kit_version") != KIT_VERSION
+        or manifest.get("protocol_epoch") != PROTOCOL_EPOCH
+        or manifest.get("source_commit") != source_commit
+        or old_hashes != managed
+    )
     manifest_text = json.dumps({
-        "version": 1,
+        "version": INSTALL_SCHEMA_VERSION,
+        "kit_version": KIT_VERSION,
+        "protocol_epoch": PROTOCOL_EPOCH,
+        "source_commit": source_commit,
         "installed_at": manifest.get("installed_at") or _now(),
+        "updated_at": (
+            _now() if manifest_changed else manifest.get("updated_at") or _now()
+        ),
         "managed_files": managed,
         "managed_hooks": {
             rel: json.loads(template_files[rel])
@@ -1666,6 +2040,32 @@ def cmd_init(args: argparse.Namespace) -> int:
     if not src.is_dir():
         print(f"agentctl: template dir not found: {src}", file=sys.stderr)
         return 2
+    try:
+        upgrade_context, upgrade_blockers = _prepare_install_upgrade(
+            root, kit, force_managed=bool(args.force_managed),
+        )
+    except ValueError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 1
+    if upgrade_blockers:
+        print(
+            "agentctl: upgrade barrier entered draining state; managed enforcement "
+            "entrypoints were upgraded, but project templates and state were not "
+            "migrated because active or stale sessions still hold write authority:",
+            file=sys.stderr,
+        )
+        for row in upgrade_blockers:
+            print(
+                f"  - {row.get('workflow_session_key')} task={row.get('task')} "
+                f"status={row.get('observed_status')} checkout={row.get('checkout')}",
+                file=sys.stderr,
+            )
+        print(
+            "agentctl: have each live session finish/release; inspect stale sessions "
+            "before explicit release, then rerun init",
+            file=sys.stderr,
+        )
+        return 1
     writes, conflicts, copied = _init_install_plan(
         root, kit, src, force_managed=bool(args.force_managed),
     )
@@ -1760,7 +2160,105 @@ def cmd_init(args: argparse.Namespace) -> int:
         print("agentctl: git core.hooksPath -> .githooks")
     elif installed:
         print("agentctl: NOTE not a git repo; after 'git init' run: git config core.hooksPath .githooks")
+    _finish_install_upgrade(root, upgrade_context)
     return 0
+
+
+def _task_capsule(root: Path, task: str, session: dict | None = None) -> dict:
+    session = session if isinstance(session, dict) else _load_session(root)
+    entry = (_load_board(root).get("tasks") or {}).get(task) or {}
+    task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    body = _read(task_doc)
+    contract = _extract_section(body, "## Task Contract").strip()
+    stage_plan = _extract_section(body, "## Stage Plan")
+    stage_log = _extract_section(body, "## Stage Log")
+    todos = [
+        match.group(1).strip()
+        for match in re.finditer(r"(?m)^-\s*\[\s\]\s+(.+)$", stage_plan)
+    ][:12]
+    recent_log = [
+        line.strip()
+        for line in stage_log.splitlines()
+        if line.strip().startswith("-") and "No updates yet" not in line
+    ][-5:]
+    dependencies = []
+    board_tasks = _load_board(root).get("tasks") or {}
+    for dependency in entry.get("deps") or []:
+        dep = board_tasks.get(dependency) or {}
+        dependencies.append({
+            "task": dependency,
+            "status": dep.get("status") or "missing",
+        })
+    current_key = session.get("workflow_session_key") or _workflow_session_key()
+    peers = [
+        {
+            "session": row.get("workflow_session_key"),
+            "task": row.get("task"),
+            "agent": row.get("agent"),
+            "status": row.get("observed_status"),
+            "scope": row.get("scope") or [],
+            "checkout": row.get("checkout"),
+        }
+        for row in _session_rows_unlocked(root)
+        if row.get("workflow_session_key") != current_key
+        and row.get("observed_status") in {"active", "stale"}
+    ]
+    leases = []
+    for row in _execution_lease_rows(root):
+        if row.get("task") != task or row.get("kind") == "conversation":
+            continue
+        leases.append({
+            "id": row.get("id"),
+            "kind": row.get("kind"),
+            "status": row.get("status"),
+            "resources": row.get("resources") or [],
+            "processes": row.get("processes") or [],
+        })
+    doc_hashes = _hash_docs(root, task)
+    digest = hashlib.sha256(
+        json.dumps(doc_hashes, sort_keys=True).encode("utf-8")
+    ).hexdigest()[:12]
+    return {
+        "version": 1,
+        "generated_at": _now(),
+        "task": task,
+        "title": entry.get("title") or task,
+        "status": entry.get("status") or "unknown",
+        "owner": entry.get("owner") or session.get("agent") or "",
+        "type": entry.get("type") or session.get("task_type") or "generic",
+        "isolation": session.get("isolation") or _task_isolation(root, entry, "auto"),
+        "scope": entry.get("scope") or session.get("scope") or [],
+        "contract": contract[:1200],
+        "remaining_todos": todos,
+        "next_action": todos[0] if todos else "",
+        "recent_log": recent_log,
+        "recent_notes": list(session.get("notes") or [])[-3:],
+        "dependencies": dependencies,
+        "peers": peers,
+        "leases": leases,
+        "protocol_epoch": _installed_protocol_epoch(root),
+        "documents_digest": digest,
+    }
+
+
+def _print_capsule(capsule: dict) -> None:
+    print("[Runtime Capsule]")
+    print(
+        f"task={capsule['task']} status={capsule['status']} "
+        f"type={capsule['type']} isolation={capsule['isolation']} "
+        f"docs={capsule['documents_digest']} epoch={capsule['protocol_epoch']}"
+    )
+    if capsule.get("next_action"):
+        print(f"next={capsule['next_action']}")
+    if capsule.get("peers"):
+        print("peers=" + "; ".join(
+            f"{row['session']}:{row['task']}[{row['status']}]"
+            for row in capsule["peers"]
+        ))
+    if capsule.get("leases"):
+        print("leases=" + "; ".join(
+            f"{row['id']}[{row['status']}]" for row in capsule["leases"]
+        ))
 
 
 def _print_focus(root: Path, task: str, agent: str | None = None,
@@ -1778,6 +2276,7 @@ def _print_focus(root: Path, task: str, agent: str | None = None,
                 print(f"[{label}]\n{sec}\n")
     else:
         print(f"(no task doc at {WORKFLOW_DIR}/{TASKS_DIR}/{task}.md)")
+    _print_capsule(_task_capsule(root, task))
     if agent:
         _print_guidance_focus(
             root, agent, task, session_id=session_id, model=model,
@@ -1785,6 +2284,24 @@ def _print_focus(root: Path, task: str, agent: str | None = None,
         )
     print("Required reading: AGENTS.md, .agent/PROJECT_PLAN.md, and the task doc above.")
     print("=== end focus ===")
+
+
+def cmd_capsule(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    session = _load_session(root)
+    task = args.task or session.get("task")
+    if not task:
+        print(
+            "agentctl: no active task; pass --task or start work first",
+            file=sys.stderr,
+        )
+        return 2
+    capsule = _task_capsule(root, task, session)
+    if args.json:
+        print(json.dumps(capsule, indent=2, ensure_ascii=False))
+    else:
+        _print_capsule(capsule)
+    return 0
 
 
 def cmd_work(args: argparse.Namespace) -> int:
@@ -1816,6 +2333,7 @@ def cmd_work(args: argparse.Namespace) -> int:
                 session_key = st.get("workflow_session_key") or _workflow_session_key()
                 conflicts = _session_start_conflicts(
                     root, session_key, active, st.get("scope") or [],
+                    str(st.get("isolation") or "shared"),
                 )
                 if conflicts:
                     for conflict in conflicts:
@@ -1876,28 +2394,128 @@ def cmd_work(args: argparse.Namespace) -> int:
                 owner=agent,
                 scope=args.scope,
                 deps=args.deps or "",
+                task_type=args.task_type or "generic",
                 force=args.force,
             )
-            rc = _task_create(root, create_args)
-            if rc:
-                return rc
-            print(f"agentctl: auto-created {task} for {agent}")
-            start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force,
-                                            session_id=meta["session_id"], model=meta["model"],
-                                            reasoning_effort=meta["reasoning_effort"])
-            return cmd_start(start_args)
+            isolation = _task_isolation(
+                root, {"type": create_args.task_type}, args.isolation,
+            )
+            if isolation in {"worktree", "exclusive"}:
+                return _worktree_bootstrap_task(root, create_args, agent, isolation)
+            if not (root / WORKFLOW_DIR / PLAN_FILE).is_file():
+                print(
+                    f"agentctl: missing {WORKFLOW_DIR}/{PLAN_FILE}. "
+                    "run 'agentctl init' first.",
+                    file=sys.stderr,
+                )
+                return 2
+            try:
+                coordination_fd = _acquire_lock_file(
+                    _session_coordination_lock_path(root),
+                )
+            except TimeoutError as exc:
+                print(f"agentctl: {exc}", file=sys.stderr)
+                return 2
+            try:
+                session_key = _workflow_session_key()
+                scope = [
+                    item.strip() for item in (args.scope or "").split(",")
+                    if item.strip()
+                ]
+                presence_conflicts = _session_start_conflicts(
+                    root, session_key, task, scope, isolation,
+                )
+                if presence_conflicts:
+                    for conflict in presence_conflicts:
+                        print(
+                            f"agentctl: session conflict: {conflict}",
+                            file=sys.stderr,
+                        )
+                    print(
+                        "agentctl: auto-create was rejected before task state "
+                        "was written; inspect sessions or choose disjoint work.",
+                        file=sys.stderr,
+                    )
+                    return 1
+                try:
+                    managed_lease = _managed_worktree_lease(root)
+                except RuntimeError as exc:
+                    print(f"agentctl: {exc}", file=sys.stderr)
+                    return 2
+                if managed_lease:
+                    print(
+                        "agentctl: this managed worktree is already leased to "
+                        f"task={managed_lease.get('task')} "
+                        f"agent={managed_lease.get('agent')}; create new work "
+                        "from the planning checkout",
+                        file=sys.stderr,
+                    )
+                    return 1
+                board = _load_board(root)
+                if scope and not args.force:
+                    for tid, other_task in (board.get("tasks") or {}).items():
+                        if other_task.get("status") not in ACTIVE_STATUSES:
+                            continue
+                        if _scopes_overlap(scope, other_task.get("scope") or []):
+                            print(
+                                f"agentctl: write-scope conflict with {tid} "
+                                f"(owner={other_task.get('owner')}, "
+                                f"scope={other_task.get('scope')}). use a "
+                                "disjoint scope or task worktree.",
+                                file=sys.stderr,
+                            )
+                            return 1
+                rc = _task_create_unlocked(root, create_args)
+                if rc:
+                    return rc
+                print(f"agentctl: auto-created {task} for {agent}")
+                start_args = argparse.Namespace(
+                    task=task, agent=agent, scope=args.scope, force=args.force,
+                    session_id=meta["session_id"], model=meta["model"],
+                    reasoning_effort=meta["reasoning_effort"],
+                )
+                start_fd = coordination_fd
+                coordination_fd = None
+                return cmd_start(
+                    start_args, _coordination_fd=start_fd,
+                )
+            finally:
+                if coordination_fd is not None:
+                    _release_lock_file(
+                        _session_coordination_lock_path(root), coordination_fd,
+                    )
         print(f"agentctl: no ready/todo task assigned to {agent}.")
         print("agentctl: if this is a new user request, create and start a task in one command:")
         print("  python3 tools/agentctl.py work --agent " + agent + " --auto-create --title \"...\" --scope path/")
         return 1
     print(f"agentctl: auto-selected {task} for {agent}")
+    selected = (_load_board(root).get("tasks") or {}).get(task) or {}
+    isolation = _task_isolation(root, selected, args.isolation)
+    if isolation in {"worktree", "exclusive"} and not _managed_worktree_lease(root):
+        if isolation == "exclusive" and any(
+                row.get("observed_status") in {"active", "stale"}
+                for row in _session_rows_unlocked(root)):
+            print(
+                "agentctl: exclusive maintenance cannot start while another "
+                "session is active or stale",
+                file=sys.stderr,
+            )
+            return 1
+        return _worktree_create(
+            root,
+            argparse.Namespace(
+                task=task, agent=agent, branch=None, path=None, base="HEAD",
+            ),
+        )
     start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force,
                                     session_id=meta["session_id"], model=meta["model"],
                                     reasoning_effort=meta["reasoning_effort"])
     return cmd_start(start_args)
 
 
-def cmd_start(args: argparse.Namespace) -> int:
+def cmd_start(
+    args: argparse.Namespace, *, _coordination_fd: int | None = None,
+) -> int:
     root = _repo_root()
     identity_error = _workflow_session_identity_error()
     if identity_error:
@@ -1909,11 +2527,15 @@ def cmd_start(args: argparse.Namespace) -> int:
     task = args.task
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
     meta = _resolve_worker_metadata(root, agent, args)
-    try:
-        coordination_fd = _acquire_lock_file(_session_coordination_lock_path(root))
-    except TimeoutError as exc:
-        print(f"agentctl: {exc}", file=sys.stderr)
-        return 2
+    coordination_fd = _coordination_fd
+    if coordination_fd is None:
+        try:
+            coordination_fd = _acquire_lock_file(
+                _session_coordination_lock_path(root),
+            )
+        except TimeoutError as exc:
+            print(f"agentctl: {exc}", file=sys.stderr)
+            return 2
     try:
         board = _load_board(root)
         tasks = board.setdefault("tasks", {})
@@ -1928,11 +2550,17 @@ def cmd_start(args: argparse.Namespace) -> int:
         scope = entry.get("scope") or []
         if args.scope:
             scope = [s.strip() for s in args.scope.split(",") if s.strip()]
+        scope_problems = _scope_errors(scope)
+        if scope_problems:
+            for problem in scope_problems:
+                print(f"agentctl: {problem}", file=sys.stderr)
+            return 2
         try:
             managed_lease = _managed_worktree_lease(root)
         except RuntimeError as exc:
             print(f"agentctl: {exc}", file=sys.stderr)
             return 2
+        required_isolation = _task_isolation(root, entry, "auto")
         if managed_lease:
             observed = managed_lease.get("observed_status")
             if observed != "active":
@@ -1958,8 +2586,19 @@ def cmd_start(args: argparse.Namespace) -> int:
                 )
                 return 1
             scope = lease_scope
+        elif required_isolation in {"worktree", "exclusive"}:
+            print(
+                f"agentctl: task {task} type={entry.get('type') or 'generic'} "
+                f"requires {required_isolation} isolation; run 'agentctl work "
+                f"--agent {agent}' from the planning checkout so it can allocate "
+                "the task worktree",
+                file=sys.stderr,
+            )
+            return 1
         session_key = _workflow_session_key()
-        presence_conflicts = _session_start_conflicts(root, session_key, task, scope)
+        presence_conflicts = _session_start_conflicts(
+            root, session_key, task, scope, required_isolation,
+        )
         if presence_conflicts:
             for conflict in presence_conflicts:
                 print(f"agentctl: session conflict: {conflict}", file=sys.stderr)
@@ -2024,6 +2663,9 @@ def cmd_start(args: argparse.Namespace) -> int:
         _set_task_doc_status(root, task, "in_progress")
         session = {
             "task": task, "agent": agent, "started_at": now, "scope": scope,
+            "task_type": entry.get("type") or "generic",
+            "isolation": required_isolation,
+            "protocol_epoch": _installed_protocol_epoch(root),
             "workflow_session_key": session_key,
             "session_id": meta["session_id"], "model": meta["model"],
             "reasoning_effort": meta["reasoning_effort"],
@@ -2129,6 +2771,30 @@ def _completion_record_value(value: str) -> str:
     return " ".join(str(value or "").split())
 
 
+def _task_output_requirement_error(root: Path, task: str) -> str | None:
+    entry = (_load_board(root).get("tasks") or {}).get(task) or {}
+    task_type = str(entry.get("type") or "generic")
+    policy = _runtime_policy(root)
+    type_policy = (policy.get("task_types") or {}).get(task_type) or {}
+    if not type_policy.get("requires_outputs"):
+        return None
+    for lease in _load_runtime_leases(root).get("leases") or []:
+        if not isinstance(lease, dict) or lease.get("kind") != "run":
+            continue
+        if str(lease.get("task") or "") != task:
+            continue
+        if _runtime_observed_status(lease) != "succeeded":
+            continue
+        checkout = Path(str(lease.get("checkout") or root))
+        declared = [str(item) for item in lease.get("outputs") or [] if str(item)]
+        if declared and any((checkout / item).exists() for item in declared):
+            return None
+    return (
+        f"task {task} type={task_type} requires at least one successful run "
+        "with existing declared output before finish"
+    )
+
+
 def cmd_complete(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
@@ -2148,6 +2814,10 @@ def cmd_complete(args: argparse.Namespace) -> int:
     if not summary:
         print("agentctl: --summary is required", file=sys.stderr)
         return 2
+    output_error = _task_output_requirement_error(root, task)
+    if output_error:
+        print(f"agentctl: {output_error}", file=sys.stderr)
+        return 1
     pending_guidance = _open_guidance_packets(
         root,
         to_agent=st.get("agent"),
@@ -2641,16 +3311,39 @@ def _task_create(root: Path, args: argparse.Namespace) -> int:
 
 def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
     task = args.id
+    if not TASK_RECORD_ID_RE.fullmatch(task):
+        print(
+            "agentctl: task id must use uppercase letters/digits with one safe "
+            "dash-separated suffix (for example T-101 or EXP-GPU-A)",
+            file=sys.stderr,
+        )
+        return 2
     title = args.title or task
     owner = args.owner or ""
     scope = [s.strip() for s in (args.scope or "").split(",") if s.strip()]
+    scope_problems = _scope_errors(scope)
+    if scope_problems:
+        for problem in scope_problems:
+            print(f"agentctl: {problem}", file=sys.stderr)
+        return 2
     deps = [d.strip() for d in (args.deps or "").split(",") if d.strip()]
+    invalid_deps = [dep for dep in deps if not TASK_RECORD_ID_RE.fullmatch(dep)]
+    if invalid_deps:
+        print(
+            "agentctl: invalid dependency task id(s): " + ", ".join(invalid_deps),
+            file=sys.stderr,
+        )
+        return 2
+    task_type = str(getattr(args, "task_type", None) or "generic")
+    if task_type not in TASK_TYPES:
+        print(f"agentctl: unsupported task type: {task_type}", file=sys.stderr)
+        return 2
     now = _now()
     board = _load_board(root)
     if task in board.get("tasks", {}) and not args.force:
         print(f"agentctl: task {task} already exists (use --force)", file=sys.stderr)
         return 1
-    board.setdefault("tasks", {})[task] = {"title": title, "status": "todo",
+    board.setdefault("tasks", {})[task] = {"title": title, "type": task_type, "status": "todo",
                                            "owner": owner or None, "scope": scope, "deps": deps,
                                            "created_at": now, "updated_at": now}
     _save_board(root, board)
@@ -3177,6 +3870,26 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
     stderr = ""
     exit_code = 1
     failure = ""
+    child_env = os.environ.copy()
+    for name in (
+        SESSION_ID_ENV,
+        SESSION_OWNER_RUNTIME_ENV,
+        SESSION_INSTANCE_ENV,
+        PARENT_SESSION_KEY_ENV,
+        SESSION_ISOLATION_ERROR_ENV,
+        "AGENT_WORKFLOW_SESSION_KEY",
+        "CODEX_THREAD_ID",
+        "CLAUDE_CODE_SESSION_ID",
+        "CURSOR_CONVERSATION_ID",
+        "WHALENT_AGENT_ID",
+        "WHALENT_CODEX_INSTANCE_ID",
+        "WHALENT_COMPOSER_ID",
+        "WHALENT_FORK_SOURCE_AGENT_ID",
+        "AGENT_SESSION_ID",
+        "TERM_SESSION_ID",
+    ):
+        child_env.pop(name, None)
+    child_env[SESSION_ID_ENV] = session_id
     try:
         popen_args = {}
         if os.name == "posix":
@@ -3188,6 +3901,7 @@ def _guidance_dispatch(root: Path, args: argparse.Namespace) -> int:
         proc = subprocess.Popen(
             command, cwd=str(root), text=True, encoding="utf-8", errors="replace",
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=child_env,
             **popen_args,
         )
         try:
@@ -4180,6 +4894,166 @@ def _default_worktree_path(root: Path, task: str, agent: str) -> Path:
     return pool / f"{task.lower()}-{_safe_segment(agent).lower()}"
 
 
+def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
+                             agent: str, isolation: str) -> int:
+    registry, lock = _worktree_lease_paths(root)
+    if registry is None or lock is None:
+        print("agentctl: automatic task worktrees require a Git repository", file=sys.stderr)
+        return 2
+    task = str(create_args.id)
+    scope = [item.strip() for item in str(create_args.scope or "").split(",") if item.strip()]
+    if _scope_errors(scope):
+        for problem in _scope_errors(scope):
+            print(f"agentctl: {problem}", file=sys.stderr)
+        return 2
+    base_sha = _git(root, "rev-parse", "HEAD^{commit}")
+    if not base_sha:
+        print(
+            "agentctl: automatic worktree creation requires an initial commit; "
+            "commit the installed workflow baseline first",
+            file=sys.stderr,
+        )
+        return 1
+    dirty = _git_process(root, "status", "--porcelain", "--untracked-files=all")
+    if dirty.returncode:
+        print(f"agentctl: unable to inspect planning checkout: {dirty.stderr.strip()}", file=sys.stderr)
+        return 2
+    if dirty.stdout.strip():
+        print(
+            "agentctl: automatic worktree creation requires a clean planning checkout; "
+            "preserve or commit its current changes first",
+            file=sys.stderr,
+        )
+        return 1
+    if isolation == "exclusive":
+        peers = [
+            row for row in _session_rows_unlocked(root)
+            if row.get("observed_status") in {"active", "stale"}
+        ]
+        if peers:
+            print(
+                "agentctl: exclusive maintenance cannot start while another session is active or stale",
+                file=sys.stderr,
+            )
+            return 1
+    branch = _default_worktree_branch(task, agent)
+    path = _default_worktree_path(root, task, agent).resolve()
+    lease_id = "wt-" + hashlib.sha256(
+        f"bootstrap:{task}:{agent}:{path}:{time.time_ns()}".encode("utf-8")
+    ).hexdigest()[:16]
+    fd = _acquire_lock_file(lock)
+    try:
+        data = _load_worktree_leases(root)
+        try:
+            worktrees = _git_worktrees(root)
+        except RuntimeError as exc:
+            print(f"agentctl: {exc}", file=sys.stderr)
+            return 2
+        if _reconcile_worktree_leases(root, data, worktrees):
+            _save_worktree_leases(root, data)
+        for existing in data.get("leases") or []:
+            if not isinstance(existing, dict) or existing.get("status") == "released":
+                continue
+            observed = _worktree_observed_status(existing, worktrees)
+            if existing.get("status") == "failed" and observed == "missing":
+                continue
+            if existing.get("task") == task:
+                print(
+                    f"agentctl: task {task} already has worktree lease {existing.get('id')}",
+                    file=sys.stderr,
+                )
+                return 1
+            if _scopes_overlap(scope, existing.get("scope") or []):
+                print(
+                    f"agentctl: task {task} scope overlaps active worktree task "
+                    f"{existing.get('task')}; split or serialize the tasks",
+                    file=sys.stderr,
+                )
+                return 1
+            if existing.get("branch") == branch or str(
+                    Path(existing.get("path") or "").resolve()) == str(path):
+                print(
+                    f"agentctl: worktree branch or path is already leased by {existing.get('id')}",
+                    file=sys.stderr,
+                )
+                return 1
+        if _git(root, "show-ref", "--verify", f"refs/heads/{branch}"):
+            print(f"agentctl: worktree branch already exists: {branch}", file=sys.stderr)
+            return 1
+        if path.exists() and any(path.iterdir() if path.is_dir() else [path]):
+            print(f"agentctl: worktree path is not empty: {path}", file=sys.stderr)
+            return 1
+        lease = {
+            "id": lease_id,
+            "status": "creating",
+            "task": task,
+            "agent": agent,
+            "scope": scope,
+            "task_type": create_args.task_type,
+            "isolation": isolation,
+            "branch": branch,
+            "path": str(path),
+            "base": "HEAD",
+            "base_sha": base_sha,
+            "created_from": str(root.resolve()),
+            "created_at": _now(),
+            "updated_at": _now(),
+            "released_at": None,
+            "last_error": None,
+        }
+        data.setdefault("leases", []).append(lease)
+        _save_worktree_leases(root, data)
+        added = _git_process(root, "worktree", "add", "-b", branch, str(path), base_sha)
+        if added.returncode:
+            lease["status"] = "failed"
+            lease["last_error"] = (added.stderr or added.stdout).strip()[-2000:]
+            lease["updated_at"] = _now()
+            _save_worktree_leases(root, data)
+            print(f"agentctl: git worktree add failed: {lease['last_error']}", file=sys.stderr)
+            return 2
+        create_command = [
+            sys.executable, str(path / "tools" / "agentctl.py"),
+            "task", "create",
+            "--id", task,
+            "--title", str(create_args.title or task),
+            "--owner", str(create_args.owner or agent),
+            "--scope", str(create_args.scope),
+            "--type", str(create_args.task_type),
+        ]
+        if create_args.deps:
+            create_command.extend(["--deps", str(create_args.deps)])
+        created = subprocess.run(
+            create_command, cwd=str(path), text=True, capture_output=True, timeout=120,
+        )
+        if created.returncode:
+            lease["status"] = "failed"
+            lease["last_error"] = (created.stderr or created.stdout).strip()[-2000:]
+            lease["updated_at"] = _now()
+            _save_worktree_leases(root, data)
+            print(
+                "agentctl: worktree exists but task bootstrap failed; inspect "
+                f"{path}: {lease['last_error']}",
+                file=sys.stderr,
+            )
+            return 2
+        created_worktree = _git_worktrees(root).get(str(path)) or {}
+        lease["git_dir"] = created_worktree.get("git_dir")
+        lease["status"] = "active"
+        lease["updated_at"] = _now()
+        _save_worktree_leases(root, data)
+    finally:
+        _release_lock_file(lock, fd)
+    print(f"agentctl: created isolated {create_args.task_type} task {task}")
+    print(f"  worktree_lease={lease_id}")
+    print(f"  branch={branch}")
+    print(f"  path={path}")
+    print(
+        f"  continue: cd {path} && python3 tools/agentctl.py work "
+        f"--agent {agent} --task {task}"
+    )
+    return 0
+
+
 def _worktree_create(root: Path, args: argparse.Namespace) -> int:
     registry, lock = _worktree_lease_paths(root)
     if registry is None or lock is None:
@@ -4223,6 +5097,11 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
     task_scope = task_entry.get("scope") or []
     if not task_scope:
         print(f"agentctl: task {task} has no bounded write scope", file=sys.stderr)
+        return 1
+    scope_problems = _scope_errors(task_scope)
+    if scope_problems:
+        for problem in scope_problems:
+            print(f"agentctl: task {task}: {problem}", file=sys.stderr)
         return 1
     for other_task, other_entry in (committed_board.get("tasks") or {}).items():
         if other_task == task or other_entry.get("status") not in ACTIVE_STATUSES:
@@ -4470,6 +5349,1494 @@ def cmd_worktree(args: argparse.Namespace) -> int:
     if args.worktree_action == "release":
         return _worktree_release(root, args)
     print("agentctl: unknown worktree action", file=sys.stderr)
+    return 2
+
+
+# ---------- execution, run, and resource leases ----------
+
+def _runtime_lease_paths(root: Path) -> tuple[Path, Path] | tuple[None, None]:
+    common = _git_common_dir(root)
+    if common is None:
+        return None, None
+    directory = common / WORKTREE_LEASES_DIR
+    return directory / RUNTIME_LEASES_FILE, directory / RUNTIME_LEASES_LOCK
+
+
+def _runtime_runs_dir(root: Path) -> Path:
+    common = _git_common_dir(root)
+    base = common / WORKTREE_LEASES_DIR if common is not None else _state_dir(root)
+    path = base / RUNTIME_RUNS_DIR
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _load_runtime_leases(root: Path) -> dict:
+    registry, _lock = _runtime_lease_paths(root)
+    if registry is None:
+        return {"version": 1, "leases": []}
+    data = _load_json(registry, {"version": 1, "leases": []})
+    if not isinstance(data, dict):
+        data = {"version": 1, "leases": []}
+    data.setdefault("version", 1)
+    if not isinstance(data.get("leases"), list):
+        data["leases"] = []
+    return data
+
+
+def _save_runtime_leases(root: Path, data: dict) -> None:
+    registry, _lock = _runtime_lease_paths(root)
+    if registry is None:
+        raise RuntimeError("execution leases require a Git repository")
+    _save_json(registry, data)
+
+
+def _update_runtime_leases(root: Path, updater) -> dict:
+    registry, lock = _runtime_lease_paths(root)
+    if registry is None or lock is None:
+        raise RuntimeError("execution leases require a Git repository")
+    fd = _acquire_lock_file(lock)
+    try:
+        data = _load_runtime_leases(root)
+        updater(data)
+        _save_runtime_leases(root, data)
+        return data
+    finally:
+        _release_lock_file(lock, fd)
+
+
+def _runtime_lease(root: Path, lease_id: str) -> dict | None:
+    for lease in _load_runtime_leases(root).get("leases") or []:
+        if isinstance(lease, dict) and lease.get("id") == lease_id:
+            return dict(lease)
+    return None
+
+
+def _runtime_process_alive(process: dict | None) -> bool:
+    if not isinstance(process, dict):
+        return False
+    return _same_process(process.get("pid"), process.get("birth_marker"))
+
+
+def _runtime_observed_status(lease: dict) -> str:
+    status = str(lease.get("status") or "unknown")
+    if status in {"succeeded", "failed", "cancelled", "released", "release_failed"}:
+        return status
+    if lease.get("kind") != "run":
+        return status
+    supervisor = lease.get("supervisor_process")
+    processes = lease.get("processes") or []
+    child = processes[-1] if processes else None
+    if lease.get("mode") == "adopted":
+        return "running" if _runtime_process_alive(child) else "exited_unknown"
+    if _runtime_process_alive(supervisor):
+        return status
+    if _runtime_process_alive(child):
+        return "interrupted"
+    return "exited_unknown"
+
+
+def _execution_lease_rows(root: Path) -> list[dict]:
+    rows = []
+    for session in _session_rows_unlocked(root):
+        session_key = str(session.get("workflow_session_key") or "default")
+        rows.append({
+            "id": f"conversation:{session_key}",
+            "kind": "conversation",
+            "task": session.get("task"),
+            "holder": {"type": "conversation", "id": session_key},
+            "mode": session.get("isolation") or "interactive",
+            "checkout": session.get("checkout"),
+            "scope": session.get("scope") or [],
+            "resources": [],
+            "processes": [],
+            "heartbeat_at": session.get("heartbeat_at"),
+            "status": session.get("observed_status"),
+            "lineage": {
+                "parent_session_key": session.get("parent_session_key"),
+                "session_instance_key": session.get("session_instance_key"),
+                "authority_inherited": False,
+            },
+        })
+    try:
+        worktrees = _worktree_rows(root)
+    except RuntimeError:
+        worktrees = []
+    for lease in worktrees:
+        rows.append({
+            "id": f"worktree:{lease.get('id')}",
+            "kind": "worktree",
+            "task": lease.get("task"),
+            "holder": {"type": "worktree", "id": lease.get("id")},
+            "mode": "isolated-checkout",
+            "checkout": lease.get("path"),
+            "scope": lease.get("scope") or [],
+            "resources": [],
+            "processes": [],
+            "heartbeat_at": lease.get("updated_at"),
+            "status": lease.get("observed_status"),
+        })
+    for lease in _load_runtime_leases(root).get("leases") or []:
+        if not isinstance(lease, dict):
+            continue
+        row = dict(lease)
+        row["status"] = _runtime_observed_status(row)
+        rows.append(row)
+    execution = _loop_execution_lease(root, normalize=False)
+    if execution:
+        rows.append({
+            "id": f"loop:{execution.get('token')}",
+            "kind": "run",
+            "task": execution.get("task"),
+            "holder": {
+                "type": "conversation",
+                "id": execution.get("workflow_session_key") or "unknown",
+            },
+            "mode": "bounded-loop",
+            "checkout": execution.get("checkout") or str(root.resolve()),
+            "scope": execution.get("scope") or [],
+            "resources": [],
+            "processes": [{
+                "pid": execution.get("owner_pid"),
+                "birth_marker": execution.get("owner_birth_marker"),
+            }],
+            "heartbeat_at": execution.get("started_at"),
+            "status": execution.get("status"),
+        })
+    return rows
+
+
+def cmd_lease(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    rows = _execution_lease_rows(root)
+    if args.json:
+        print(json.dumps({"version": 1, "leases": rows}, indent=2, ensure_ascii=False))
+        return 0
+    if not rows:
+        print("agentctl: no execution leases")
+        return 0
+    for row in rows:
+        holder = row.get("holder") or {}
+        print(
+            f"{row.get('id')} kind={row.get('kind')} status={row.get('status')} "
+            f"task={row.get('task') or '-'} "
+            f"holder={holder.get('type') or '-'}:{holder.get('id') or '-'}"
+        )
+    return 0
+
+
+def _runtime_policy(root: Path) -> dict:
+    default = {
+        "version": 1,
+        "artifact_roots": [".agent-artifacts"],
+        "runtime_roots": [".cache"],
+        "task_types": {},
+        "performance": {},
+    }
+    data = _load_json(root / WORKFLOW_DIR / RUNTIME_POLICY_FILE, default)
+    return data if isinstance(data, dict) else default
+
+
+def _path_within(parent: Path, child: Path) -> bool:
+    try:
+        child.resolve().relative_to(parent.resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def _validate_run_outputs(root: Path, task: str, scope: list[str],
+                          values: list[str]) -> tuple[list[str], list[str]]:
+    outputs = []
+    problems = []
+    policy = _runtime_policy(root)
+    artifact_roots = []
+    for value in policy.get("artifact_roots") or []:
+        path = Path(str(value)).expanduser()
+        artifact_roots.append(path.resolve() if path.is_absolute() else (root / path).resolve())
+    for raw in values:
+        candidate = Path(raw).expanduser()
+        candidate = candidate.resolve() if candidate.is_absolute() else (root / candidate).resolve()
+        allowed = False
+        try:
+            rel = candidate.relative_to(root.resolve()).as_posix()
+        except ValueError:
+            rel = ""
+        if rel and _path_in_scope(rel, scope):
+            allowed = True
+        if not allowed:
+            for artifact_root in artifact_roots:
+                task_root = artifact_root / task
+                if _path_within(task_root, candidate):
+                    allowed = True
+                    break
+        if not allowed:
+            problems.append(
+                f"declared output {raw} is outside task scope and the task-specific "
+                f"artifact directory ({WORKFLOW_DIR}/{RUNTIME_POLICY_FILE})"
+            )
+            continue
+        outputs.append(str(candidate))
+    if not outputs:
+        problems.append("background runs require at least one declared --output")
+    return sorted(set(outputs)), problems
+
+
+def _resource_lock_location(resource: str) -> dict:
+    digest = hashlib.sha256(resource.encode("utf-8")).hexdigest()
+    if resource.startswith(RESOURCE_REMOTE_PREFIX):
+        parsed = urlparse(resource)
+        if not parsed.hostname or not parsed.path.strip("/"):
+            raise ValueError("remote resources must use ssh://<host>/<resource>")
+        return {
+            "provider": "ssh-mkdir",
+            "host": parsed.netloc,
+            "path": f"/tmp/agent-workflow-resource-{digest}",
+        }
+    base = Path(
+        os.environ.get(RESOURCE_LOCK_ENV)
+        or (Path.home() / ".agent-workflow" / "resource-locks")
+    ).expanduser()
+    return {"provider": "local-mkdir", "path": str((base / digest).resolve())}
+
+
+class _ResourceTelemetryProbe(Protocol):
+    def __call__(self, target: dict, timeout_seconds: float) -> dict:
+        ...
+
+
+def _gpu_resource_target(resource: str) -> dict | None:
+    local = re.fullmatch(r"gpu:(\d+)", resource)
+    if local:
+        return {
+            "kind": "gpu-local",
+            "resource": resource,
+            "index": int(local.group(1)),
+            "host": platform.node(),
+        }
+    if not resource.startswith(RESOURCE_REMOTE_PREFIX):
+        return None
+    parsed = urlparse(resource)
+    remote = re.fullmatch(r"gpu:(\d+)", parsed.path.strip("/"))
+    remote_host = re.fullmatch(
+        r"(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9][A-Za-z0-9_.-]*",
+        parsed.netloc,
+    )
+    if not remote_host or not remote or parsed.params or parsed.query or parsed.fragment:
+        return None
+    return {
+        "kind": "gpu-ssh",
+        "resource": resource,
+        "index": int(remote.group(1)),
+        "host": parsed.netloc,
+    }
+
+
+def _nvidia_smi_sample(command: list[str], target: dict,
+                       timeout_seconds: float) -> dict:
+    sampled_at_ns = time.time_ns()
+    try:
+        proc = subprocess.run(
+            command, text=True, capture_output=True,
+            timeout=max(0.1, float(timeout_seconds)),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "ok": False,
+            "target": target,
+            "sampled_at_ns": sampled_at_ns,
+            "error": str(exc)[:500],
+        }
+    if proc.returncode:
+        detail = proc.stderr.strip() or proc.stdout.strip() or "nvidia-smi failed"
+        return {
+            "ok": False,
+            "target": target,
+            "sampled_at_ns": sampled_at_ns,
+            "error": detail[-500:],
+        }
+    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    try:
+        utilization, memory = [float(part.strip()) for part in lines[0].split(",")[:2]]
+    except (IndexError, TypeError, ValueError):
+        return {
+            "ok": False,
+            "target": target,
+            "sampled_at_ns": sampled_at_ns,
+            "error": "nvidia-smi returned an invalid utilization,memory sample",
+        }
+    if not math.isfinite(utilization) or not math.isfinite(memory):
+        return {
+            "ok": False,
+            "target": target,
+            "sampled_at_ns": sampled_at_ns,
+            "error": "nvidia-smi returned a non-finite sample",
+        }
+    return {
+        "ok": True,
+        "target": target,
+        "sampled_at_ns": sampled_at_ns,
+        "utilization_percent": max(0.0, min(100.0, utilization)),
+        "memory_mib": max(0.0, memory),
+    }
+
+
+def _probe_local_gpu(target: dict, timeout_seconds: float) -> dict:
+    executable = shutil.which("nvidia-smi") or "nvidia-smi"
+    return _nvidia_smi_sample([
+        executable,
+        "-i", str(target["index"]),
+        "--query-gpu=utilization.gpu,memory.used",
+        "--format=csv,noheader,nounits",
+    ], target, timeout_seconds)
+
+
+def _probe_ssh_gpu(target: dict, timeout_seconds: float) -> dict:
+    return _nvidia_smi_sample([
+        "ssh", "-o", "BatchMode=yes", str(target["host"]),
+        "nvidia-smi", "-i", str(target["index"]),
+        "--query-gpu=utilization.gpu,memory.used",
+        "--format=csv,noheader,nounits",
+    ], target, timeout_seconds)
+
+
+_RESOURCE_TELEMETRY_PROBES: dict[str, _ResourceTelemetryProbe] = {
+    "gpu-local": _probe_local_gpu,
+    "gpu-ssh": _probe_ssh_gpu,
+}
+
+
+def _gpu_watchdog_policy(root: Path, args: argparse.Namespace) -> tuple[dict | None, str | None]:
+    configured = _runtime_policy(root).get("gpu_watchdog") or {}
+    if not isinstance(configured, dict):
+        configured = {}
+    explicitly_enabled = bool(getattr(args, "gpu_watchdog", False))
+    configured_enabled = configured.get("enabled") is True
+    if not explicitly_enabled and not configured_enabled:
+        return None, None
+
+    targets = []
+    for resource in list(getattr(args, "resource", None) or []):
+        target = _gpu_resource_target(str(resource))
+        if target:
+            targets.append(target)
+    if not targets and configured_enabled and not explicitly_enabled:
+        return None, None
+    if not targets:
+        return None, (
+            "GPU watchdog requires a canonical --resource gpu:<index> or "
+            "ssh://<host>/gpu:<index>"
+        )
+
+    def value(name: str, default: float) -> float:
+        cli_value = getattr(args, f"gpu_{name}", None)
+        raw = cli_value if cli_value is not None else configured.get(name, default)
+        return float(raw)
+
+    try:
+        policy = {
+            "idle_seconds": value("idle_seconds", 600.0),
+            "grace_seconds": value("grace_seconds", 300.0),
+            "sample_seconds": value("sample_seconds", 15.0),
+            "kill_seconds": value("kill_seconds", 30.0),
+            "utilization_max": value("utilization_max", 5.0),
+            "memory_min_mib": value("memory_min_mib", 1024.0),
+            "probe_timeout_seconds": value("probe_timeout_seconds", 10.0),
+            "action": (
+                getattr(args, "gpu_idle_action", None)
+                or configured.get("action")
+                or "report"
+            ),
+        }
+    except (TypeError, ValueError):
+        return None, "GPU watchdog numeric policy values must be finite numbers"
+    bounds = {
+        "idle_seconds": (0.0, 30 * 24 * 3600.0),
+        "grace_seconds": (0.0, 24 * 3600.0),
+        "sample_seconds": (0.01, 3600.0),
+        "kill_seconds": (0.1, 3600.0),
+        "utilization_max": (0.0, 100.0),
+        "memory_min_mib": (0.0, 10_000_000.0),
+        "probe_timeout_seconds": (0.1, 300.0),
+    }
+    for name, (minimum, maximum) in bounds.items():
+        current = policy[name]
+        if not math.isfinite(current) or not minimum <= current <= maximum:
+            return None, f"GPU watchdog {name.replace('_', '-')} is outside {minimum}..{maximum}"
+    if policy["action"] not in {"report", "terminate"}:
+        return None, "GPU watchdog action must be report or terminate"
+
+    if policy["action"] == "terminate" and any(
+        target["kind"] != "gpu-local" for target in targets
+    ):
+        return None, (
+            "automatic GPU termination is host-local; run agentctl on the remote "
+            "host or use --gpu-idle-action report"
+        )
+    policy["targets"] = targets
+    return policy, None
+
+
+def _gpu_watchdog_transition(
+    state: dict, policy: dict, sample: dict, *, now_ns: int,
+    progress_marker: str, progress_updated_ns: int, exempt_until_ns: int,
+) -> tuple[dict, str | None]:
+    current = dict(state or {})
+    previous_marker = str(current.get("last_progress_marker") or "")
+    previous_progress_ns = int(current.get("last_progress_updated_ns") or 0)
+    current["last_progress_marker"] = progress_marker
+    current["last_progress_updated_ns"] = max(previous_progress_ns, progress_updated_ns)
+    current["last_sample"] = sample
+    current["updated_at_ns"] = now_ns
+
+    progress_changed = bool(previous_marker and progress_marker != previous_marker)
+    progress_changed = progress_changed or progress_updated_ns > previous_progress_ns
+    exempt = exempt_until_ns > now_ns
+    if progress_changed or exempt:
+        current.update({
+            "state": "exempt" if exempt else "active",
+            "low_samples": 0,
+            "low_since_ns": None,
+            "grace_since_ns": None,
+        })
+        return current, None
+    if not sample.get("ok"):
+        current.update({
+            "state": "probe_error",
+            "low_samples": 0,
+            "low_since_ns": None,
+            "grace_since_ns": None,
+        })
+        return current, None
+
+    idle = (
+        float(sample.get("utilization_percent") or 0.0) <= float(policy["utilization_max"])
+        and float(sample.get("memory_mib") or 0.0) >= float(policy["memory_min_mib"])
+    )
+    if not idle:
+        current.update({
+            "state": "active",
+            "low_samples": 0,
+            "low_since_ns": None,
+            "grace_since_ns": None,
+        })
+        return current, None
+
+    low_since_ns = int(current.get("low_since_ns") or now_ns)
+    low_samples = int(current.get("low_samples") or 0) + 1
+    current["low_since_ns"] = low_since_ns
+    current["low_samples"] = low_samples
+    idle_elapsed = max(0.0, (now_ns - low_since_ns) / 1_000_000_000)
+    if low_samples < 2 or idle_elapsed < float(policy["idle_seconds"]):
+        current["state"] = "suspected_idle"
+        return current, None
+
+    grace_since_ns = current.get("grace_since_ns")
+    if grace_since_ns is None:
+        current["grace_since_ns"] = now_ns
+        current["state"] = "grace"
+        return current, None
+    grace_elapsed = max(0.0, (now_ns - int(grace_since_ns)) / 1_000_000_000)
+    if grace_elapsed < float(policy["grace_seconds"]):
+        current["state"] = "grace"
+        return current, None
+    current["state"] = "reclaimable"
+    current["reclaimable_at_ns"] = now_ns
+    return current, str(policy["action"])
+
+
+def _external_resource_acquire(resource: str, owner: dict) -> tuple[dict | None, str | None]:
+    try:
+        location = _resource_lock_location(resource)
+    except ValueError as exc:
+        return None, str(exc)
+    if location["provider"] == "local-mkdir":
+        path = Path(location["path"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.mkdir()
+        except FileExistsError:
+            existing = _load_json(path / "owner.json", {})
+            detail = existing.get("lease_id") or "unknown owner"
+            return None, f"resource {resource} is already locked by {detail}"
+        try:
+            _save_json(path / "owner.json", owner)
+        except Exception:
+            try:
+                path.rmdir()
+            except OSError:
+                pass
+            raise
+        return location, None
+    code = "import os,sys; os.mkdir(sys.argv[1])"
+    proc = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", location["host"],
+         "python3", "-c", code, location["path"]],
+        text=True, capture_output=True, timeout=20,
+    )
+    if proc.returncode:
+        detail = proc.stderr.strip() or "remote lock directory already exists"
+        return None, f"resource {resource} could not be acquired: {detail}"
+    return location, None
+
+
+def _external_resource_release(provider: dict) -> str | None:
+    if provider.get("provider") == "local-mkdir":
+        path = Path(provider.get("path") or "")
+        try:
+            owner = path / "owner.json"
+            if owner.exists():
+                owner.unlink()
+            path.rmdir()
+            return None
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            return str(exc)
+    if provider.get("provider") == "ssh-mkdir":
+        code = "import os,sys; os.rmdir(sys.argv[1])"
+        proc = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", str(provider.get("host") or ""),
+             "python3", "-c", code, str(provider.get("path") or "")],
+            text=True, capture_output=True, timeout=20,
+        )
+        if proc.returncode:
+            return proc.stderr.strip() or "remote lock release failed"
+    return None
+
+
+def _resource_acquire_one(root: Path, task: str, resource: str,
+                          holder_type: str, holder_id: str) -> tuple[dict | None, str | None]:
+    resource = resource.strip()
+    if not resource or not re.fullmatch(r"(?:ssh://)?[A-Za-z0-9_.:/@-]+", resource):
+        return None, f"invalid resource identifier: {resource or '<empty>'}"
+    lease_id = "resource-" + hashlib.sha256(
+        f"{resource}:{holder_type}:{holder_id}:{time.time_ns()}".encode("utf-8")
+    ).hexdigest()[:16]
+    owner = {
+        "lease_id": lease_id,
+        "resource": resource,
+        "task": task,
+        "holder_type": holder_type,
+        "holder_id": holder_id,
+        "host": platform.node(),
+        "pid": os.getpid(),
+        "created_at": _now(),
+    }
+    provider, error = _external_resource_acquire(resource, owner)
+    if error:
+        return None, error
+    lease = {
+        "id": lease_id,
+        "kind": "resource",
+        "task": task,
+        "holder": {"type": holder_type, "id": holder_id},
+        "mode": provider.get("provider"),
+        "checkout": str(root.resolve()),
+        "scope": [],
+        "resources": [resource],
+        "processes": [],
+        "provider": provider,
+        "heartbeat_at": _now(),
+        "created_at": _now(),
+        "status": "active",
+    }
+    try:
+        _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(lease))
+    except Exception:
+        _external_resource_release(provider)
+        raise
+    return lease, None
+
+
+def _resource_release_by_id(
+    root: Path, lease_id: str, reason: str, *,
+    holder_type: str, holder_id: str,
+) -> tuple[bool, str]:
+    lease = _runtime_lease(root, lease_id)
+    if not lease or lease.get("kind") != "resource":
+        return False, f"resource lease not found: {lease_id}"
+    if lease.get("status") == "released":
+        return True, "already released"
+    lease_holder = lease.get("holder") or {}
+    lease_holder_type = str(lease_holder.get("type") or "")
+    lease_holder_id = str(lease_holder.get("id") or "")
+    if (holder_type, holder_id) != (lease_holder_type, lease_holder_id):
+        return (
+            False,
+            f"resource lease {lease_id} belongs to "
+            f"{lease_holder_type or 'unknown'}:{lease_holder_id or 'unknown'}",
+        )
+    release_error = _external_resource_release(lease.get("provider") or {})
+
+    def update(data: dict) -> None:
+        for item in data.get("leases") or []:
+            if isinstance(item, dict) and item.get("id") == lease_id:
+                item["status"] = "release_failed" if release_error else "released"
+                item["released_at"] = _now()
+                item["release_reason"] = reason
+                item["release_error"] = release_error
+                item["heartbeat_at"] = _now()
+                break
+
+    _update_runtime_leases(root, update)
+    return release_error is None, release_error or "released"
+
+
+def _run_process_cwd(pid: int) -> Path | None:
+    proc_link = Path(f"/proc/{pid}/cwd")
+    try:
+        if proc_link.exists():
+            return proc_link.resolve()
+    except OSError:
+        pass
+    if sys.platform == "darwin":
+        try:
+            proc = subprocess.run(
+                ["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                text=True, capture_output=True, timeout=10,
+            )
+            for line in proc.stdout.splitlines():
+                if line.startswith("n/"):
+                    return Path(line[1:]).resolve()
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    return None
+
+
+def _run_payload_path(root: Path, lease_id: str) -> Path:
+    return _runtime_runs_dir(root) / f"{lease_id}.command.json"
+
+
+def _run_log_paths(root: Path, lease_id: str) -> tuple[Path, Path]:
+    base = _runtime_runs_dir(root)
+    return base / f"{lease_id}.stdout.log", base / f"{lease_id}.stderr.log"
+
+
+def _run_progress_marker(lease: dict) -> str:
+    rows = []
+    for raw in [lease.get("stdout"), lease.get("stderr"), *(lease.get("outputs") or [])]:
+        if not raw:
+            continue
+        path = Path(str(raw))
+        try:
+            stat = path.stat()
+            rows.append((str(path), stat.st_size, stat.st_mtime_ns, path.is_dir()))
+        except OSError:
+            rows.append((str(path), None, None, None))
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _sample_gpu_watchdog(watchdog: dict) -> dict:
+    policy = watchdog.get("policy") or {}
+    samples = []
+    for target in policy.get("targets") or []:
+        probe = _RESOURCE_TELEMETRY_PROBES.get(str(target.get("kind") or ""))
+        if probe is None:
+            samples.append({
+                "ok": False,
+                "target": target,
+                "sampled_at_ns": time.time_ns(),
+                "error": f"no telemetry probe for {target.get('kind')}",
+            })
+            continue
+        try:
+            samples.append(probe(target, float(policy["probe_timeout_seconds"])))
+        except Exception as exc:
+            samples.append({
+                "ok": False,
+                "target": target,
+                "sampled_at_ns": time.time_ns(),
+                "error": str(exc)[:500],
+            })
+    if not samples or any(not sample.get("ok") for sample in samples):
+        return {
+            "ok": False,
+            "samples": samples,
+            "sampled_at_ns": time.time_ns(),
+            "error": "one or more GPU telemetry probes failed",
+        }
+    return {
+        "ok": True,
+        "samples": samples,
+        "sampled_at_ns": max(int(sample["sampled_at_ns"]) for sample in samples),
+        "utilization_percent": max(float(sample["utilization_percent"]) for sample in samples),
+        "memory_mib": sum(float(sample["memory_mib"]) for sample in samples),
+    }
+
+
+def _persist_run_watchdog(root: Path, lease_id: str, watchdog: dict, *,
+                          status: str | None = None,
+                          stop_reason: str | None = None) -> dict | None:
+    found = {"lease": None}
+
+    def update(data: dict) -> None:
+        resource_ids = []
+        for lease in data.get("leases") or []:
+            if not isinstance(lease, dict) or lease.get("id") != lease_id:
+                continue
+            lease["watchdog"] = dict(watchdog)
+            lease["heartbeat_at"] = _now()
+            if status:
+                lease["status"] = status
+            if stop_reason:
+                lease["stop_reason"] = stop_reason
+            resource_ids = [str(item) for item in lease.get("resource_lease_ids") or []]
+            found["lease"] = dict(lease)
+            break
+        for lease in data.get("leases") or []:
+            if not isinstance(lease, dict) or str(lease.get("id") or "") not in resource_ids:
+                continue
+            lease["supervision"] = {
+                "run_id": lease_id,
+                "state": watchdog.get("state"),
+                "policy": watchdog.get("policy"),
+                "last_sample": watchdog.get("last_sample"),
+                "updated_at_ns": watchdog.get("updated_at_ns"),
+            }
+            lease["heartbeat_at"] = _now()
+
+    _update_runtime_leases(root, update)
+    return found["lease"]
+
+
+def _signal_run_process(process: dict, signum: int) -> None:
+    pid = int(process["pid"])
+    process_group = process.get("process_group")
+    if os.name == "posix" and process_group:
+        os.killpg(int(process_group), signum)
+        return
+    if os.name == "nt" and signum in {signal.SIGTERM, signal.SIGKILL}:
+        command = ["taskkill", "/PID", str(pid), "/T"]
+        if signum == signal.SIGKILL:
+            command.append("/F")
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+            if completed.returncode == 0:
+                return
+        except (OSError, subprocess.SubprocessError):
+            pass
+    os.kill(pid, signum)
+
+
+def _settle_stopped_run_tree(root: Path, lease_id: str, process: dict) -> bool:
+    current = _runtime_lease(root, lease_id) or {}
+    if current.get("status") != "stopping":
+        return True
+    process_group = process.get("process_group")
+    if os.name != "posix" or not process_group:
+        return True
+    watchdog = current.get("watchdog") or {}
+    deadline_ns = int(
+        watchdog.get("kill_deadline_ns")
+        or current.get("termination_deadline_ns")
+        or time.time_ns()
+    )
+    while _posix_process_group_exists(process_group) and time.time_ns() < deadline_ns:
+        _run_update(root, lease_id, lambda lease: lease.update({
+            "heartbeat_at": _now(),
+        }))
+        remaining = max(0.01, (deadline_ns - time.time_ns()) / 1_000_000_000)
+        time.sleep(min(RUN_HEARTBEAT_SECONDS, remaining))
+    if _posix_process_group_exists(process_group):
+        sent_at_ns = time.time_ns()
+        try:
+            _signal_run_process(process, signal.SIGKILL)
+        except OSError:
+            pass
+        _run_update(root, lease_id, lambda lease: lease.update({
+            "process_group_kill_sent_at_ns": sent_at_ns,
+            "heartbeat_at": _now(),
+        }))
+        settle_deadline = time.monotonic() + RUN_HEARTBEAT_SECONDS
+        while (
+            _posix_process_group_exists(process_group)
+            and time.monotonic() < settle_deadline
+        ):
+            time.sleep(0.02)
+    if _posix_process_group_exists(process_group):
+        _run_update(root, lease_id, lambda lease: lease.update({
+            "cleanup_error": "owned process group remains alive after SIGKILL",
+            "heartbeat_at": _now(),
+        }))
+        return False
+    return True
+
+
+def _run_update(root: Path, lease_id: str, updater) -> dict | None:
+    found = {"lease": None}
+
+    def update(data: dict) -> None:
+        for lease in data.get("leases") or []:
+            if isinstance(lease, dict) and lease.get("id") == lease_id:
+                updater(lease)
+                found["lease"] = dict(lease)
+                return
+
+    _update_runtime_leases(root, update)
+    return found["lease"]
+
+
+def _run_release_resources(root: Path, lease: dict, reason: str) -> None:
+    for resource_id in lease.get("resource_lease_ids") or []:
+        _resource_release_by_id(
+            root, str(resource_id), reason,
+            holder_type="run", holder_id=str(lease.get("id") or ""),
+        )
+
+
+def _run_owner_error(root: Path, lease: dict) -> str | None:
+    session = _load_session(root)
+    current = _workflow_session_key()
+    holder = str((lease.get("holder") or {}).get("id") or "")
+    if holder != current:
+        return f"run {lease.get('id')} belongs to conversation {holder or 'unknown'}"
+    if str(session.get("task") or "") != str(lease.get("task") or ""):
+        return (
+            f"run {lease.get('id')} belongs to task {lease.get('task')}; "
+            f"this conversation owns {session.get('task') or 'no active task'}"
+        )
+    return None
+
+
+def _run_supervisor_claim(root: Path, lease_id: str, token: str) -> tuple[dict | None, str | None]:
+    found = {"lease": None, "error": None}
+    supplied_hash = hashlib.sha256(str(token or "").encode("utf-8")).hexdigest()
+
+    def claim(data: dict) -> None:
+        for lease in data.get("leases") or []:
+            if not isinstance(lease, dict) or lease.get("id") != lease_id:
+                continue
+            expected_hash = str(lease.get("supervisor_token_sha256") or "")
+            if lease.get("kind") != "run" or lease.get("mode") != "supervised":
+                found["error"] = "lease is not a supervised run"
+            elif lease.get("status") != "starting" or lease.get("supervisor_claimed_at"):
+                found["error"] = "supervisor was already claimed"
+            elif not expected_hash or not hmac.compare_digest(expected_hash, supplied_hash):
+                found["error"] = "supervisor token does not match"
+            else:
+                lease["supervisor_claimed_at"] = _now()
+                lease["supervisor_process"] = {
+                    "role": "supervisor",
+                    "pid": os.getpid(),
+                    "birth_marker": _process_birth_marker(os.getpid()),
+                }
+                lease.pop("supervisor_token_sha256", None)
+                lease["heartbeat_at"] = _now()
+                found["lease"] = dict(lease)
+            return
+        found["error"] = found["error"] or "run lease was not found"
+
+    _update_runtime_leases(root, claim)
+    return found["lease"], found["error"]
+
+
+def _run_supervise(root: Path, lease_id: str, token: str) -> int:
+    claimed, claim_error = _run_supervisor_claim(root, lease_id, token)
+    if not claimed:
+        print(
+            f"agentctl: supervisor claim rejected for {lease_id}: {claim_error}",
+            file=sys.stderr,
+        )
+        return 1
+    payload_path = _run_payload_path(root, lease_id)
+    payload = _load_json(payload_path, {})
+    command = payload.get("command") if isinstance(payload, dict) else None
+    cwd = Path(str(payload.get("cwd") or root)) if isinstance(payload, dict) else root
+    try:
+        payload_path.unlink()
+    except FileNotFoundError:
+        pass
+    if not isinstance(command, list) or not command:
+        failed = _run_update(root, lease_id, lambda lease: lease.update({
+            "status": "failed",
+            "finished_at": _now(),
+            "error": "private command payload is missing or invalid",
+        }))
+        if failed:
+            _run_release_resources(root, failed, "run payload invalid")
+        return 2
+    stdout_path, stderr_path = _run_log_paths(root, lease_id)
+    try:
+        with stdout_path.open("ab", buffering=0) as stdout, stderr_path.open("ab", buffering=0) as stderr:
+            child_env = os.environ.copy()
+            child_env[RUN_ID_ENV] = lease_id
+            popen_options = {
+                "cwd": str(cwd),
+                "stdout": stdout,
+                "stderr": stderr,
+                "env": child_env,
+            }
+            if os.name == "posix":
+                popen_options["start_new_session"] = True
+            elif os.name == "nt":
+                popen_options["creationflags"] = getattr(
+                    subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+                )
+            child = subprocess.Popen([str(item) for item in command], **popen_options)
+            child_record = {
+                "role": "command",
+                "pid": child.pid,
+                "birth_marker": _process_birth_marker(child.pid),
+                "process_group": child.pid if os.name == "posix" else None,
+            }
+            _run_update(root, lease_id, lambda lease: lease.update({
+                "status": "running",
+                "processes": [child_record],
+                "heartbeat_at": _now(),
+            }))
+            while child.poll() is None:
+                current = _runtime_lease(root, lease_id) or {}
+                watchdog = dict(current.get("watchdog") or {})
+                policy = watchdog.get("policy") or {}
+                if watchdog.get("enabled"):
+                    now_ns = time.time_ns()
+                    sample_interval_ns = int(
+                        float(policy["sample_seconds"]) * 1_000_000_000
+                    )
+                    kill_deadline_ns = int(watchdog.get("kill_deadline_ns") or 0)
+                    if kill_deadline_ns and now_ns >= kill_deadline_ns:
+                        try:
+                            _signal_run_process(child_record, signal.SIGKILL)
+                            watchdog["kill_sent_at_ns"] = now_ns
+                        except OSError:
+                            pass
+                        watchdog["kill_deadline_ns"] = now_ns + int(
+                            RUN_HEARTBEAT_SECONDS * 1_000_000_000
+                        )
+                        watchdog["updated_at_ns"] = now_ns
+                        _persist_run_watchdog(root, lease_id, watchdog)
+                    elif current.get("status") == "stopping" and watchdog.get(
+                        "auto_termination_at_ns"
+                    ):
+                        watchdog["state"] = "reclaiming"
+                        watchdog["updated_at_ns"] = now_ns
+                        _persist_run_watchdog(root, lease_id, watchdog)
+                    else:
+                        next_sample_at_ns = int(watchdog.get("next_sample_at_ns") or 0)
+                        if now_ns >= next_sample_at_ns:
+                            sample = _sample_gpu_watchdog(watchdog)
+                            progress = current.get("progress") or {}
+                            watchdog, action = _gpu_watchdog_transition(
+                                watchdog,
+                                policy,
+                                sample,
+                                now_ns=now_ns,
+                                progress_marker=_run_progress_marker(current),
+                                progress_updated_ns=int(progress.get("updated_at_ns") or 0),
+                                exempt_until_ns=int(progress.get("idle_exempt_until_ns") or 0),
+                            )
+                            watchdog["next_sample_at_ns"] = now_ns + sample_interval_ns
+                            if action == "terminate":
+                                reason = (
+                                    "GPU watchdog confirmed consecutive low utilization, "
+                                    "allocated memory, absent progress, and expired grace"
+                                )
+                                try:
+                                    _signal_run_process(child_record, signal.SIGTERM)
+                                except OSError:
+                                    pass
+                                watchdog.update({
+                                    "state": "reclaiming",
+                                    "auto_termination_at_ns": now_ns,
+                                    "kill_deadline_ns": now_ns + int(
+                                        float(policy["kill_seconds"]) * 1_000_000_000
+                                    ),
+                                    "updated_at_ns": now_ns,
+                                })
+                                _persist_run_watchdog(
+                                    root, lease_id, watchdog,
+                                    status="stopping", stop_reason=reason,
+                                )
+                            else:
+                                _persist_run_watchdog(root, lease_id, watchdog)
+                        else:
+                            _run_update(root, lease_id, lambda lease: lease.update({
+                                "heartbeat_at": _now(),
+                            }))
+                    kill_deadline_ns = int(watchdog.get("kill_deadline_ns") or 0)
+                    next_event_ns = int(watchdog.get("next_sample_at_ns") or 0)
+                    if kill_deadline_ns:
+                        next_event_ns = min(next_event_ns or kill_deadline_ns, kill_deadline_ns)
+                    until_event = max(0.01, (next_event_ns - now_ns) / 1_000_000_000)
+                    sleep_seconds = min(RUN_HEARTBEAT_SECONDS, until_event)
+                else:
+                    _run_update(root, lease_id, lambda lease: lease.update({
+                        "heartbeat_at": _now(),
+                    }))
+                    sleep_seconds = RUN_HEARTBEAT_SECONDS
+                time.sleep(sleep_seconds)
+            returncode = int(child.returncode or 0)
+            if not _settle_stopped_run_tree(root, lease_id, child_record):
+                return 2
+    except Exception as exc:
+        current = _run_update(root, lease_id, lambda lease: lease.update({
+            "status": "failed",
+            "finished_at": _now(),
+            "error": str(exc),
+            "heartbeat_at": _now(),
+        }))
+        if current:
+            _run_release_resources(root, current, "run launch failed")
+        return 2
+    current = _runtime_lease(root, lease_id) or {}
+    requested_stop = current.get("status") == "stopping"
+    final_status = "cancelled" if requested_stop else ("succeeded" if returncode == 0 else "failed")
+    completed = _run_update(root, lease_id, lambda lease: lease.update({
+        "status": final_status,
+        "returncode": returncode,
+        "finished_at": _now(),
+        "heartbeat_at": _now(),
+    }))
+    if completed:
+        _run_release_resources(root, completed, f"run {final_status}")
+    return 0 if final_status == "succeeded" else 1
+
+
+def _run_start(root: Path, args: argparse.Namespace) -> int:
+    session = _require_session(root)
+    task = args.task or session.get("task")
+    if task != session.get("task"):
+        print("agentctl: a background run must belong to this conversation's active task", file=sys.stderr)
+        return 1
+    command = list(args.command or [])
+    if command and command[0] == "--":
+        command = command[1:]
+    if not command:
+        print("agentctl: run start requires a command after '--'", file=sys.stderr)
+        return 2
+    cwd = Path(args.cwd).expanduser() if args.cwd else root
+    cwd = cwd.resolve() if cwd.is_absolute() else (root / cwd).resolve()
+    if not _path_within(root, cwd):
+        print("agentctl: run cwd must be inside the task checkout", file=sys.stderr)
+        return 1
+    outputs, problems = _validate_run_outputs(
+        root, str(task), session.get("scope") or [], list(args.output or []),
+    )
+    if problems:
+        for problem in problems:
+            print(f"agentctl: {problem}", file=sys.stderr)
+        return 1
+    watchdog_policy, watchdog_error = _gpu_watchdog_policy(root, args)
+    if watchdog_error:
+        print(f"agentctl: {watchdog_error}", file=sys.stderr)
+        return 1
+    lease_id = "run-" + hashlib.sha256(
+        f"{task}:{_workflow_session_key()}:{time.time_ns()}".encode("utf-8")
+    ).hexdigest()[:16]
+    resource_leases = []
+    for resource in args.resource or []:
+        lease, error = _resource_acquire_one(
+            root, str(task), resource, "run", lease_id,
+        )
+        if error:
+            for acquired in resource_leases:
+                _resource_release_by_id(
+                    root, acquired["id"], "run start rolled back",
+                    holder_type="run", holder_id=lease_id,
+                )
+            print(f"agentctl: {error}", file=sys.stderr)
+            return 1
+        resource_leases.append(lease)
+    stdout_path, stderr_path = _run_log_paths(root, lease_id)
+    payload_path = _run_payload_path(root, lease_id)
+    _save_json(payload_path, {"command": command, "cwd": str(cwd)})
+    try:
+        os.chmod(payload_path, 0o600)
+    except OSError:
+        pass
+    supervisor_token = secrets.token_urlsafe(32)
+    lease = {
+        "id": lease_id,
+        "kind": "run",
+        "task": task,
+        "holder": {"type": "conversation", "id": _workflow_session_key()},
+        "mode": "supervised",
+        "checkout": str(root.resolve()),
+        "scope": session.get("scope") or [],
+        "outputs": outputs,
+        "resources": [item for item in args.resource or []],
+        "resource_lease_ids": [item["id"] for item in resource_leases],
+        "processes": [],
+        "command_sha256": hashlib.sha256(
+            json.dumps(command, ensure_ascii=False).encode("utf-8")
+        ).hexdigest(),
+        "executable": Path(str(command[0])).name,
+        "cwd": str(cwd),
+        "stdout": str(stdout_path),
+        "stderr": str(stderr_path),
+        "progress": {
+            "phase": "starting",
+            "token": "",
+            "updated_at": _now(),
+            "updated_at_ns": time.time_ns(),
+            "idle_exempt_until_ns": 0,
+        },
+        "supervisor_token_sha256": hashlib.sha256(
+            supervisor_token.encode("utf-8")
+        ).hexdigest(),
+        "created_at": _now(),
+        "heartbeat_at": _now(),
+        "status": "starting",
+    }
+    if watchdog_policy:
+        lease["watchdog"] = {
+            "enabled": True,
+            "policy": watchdog_policy,
+            "state": "active",
+            "low_samples": 0,
+            "created_at_ns": time.time_ns(),
+        }
+    _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(lease))
+    try:
+        supervisor = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "_run-supervise",
+             "--root", str(root), "--lease", lease_id, "--token", supervisor_token],
+            cwd=str(root),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except Exception as exc:
+        failed = _run_update(root, lease_id, lambda item: item.update({
+            "status": "failed",
+            "finished_at": _now(),
+            "error": f"unable to launch supervisor: {exc}",
+            "heartbeat_at": _now(),
+        }))
+        if failed:
+            _run_release_resources(root, failed, "supervisor launch failed")
+        try:
+            payload_path.unlink()
+        except FileNotFoundError:
+            pass
+        print(f"agentctl: unable to launch run supervisor: {exc}", file=sys.stderr)
+        return 1
+    supervisor_record = {
+        "role": "supervisor",
+        "pid": supervisor.pid,
+        "birth_marker": _process_birth_marker(supervisor.pid),
+    }
+    _run_update(root, lease_id, lambda item: item.update({
+        "supervisor_process": supervisor_record,
+        "heartbeat_at": _now(),
+    }))
+    print(f"agentctl: run lease {lease_id} started")
+    print(f"  task={task} pid={supervisor.pid}")
+    print(f"  outputs={', '.join(outputs)}")
+    print(f"  stdout={stdout_path}")
+    print(f"  stderr={stderr_path}")
+    return 0
+
+
+def _run_adopt(root: Path, args: argparse.Namespace) -> int:
+    session = _require_session(root)
+    try:
+        pid = int(args.pid)
+    except (TypeError, ValueError):
+        print("agentctl: run adopt requires a numeric --pid", file=sys.stderr)
+        return 2
+    birth = _process_birth_marker(pid)
+    if not _same_process(pid, birth) or not birth:
+        print("agentctl: adopted PID is not alive or has no verifiable birth marker", file=sys.stderr)
+        return 1
+    declared_cwd = Path(args.cwd).expanduser().resolve()
+    observed_cwd = _run_process_cwd(pid)
+    if observed_cwd is None or observed_cwd != declared_cwd:
+        print(
+            f"agentctl: adopted PID cwd cannot be verified as {declared_cwd} "
+            f"(observed {observed_cwd or 'unknown'})",
+            file=sys.stderr,
+        )
+        return 1
+    if not _path_within(root, declared_cwd):
+        print("agentctl: adopted process cwd must be inside the task checkout", file=sys.stderr)
+        return 1
+    task = str(session.get("task"))
+    outputs, problems = _validate_run_outputs(
+        root, task, session.get("scope") or [], list(args.output or []),
+    )
+    if problems:
+        for problem in problems:
+            print(f"agentctl: {problem}", file=sys.stderr)
+        return 1
+    lease_id = "run-" + hashlib.sha256(
+        f"adopt:{task}:{pid}:{birth}:{time.time_ns()}".encode("utf-8")
+    ).hexdigest()[:16]
+    resource_leases = []
+    for resource in args.resource or []:
+        lease, error = _resource_acquire_one(root, task, resource, "run", lease_id)
+        if error:
+            for acquired in resource_leases:
+                _resource_release_by_id(
+                    root, acquired["id"], "adopt rolled back",
+                    holder_type="run", holder_id=lease_id,
+                )
+            print(f"agentctl: {error}", file=sys.stderr)
+            return 1
+        resource_leases.append(lease)
+    lease = {
+        "id": lease_id,
+        "kind": "run",
+        "task": task,
+        "holder": {"type": "conversation", "id": _workflow_session_key()},
+        "mode": "adopted",
+        "checkout": str(root.resolve()),
+        "scope": session.get("scope") or [],
+        "outputs": outputs,
+        "resources": list(args.resource or []),
+        "resource_lease_ids": [item["id"] for item in resource_leases],
+        "processes": [{"role": "adopted", "pid": pid, "birth_marker": birth}],
+        "cwd": str(declared_cwd),
+        "command_sha256": args.command_sha256 or "",
+        "created_at": _now(),
+        "heartbeat_at": _now(),
+        "status": "running",
+    }
+    _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(lease))
+    print(f"agentctl: adopted process {pid} as run lease {lease_id}")
+    return 0
+
+
+def _run_list(root: Path, args: argparse.Namespace) -> int:
+    rows = [
+        dict(lease, status=_runtime_observed_status(lease))
+        for lease in _load_runtime_leases(root).get("leases") or []
+        if isinstance(lease, dict) and lease.get("kind") == "run"
+    ]
+    if args.run_action == "show":
+        rows = [row for row in rows if row.get("id") == args.lease]
+        if not rows:
+            print(f"agentctl: run lease not found: {args.lease}", file=sys.stderr)
+            return 2
+    if args.json:
+        print(json.dumps({"runs": rows}, indent=2, ensure_ascii=False))
+    else:
+        for row in rows:
+            watchdog_state = str((row.get("watchdog") or {}).get("state") or "-")
+            print(
+                f"{row.get('id')} status={row.get('status')} task={row.get('task')} "
+                f"mode={row.get('mode')} resources={','.join(row.get('resources') or []) or '-'} "
+                f"watchdog={watchdog_state}"
+            )
+        if not rows:
+            print("agentctl: no run leases")
+    return 0
+
+
+def _run_wait(root: Path, args: argparse.Namespace) -> int:
+    deadline = time.monotonic() + max(0.0, float(args.timeout))
+    while True:
+        lease = _runtime_lease(root, args.lease)
+        if not lease or lease.get("kind") != "run":
+            print(f"agentctl: run lease not found: {args.lease}", file=sys.stderr)
+            return 2
+        status = _runtime_observed_status(lease)
+        settling_supervisor = (
+            status == "exited_unknown"
+            and lease.get("mode") == "supervised"
+            and time.monotonic() < deadline
+        )
+        if status not in {"starting", "running", "stopping"} and not settling_supervisor:
+            print(f"agentctl: run {args.lease} -> {status}")
+            return 0 if status == "succeeded" else 1
+        if time.monotonic() >= deadline:
+            print(f"agentctl: run {args.lease} still {status} after timeout", file=sys.stderr)
+            return 1
+        time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+
+
+def _run_progress(root: Path, args: argparse.Namespace) -> int:
+    lease_id = str(args.lease or os.environ.get(RUN_ID_ENV) or "")
+    if not lease_id:
+        print(
+            f"agentctl: run progress requires a lease or inherited {RUN_ID_ENV}",
+            file=sys.stderr,
+        )
+        return 2
+    lease = _runtime_lease(root, lease_id)
+    if not lease or lease.get("kind") != "run":
+        print(f"agentctl: run lease not found: {lease_id}", file=sys.stderr)
+        return 2
+    owner_error = _run_owner_error(root, lease)
+    if owner_error:
+        print(f"agentctl: {owner_error}", file=sys.stderr)
+        return 1
+    if lease.get("status") not in {"starting", "running"}:
+        print(
+            f"agentctl: run {lease_id} cannot accept progress while {lease.get('status')}",
+            file=sys.stderr,
+        )
+        return 1
+    phase = str(args.phase or "").strip()
+    token = str(args.token or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,64}", phase):
+        print("agentctl: progress phase must be a 1..64 character stable identifier", file=sys.stderr)
+        return 2
+    if len(token) > 256:
+        print("agentctl: progress token must be at most 256 characters", file=sys.stderr)
+        return 2
+    exempt_seconds = float(args.idle_exempt_seconds or 0.0)
+    if not math.isfinite(exempt_seconds) or not 0.0 <= exempt_seconds <= 24 * 3600.0:
+        print("agentctl: idle exemption must be between 0 and 86400 seconds", file=sys.stderr)
+        return 2
+    now_ns = time.time_ns()
+    progress = {
+        "phase": phase,
+        "token": token,
+        "updated_at": _now(),
+        "updated_at_ns": now_ns,
+        "idle_exempt_until_ns": now_ns + int(exempt_seconds * 1_000_000_000),
+    }
+    _run_update(root, lease_id, lambda item: item.update({
+        "progress": progress,
+        "heartbeat_at": _now(),
+    }))
+    print(f"agentctl: run {lease_id} progress phase={phase}")
+    return 0
+
+
+def _run_finish(root: Path, args: argparse.Namespace) -> int:
+    lease = _runtime_lease(root, args.lease)
+    if not lease or lease.get("kind") != "run":
+        print(f"agentctl: run lease not found: {args.lease}", file=sys.stderr)
+        return 2
+    owner_error = _run_owner_error(root, lease)
+    if owner_error:
+        print(f"agentctl: {owner_error}", file=sys.stderr)
+        return 1
+    if any(_runtime_process_alive(item) for item in lease.get("processes") or []):
+        print("agentctl: cannot finish a run while its process is still alive", file=sys.stderr)
+        return 1
+    if lease.get("mode") != "adopted" and _runtime_observed_status(lease) not in {
+        "interrupted", "exited_unknown",
+    }:
+        print("agentctl: only adopted or interrupted runs require explicit finish", file=sys.stderr)
+        return 1
+    updated = _run_update(root, args.lease, lambda item: item.update({
+        "status": args.status,
+        "finished_at": _now(),
+        "finish_reason": args.reason,
+        "heartbeat_at": _now(),
+    }))
+    if updated:
+        _run_release_resources(root, updated, f"run explicitly finished: {args.reason}")
+    print(f"agentctl: run {args.lease} reconciled -> {args.status}")
+    return 0
+
+
+def _run_stop(root: Path, args: argparse.Namespace) -> int:
+    lease = _runtime_lease(root, args.lease)
+    if not lease or lease.get("kind") != "run":
+        print(f"agentctl: run lease not found: {args.lease}", file=sys.stderr)
+        return 2
+    owner_error = _run_owner_error(root, lease)
+    if owner_error:
+        print(f"agentctl: {owner_error}", file=sys.stderr)
+        return 1
+    processes = lease.get("processes") or []
+    child = processes[-1] if processes else None
+    if not _runtime_process_alive(child):
+        print("agentctl: run process is not alive; inspect and finish/reconcile it", file=sys.stderr)
+        return 1
+    watchdog_policy = (lease.get("watchdog") or {}).get("policy") or {}
+    kill_seconds = float(watchdog_policy.get("kill_seconds") or 30.0)
+    _run_update(root, args.lease, lambda item: item.update({
+        "status": "stopping",
+        "stop_reason": args.reason,
+        "termination_deadline_ns": time.time_ns() + int(kill_seconds * 1_000_000_000),
+        "heartbeat_at": _now(),
+    }))
+    try:
+        _signal_run_process(child, signal.SIGTERM)
+    except OSError as exc:
+        def rollback(item: dict) -> None:
+            if item.get("status") == "stopping" and item.get("stop_reason") == args.reason:
+                item["status"] = "running"
+                item.pop("stop_reason", None)
+                item.pop("termination_deadline_ns", None)
+                item["heartbeat_at"] = _now()
+
+        _run_update(root, args.lease, rollback)
+        print(f"agentctl: unable to stop run process: {exc}", file=sys.stderr)
+        return 1
+    print(f"agentctl: stop requested for run {args.lease}")
+    return 0
+
+
+def cmd_run(args: argparse.Namespace) -> int:
+    root = Path(args.root).resolve() if args.run_action == "_supervise" else _repo_root()
+    if args.run_action == "_supervise":
+        return _run_supervise(root, args.lease, args.token)
+    if args.run_action == "start":
+        return _run_start(root, args)
+    if args.run_action == "adopt":
+        return _run_adopt(root, args)
+    if args.run_action in {"list", "show"}:
+        return _run_list(root, args)
+    if args.run_action == "wait":
+        return _run_wait(root, args)
+    if args.run_action == "progress":
+        return _run_progress(root, args)
+    if args.run_action == "finish":
+        return _run_finish(root, args)
+    if args.run_action == "stop":
+        return _run_stop(root, args)
+    print("agentctl: unknown run action", file=sys.stderr)
+    return 2
+
+
+def cmd_resource(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    if args.resource_action == "status":
+        rows = [
+            lease for lease in _load_runtime_leases(root).get("leases") or []
+            if isinstance(lease, dict) and lease.get("kind") == "resource"
+        ]
+        if args.json:
+            print(json.dumps({"resources": rows}, indent=2, ensure_ascii=False))
+        else:
+            for row in rows:
+                supervision_state = str(
+                    (row.get("supervision") or {}).get("state") or "-"
+                )
+                print(
+                    f"{row.get('id')} status={row.get('status')} "
+                    f"resource={','.join(row.get('resources') or [])} "
+                    f"task={row.get('task')} supervision={supervision_state}"
+                )
+            if not rows:
+                print("agentctl: no resource leases")
+        return 0
+    session = _require_session(root)
+    if args.resource_action == "acquire":
+        lease, error = _resource_acquire_one(
+            root, str(session.get("task")), args.resource,
+            "conversation", _workflow_session_key(),
+        )
+        if error:
+            print(f"agentctl: {error}", file=sys.stderr)
+            return 1
+        print(f"agentctl: resource lease {lease['id']} acquired for {args.resource}")
+        return 0
+    if args.resource_action == "release":
+        ok, detail = _resource_release_by_id(
+            root, args.lease, args.reason,
+            holder_type="conversation", holder_id=_workflow_session_key(),
+        )
+        if not ok:
+            print(f"agentctl: {detail}", file=sys.stderr)
+            return 1
+        print(f"agentctl: resource lease {args.lease} released")
+        return 0
+    print("agentctl: unknown resource action", file=sys.stderr)
     return 2
 
 
@@ -5408,9 +7775,283 @@ def _tasks_index_rows(text: str) -> dict:
         if not line.startswith("| ") or line.startswith("| ID ") or line.startswith("|---"):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) >= 6 and TASK_ID_RE.fullmatch(cells[0]):
+        if len(cells) >= 6 and TASK_RECORD_ID_RE.fullmatch(cells[0]):
             rows[cells[0]] = {"status": cells[1], "owner": cells[2], "scope": cells[3], "title": cells[5]}
     return rows
+
+
+def _scope_from_index_cell(value: str) -> list[str]:
+    cell = (value or "").strip()
+    if len(cell) >= 2 and cell.startswith("`") and cell.endswith("`"):
+        cell = cell[1:-1].strip()
+    if cell in {"", "-"}:
+        return []
+    return [item.strip() for item in cell.split(",") if item.strip()]
+
+
+def _plan_task_rows(text: str) -> dict:
+    rows = {}
+    pattern = re.compile(
+        r"^- \[([ xX])\]\s+([A-Za-z][A-Za-z0-9]*-[\w.]+)\s+-\s+"
+        r"(.*?)(?:\s+\(owner:\s*([^)]+)\))?\s*$"
+    )
+    for line in text.splitlines():
+        match = pattern.match(line)
+        if not match or not TASK_RECORD_ID_RE.fullmatch(match.group(2)):
+            continue
+        rows[match.group(2)] = {
+            "checked": match.group(1).lower() == "x",
+            "title": match.group(3).strip(),
+            "owner": (match.group(4) or "").strip(),
+        }
+    return rows
+
+
+def _task_doc_status(path: Path) -> str:
+    match = re.search(r"^Status:\s*(\S+)\s*$", _read(path), flags=re.M)
+    return match.group(1) if match else ""
+
+
+def _task_evidence_ids(root: Path) -> dict[str, set[str]]:
+    index_ids = set(_tasks_index_rows(_read(root / WORKFLOW_DIR / TASKS_FILE)))
+    plan_ids = set(_plan_task_rows(_read(root / WORKFLOW_DIR / PLAN_FILE)))
+    docs_dir = root / WORKFLOW_DIR / TASKS_DIR
+    doc_ids = {
+        path.stem
+        for path in docs_dir.glob("*.md")
+        if path.name != "_template.md" and TASK_RECORD_ID_RE.fullmatch(path.stem)
+    } if docs_dir.is_dir() else set()
+    return {"TASKS.md": index_ids, "PROJECT_PLAN.md": plan_ids, "task docs": doc_ids}
+
+
+def _task_reconcile_problems(root: Path) -> list[str]:
+    problems = []
+    board = _load_board(root)
+    tasks = board.get("tasks")
+    if not isinstance(tasks, dict):
+        return ["canonical board tasks must be an object"]
+    task_rows = _tasks_index_rows(_read(root / WORKFLOW_DIR / TASKS_FILE))
+    plan_rows = _plan_task_rows(_read(root / WORKFLOW_DIR / PLAN_FILE))
+    evidence = _task_evidence_ids(root)
+    canonical_ids = set(tasks)
+    for source, ids in evidence.items():
+        for task in sorted(ids - canonical_ids):
+            problems.append(f"{task}: present in {source} but missing from canonical board")
+    for task in sorted(canonical_ids):
+        entry = tasks.get(task)
+        if not TASK_RECORD_ID_RE.fullmatch(task):
+            problems.append(f"{task}: canonical task id is unsafe or unsupported")
+            continue
+        if not isinstance(entry, dict):
+            problems.append(f"{task}: canonical task record must be an object")
+            continue
+        status = str(entry.get("status") or "")
+        task_type = str(entry.get("type") or "generic")
+        owner = str(entry.get("owner") or "")
+        scope = [str(item) for item in entry.get("scope") or []]
+        title = str(entry.get("title") or task)
+        for scope_problem in _scope_errors(scope):
+            problems.append(f"{task}: {scope_problem}")
+        if task_type not in TASK_TYPES:
+            problems.append(f"{task}: unsupported task type '{task_type}'")
+        if status not in STATUSES:
+            problems.append(f"task {task} has invalid status '{status}'")
+        if status in ACTIVE_STATUSES and not owner:
+            problems.append(f"task {task} is in_progress but has no owner")
+        for dependency in entry.get("deps") or []:
+            if dependency not in tasks:
+                problems.append(f"{task}: dependency {dependency} is missing from canonical board")
+        row = task_rows.get(task)
+        if not row:
+            problems.append(f"{task}: missing generated row in TASKS.md")
+        else:
+            row_owner = "" if row["owner"] in {"", "-"} else row["owner"]
+            if row["status"] != status:
+                problems.append(
+                    f"{task}: TASKS.md status {row['status']} differs from canonical status {status}"
+                )
+            if row_owner != owner:
+                problems.append(
+                    f"{task}: TASKS.md owner {row['owner']} differs from canonical owner {owner or '-'}"
+                )
+            if _scope_from_index_cell(row["scope"]) != scope:
+                problems.append(f"{task}: TASKS.md scope differs from canonical scope")
+            if row["title"] != title:
+                problems.append(f"{task}: TASKS.md title differs from canonical title")
+        plan_row = plan_rows.get(task)
+        if not plan_row:
+            problems.append(f"{task}: missing generated row in PROJECT_PLAN.md")
+        else:
+            if plan_row["title"] != title:
+                problems.append(f"{task}: PROJECT_PLAN.md title differs from canonical title")
+            if plan_row["owner"] != owner:
+                problems.append(f"{task}: PROJECT_PLAN.md owner differs from canonical owner")
+            expected_checked = status == "done"
+            if plan_row["checked"] != expected_checked:
+                problems.append(
+                    f"{task}: PROJECT_PLAN.md checkbox differs from canonical status {status}"
+                )
+        doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+        if not doc.is_file():
+            problems.append(f"{task}: missing task document")
+        else:
+            doc_status = _task_doc_status(doc)
+            if doc_status != status:
+                problems.append(
+                    f"{task}: task document status {doc_status or '<missing>'} "
+                    f"differs from canonical status {status}"
+                )
+    return problems
+
+
+def _markdown_table_cell(value: object) -> str:
+    return str(value or "").replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _render_task_views(root: Path, board: dict) -> None:
+    tasks = board.get("tasks") or {}
+    index_lines = [
+        "# Task Index",
+        "",
+        "| ID | Status | Owner | Scope | Task Doc | Title |",
+        "|---|---|---|---|---|---|",
+    ]
+    for task, entry in tasks.items():
+        owner = entry.get("owner") or "-"
+        scope = _format_scope(entry.get("scope"))
+        title = _markdown_table_cell(entry.get("title") or task)
+        index_lines.append(
+            f"| {task} | {entry.get('status') or ''} | {_markdown_table_cell(owner)} | "
+            f"`{_markdown_table_cell(scope)}` | "
+            f"[.agent/tasks/{task}.md](tasks/{task}.md) | {title} |"
+        )
+    _write_atomic_text(root / WORKFLOW_DIR / TASKS_FILE, "\n".join(index_lines) + "\n")
+
+    plan_path = root / WORKFLOW_DIR / PLAN_FILE
+    plan = _read(plan_path)
+    heading = "## Task Board"
+    start = plan.find(heading)
+    if start < 0:
+        raise ValueError("PROJECT_PLAN.md missing Task Board section")
+    content_start = start + len(heading)
+    next_heading = re.search(r"^##\s+", plan[content_start:], flags=re.M)
+    content_end = (
+        content_start + next_heading.start()
+        if next_heading else len(plan)
+    )
+    plan_lines = [heading]
+    for task, entry in reversed(list(tasks.items())):
+        checked = "x" if entry.get("status") == "done" else " "
+        owner = entry.get("owner") or ""
+        suffix = f" (owner: {owner})" if owner else ""
+        plan_lines.append(
+            f"- [{checked}] {task} - {entry.get('title') or task}{suffix}"
+        )
+    replacement = "\n".join(plan_lines) + "\n\n"
+    rendered_plan = plan[:start] + replacement + plan[content_end:].lstrip("\n")
+    _write_atomic_text(plan_path, rendered_plan)
+
+    for task, entry in tasks.items():
+        _set_task_doc_status(root, task, str(entry.get("status") or ""))
+
+
+def _legacy_task_record(root: Path, task: str, row: dict, plan_row: dict) -> dict:
+    doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    if not doc.is_file():
+        raise ValueError(f"{task}: legacy migration requires a task document")
+    doc_status = _task_doc_status(doc)
+    if not doc_status or doc_status != row.get("status"):
+        raise ValueError(
+            f"{task}: task document status {doc_status or '<missing>'} "
+            f"does not match TASKS.md status {row.get('status') or '<missing>'}"
+        )
+    if plan_row.get("title") != row.get("title"):
+        raise ValueError(f"{task}: PROJECT_PLAN.md and TASKS.md titles differ")
+    owner = "" if row.get("owner") in {"", "-"} else str(row.get("owner") or "")
+    if plan_row.get("owner") != owner:
+        raise ValueError(f"{task}: PROJECT_PLAN.md and TASKS.md owners differ")
+    text = _read(doc)
+    created = re.search(r"^Created:\s*(.+)$", text, flags=re.M)
+    updated = re.search(r"^Updated:\s*(.+)$", text, flags=re.M)
+    return {
+        "title": row.get("title") or task,
+        "type": "generic",
+        "status": row.get("status"),
+        "owner": owner or None,
+        "scope": _scope_from_index_cell(row.get("scope") or ""),
+        "deps": [],
+        "created_at": created.group(1).strip() if created else "legacy",
+        "updated_at": updated.group(1).strip() if updated else _now(),
+        "migration": {"source": "legacy-task-views", "migrated_at": _now()},
+    }
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    if args.reconcile_action == "check":
+        problems = _task_reconcile_problems(root)
+        if problems:
+            print("agentctl reconcile: FAIL")
+            for problem in problems:
+                print(f"  - {problem}")
+            return 1
+        print("agentctl reconcile: OK")
+        return 0
+    if args.reconcile_action == "render":
+        board = _load_board(root)
+        canonical_ids = set((board.get("tasks") or {}))
+        extras = {
+            task
+            for ids in _task_evidence_ids(root).values()
+            for task in ids - canonical_ids
+        }
+        if extras:
+            print(
+                "agentctl: render would drop task evidence absent from the canonical board: "
+                + ", ".join(sorted(extras))
+                + "; run 'agentctl reconcile migrate' after inspecting the evidence",
+                file=sys.stderr,
+            )
+            return 1
+        _render_task_views(root, board)
+        print("agentctl: rendered task views from canonical board")
+        return 0
+    if args.reconcile_action == "migrate":
+        lock = _session_coordination_lock_path(root)
+        fd = _acquire_lock_file(lock)
+        try:
+            board = _load_board(root)
+            tasks = board.setdefault("tasks", {})
+            task_rows = _tasks_index_rows(_read(root / WORKFLOW_DIR / TASKS_FILE))
+            plan_rows = _plan_task_rows(_read(root / WORKFLOW_DIR / PLAN_FILE))
+            evidence = _task_evidence_ids(root)
+            extras = sorted(set().union(*evidence.values()) - set(tasks))
+            for task in extras:
+                if task not in task_rows or task not in plan_rows:
+                    print(
+                        f"agentctl: {task} cannot be migrated because its legacy views are incomplete",
+                        file=sys.stderr,
+                    )
+                    return 1
+                try:
+                    tasks[task] = _legacy_task_record(
+                        root, task, task_rows[task], plan_rows[task],
+                    )
+                except ValueError as exc:
+                    print(f"agentctl: {exc}", file=sys.stderr)
+                    return 1
+            if extras:
+                _save_board(root, board)
+            _render_task_views(root, board)
+        finally:
+            _release_lock_file(lock, fd)
+        print(
+            "agentctl: migrated legacy task evidence into canonical board"
+            + (": " + ", ".join(extras) if extras else " (nothing to migrate)")
+        )
+        return 0
+    print("agentctl: unknown reconcile action", file=sys.stderr)
+    return 2
 
 
 def _loop_daily_plan_triage(root: Path) -> dict:
@@ -5425,6 +8066,7 @@ def _loop_daily_plan_triage(root: Path) -> dict:
 
     if not tasks:
         checks.append("board has no tasks")
+    checks.extend(_task_reconcile_problems(root))
     for tid, entry in sorted(tasks.items()):
         row = task_rows.get(tid)
         doc = root / WORKFLOW_DIR / TASKS_DIR / f"{tid}.md"
@@ -6543,6 +9185,7 @@ def _loop_execution_lease(root: Path, *, normalize: bool = True) -> dict | None:
 def _loop_execution_claim(root: Path, operation: str, *,
                           cycle_runtime_id: str | None = None) -> tuple[str | None, str | None]:
     """Serialize one-shot loop execution with durable cycle ownership."""
+    session = _load_session(root)
     token = hashlib.sha256(
         f"{os.getpid()}:{time.time_ns()}:{operation}".encode("utf-8")
     ).hexdigest()[:20]
@@ -6586,6 +9229,12 @@ def _loop_execution_claim(root: Path, operation: str, *,
             "owner_pid": os.getpid(),
             "owner_birth_marker": _process_birth_marker(os.getpid()),
             "owner_host": _cycle_host_id(),
+            "workflow_session_key": (
+                session.get("workflow_session_key") or _workflow_session_key()
+            ),
+            "task": session.get("task"),
+            "scope": list(session.get("scope") or []),
+            "checkout": str(root.resolve()),
             "cycle_runtime_id": cycle_runtime_id,
             "active_command": None,
             "started_at": _now(),
@@ -7412,13 +10061,7 @@ def _check_prepush(
 
 
 def _check_board_consistency(root: Path) -> list:
-    p = []
-    for tid, t in _load_board(root).get("tasks", {}).items():
-        if t.get("status") not in STATUSES:
-            p.append(f"task {tid} has invalid status '{t.get('status')}'")
-        if t.get("status") in ACTIVE_STATUSES and not t.get("owner"):
-            p.append(f"task {tid} is in_progress but has no owner")
-    return p
+    return _task_reconcile_problems(root)
 
 
 def _doctor_required_paths() -> list[str]:
@@ -7674,6 +10317,7 @@ def _migration_report(root: Path) -> dict:
     peer_stale = [
         row for row in rows
         if row.get("observed_status") == "stale"
+        and row.get("identity_source")
         and str(row.get("_record_path") or "") != current_record
     ]
     unknown_peers = [
@@ -7684,6 +10328,7 @@ def _migration_report(root: Path) -> dict:
     ]
 
     reasons: list[str] = []
+    warnings: list[str] = []
     next_steps: list[str] = []
     if not installation["ok"]:
         action = "repair_install"
@@ -7716,18 +10361,6 @@ def _migration_report(root: Path) -> dict:
             "After the old conversation is closed, release only its verified claim "
             "with agentctl sessions release <session-key> --reason <verified-reason>.",
             "Run agentctl migrate again before selecting work.",
-        ])
-    elif peer_stale:
-        action = "inspect_stale"
-        owners = ", ".join(
-            f"{row.get('workflow_session_key')}:{row.get('task')}" for row in peer_stale
-        )
-        reasons.append(f"stale session claims require inspection: {owners}")
-        next_steps.extend([
-            "Run agentctl sessions list and inspect each stale task document and working tree.",
-            "Release a session only after verification, using agentctl sessions "
-            "release <session-key> --reason <verified-reason>.",
-            "Run agentctl migrate again after claims are reconciled.",
         ])
     elif source in {"shared_legacy", "singleton_legacy"}:
         action = "refresh"
@@ -7790,6 +10423,22 @@ def _migration_report(root: Path) -> dict:
                 "<agent-name> to claim or create a task."
             )
 
+    if peer_stale:
+        owners = ", ".join(
+            f"{row.get('workflow_session_key')}:{row.get('task')}" for row in peer_stale
+        )
+        warnings.append(
+            "stale session claims remain authoritative for same-task, overlapping-scope, "
+            f"and exclusive admission, but do not block migration compatibility: {owners}"
+        )
+        if action == "continue":
+            next_steps.extend([
+                "Run agentctl sessions list and inspect each stale task document and working tree; "
+                "unrelated work may continue through normal admission.",
+                "Release a stale session only after verification, using agentctl sessions "
+                "release <session-key> --reason <verified-reason>.",
+            ])
+
     categorized = {
         status: [row for row in public_rows if row.get("observed_status") == status]
         for status in ("active", "stale", "released")
@@ -7815,6 +10464,7 @@ def _migration_report(root: Path) -> dict:
         },
         "sessions": categorized,
         "reasons": reasons,
+        "warnings": warnings,
         "next_steps": next_steps,
     }
 
@@ -7827,6 +10477,8 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         print(f"agentctl migrate: {report['action'].upper()}")
         for reason in report["reasons"]:
             print(f"  - {reason}")
+        for warning in report["warnings"]:
+            print(f"  ! {warning}")
         print("Next:")
         for index, step in enumerate(report["next_steps"], start=1):
             print(f"  {index}. {step}")
@@ -8055,7 +10707,13 @@ def cmd_check(args: argparse.Namespace) -> int:
     root = _repo_root()
     mode = args.mode or "manual"
     if mode == "manual":
-        problems = _check_base(root) + _check_receipt(root) + _check_escalations(root) + _check_pending_guidance(root)
+        problems = (
+            _check_base(root)
+            + _check_board_consistency(root)
+            + _check_receipt(root)
+            + _check_escalations(root)
+            + _check_pending_guidance(root)
+        )
     elif mode == "pre-commit":
         problems = _check_base(root) + _check_precommit(root)
     elif mode == "commit-msg":
@@ -8130,13 +10788,27 @@ def _sessions_heartbeat(root: Path) -> int:
         session_key = st.get("workflow_session_key") or _workflow_session_key()
         conflicts = _session_start_conflicts(
             root, session_key, str(st.get("task")), st.get("scope") or [],
+            str(st.get("isolation") or "shared"),
         )
         if conflicts:
             for conflict in conflicts:
                 print(f"agentctl: session heartbeat blocked: {conflict}", file=sys.stderr)
             return 1
         _record_runtime_identity(st)
-        _save_session(root, st)
+        # A heartbeat only refreshes the canonical per-conversation record.
+        # Re-reading the branch and rendering the shared Markdown view here
+        # makes one otherwise read-only hook per debounce window pay for Git
+        # and every recorded session. Mutating commands already use
+        # _save_session(), while `sessions list` refreshes the generated view.
+        st["identity_source"] = _workflow_session_identity_source()
+        st["heartbeat_at"] = _now()
+        st["heartbeat_ns"] = time.time_ns()
+        st["revision"] = int(st.get("revision") or 0) + 1
+        if st.get("status") in {"review", "approved", "done", "released"}:
+            st["presence_status"] = st.get("status")
+        else:
+            st["presence_status"] = "working"
+        _save_json(_session_path(root, session_key), st)
     finally:
         _release_lock_file(lock, fd)
     return 0
@@ -8161,6 +10833,13 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
         prior_peer_snapshot = st.get("peer_snapshot") or ""
         peer_snapshot = _peer_session_snapshot(blockers)
         problems = []
+        if st.get("isolation") == "read-only" and (
+                args.path or args.git_write or getattr(args, "git_shared", False)
+                or getattr(args, "opaque", False)):
+            problems.append(
+                f"task {st.get('task')} is read-only; create a writable child task "
+                "before changing files or Git state"
+            )
         for other in blockers:
             if other.get("task") == st.get("task"):
                 problems.append(
@@ -8353,6 +11032,169 @@ def cmd_sessions(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_upgrade(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    action = args.upgrade_action
+    installed = _installed_protocol_epoch(root)
+    state = _load_upgrade_state(root)
+    if action == "status":
+        payload = dict(state)
+        payload["installed_epoch"] = installed
+        payload["kit_version"] = KIT_VERSION
+        payload["blocking_sessions"] = [
+            {
+                "session": row.get("workflow_session_key"),
+                "task": row.get("task"),
+                "status": row.get("observed_status"),
+                "protocol_epoch": _session_protocol_epoch(root, row),
+                "checkout": row.get("checkout"),
+            }
+            for row in _upgrade_blocking_sessions(root)
+        ]
+        if args.json:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            print(
+                f"agentctl: upgrade state={payload.get('state')} "
+                f"installed_epoch={installed} target_epoch={payload.get('target_epoch')}"
+            )
+            for row in payload["blocking_sessions"]:
+                print(
+                    f"  {row['session']} task={row['task']} status={row['status']} "
+                    f"epoch={row['protocol_epoch']} checkout={row['checkout']}"
+                )
+        return 0
+    if action == "begin":
+        target = int(args.target_epoch)
+        if target <= installed:
+            print(
+                f"agentctl: target epoch {target} must be greater than installed "
+                f"epoch {installed}",
+                file=sys.stderr,
+            )
+            return 2
+        state = {
+            "state": "draining",
+            "installed_epoch": installed,
+            "target_epoch": target,
+            "target_version": args.target_version or "",
+            "started_at": _now(),
+            "initiated_by": _workflow_session_key(),
+        }
+        _save_upgrade_state(root, state)
+        blockers = _upgrade_blocking_sessions(root)
+        print(
+            f"agentctl: upgrade barrier active for epoch {installed} -> {target}; "
+            f"{len(blockers)} active/stale session(s) must finish or release"
+        )
+        return 0
+    if action == "validate":
+        problems = []
+        target = int(state.get("target_epoch") or installed)
+        if state.get("state") not in {"draining", "validating", "steady"}:
+            problems.append(f"unknown upgrade state {state.get('state')!r}")
+        if state.get("state") == "steady" and target != installed:
+            problems.append("steady state target epoch does not match installed epoch")
+        if state.get("state") == "validating" and target != installed:
+            problems.append(
+                f"installed epoch {installed} does not match validating target {target}"
+            )
+        blockers = _upgrade_blocking_sessions(root)
+        if state.get("state") in {"draining", "validating"} and blockers:
+            problems.append(
+                f"{len(blockers)} active/stale session(s) still hold write authority"
+            )
+        manifest = _load_json(_install_manifest_path(root), {})
+        if _install_manifest_path(root).is_file():
+            if manifest.get("version") != INSTALL_SCHEMA_VERSION:
+                problems.append(
+                    f"manifest schema is {manifest.get('version')}, expected "
+                    f"{INSTALL_SCHEMA_VERSION}"
+                )
+            if int(manifest.get("protocol_epoch") or LEGACY_PROTOCOL_EPOCH) != installed:
+                problems.append("manifest protocol epoch is invalid")
+        if args.json:
+            print(json.dumps({
+                "ok": not problems,
+                "state": state,
+                "installed_epoch": installed,
+                "problems": problems,
+            }, indent=2, ensure_ascii=False))
+        elif problems:
+            print("agentctl: upgrade validation failed", file=sys.stderr)
+            for problem in problems:
+                print(f"  - {problem}", file=sys.stderr)
+        else:
+            print("agentctl: upgrade validation OK")
+        return 1 if problems else 0
+    if action == "complete":
+        target = int(state.get("target_epoch") or installed)
+        blockers = _upgrade_blocking_sessions(root)
+        problems = []
+        if state.get("state") not in {"draining", "validating"}:
+            problems.append(
+                f"upgrade state is {state.get('state')}, expected draining or validating"
+            )
+        if installed != target:
+            problems.append(
+                f"installed epoch {installed} does not match target epoch {target}"
+            )
+        if blockers:
+            problems.append(
+                f"{len(blockers)} active/stale session(s) still hold write authority"
+            )
+        if problems:
+            print("agentctl: cannot complete upgrade:", file=sys.stderr)
+            for problem in problems:
+                print(f"  - {problem}", file=sys.stderr)
+            return 1
+        _save_upgrade_state(root, {
+            "state": "steady",
+            "installed_epoch": installed,
+            "target_epoch": installed,
+            "target_version": state.get("target_version") or KIT_VERSION,
+            "started_at": state.get("started_at"),
+            "completed_at": _now(),
+            "initiated_by": state.get("initiated_by"),
+        })
+        print(f"agentctl: upgrade complete at protocol epoch {installed}")
+        return 0
+    if action == "rebind":
+        if state.get("state") != "steady":
+            print(
+                f"agentctl: cannot rebind while upgrade is {state.get('state')}",
+                file=sys.stderr,
+            )
+            return 1
+        session = _load_session(root)
+        if not session.get("task"):
+            print("agentctl: no task session to rebind", file=sys.stderr)
+            return 2
+        session_key = session.get("workflow_session_key") or _workflow_session_key()
+        conflicts = _session_start_conflicts(
+            root, session_key, str(session.get("task")), session.get("scope") or [],
+            str(session.get("isolation") or "shared"),
+        )
+        if conflicts:
+            for conflict in conflicts:
+                print(f"agentctl: rebind blocked: {conflict}", file=sys.stderr)
+            return 1
+        old_epoch = _session_protocol_epoch(root, session)
+        session["protocol_epoch"] = installed
+        session["doc_hashes"] = _hash_docs(root, session["task"])
+        session["rebound_at"] = _now()
+        session["rebound_from_epoch"] = old_epoch
+        _record_runtime_identity(session)
+        _save_session(root, session)
+        print(
+            f"agentctl: rebound {session['task']} from protocol epoch "
+            f"{old_epoch} to {installed}"
+        )
+        return 0
+    print("agentctl: unknown upgrade action", file=sys.stderr)
+    return 2
+
+
 def cmd_status(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _load_session(root)
@@ -8387,6 +11229,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--new-id")
     sp.add_argument("--prefix", default="T")
     sp.add_argument("--deps", default="")
+    sp.add_argument("--type", dest="task_type", choices=sorted(TASK_TYPES), default="generic")
+    sp.add_argument("--isolation", choices=sorted(ISOLATION_MODES), default="auto")
     sp.add_argument("--session-id")
     sp.add_argument("--model")
     sp.add_argument("--reasoning-effort")
@@ -8410,6 +11254,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--model")
     sp.add_argument("--reasoning-effort")
     sp.set_defaults(func=cmd_focus)
+
+    sp = sub.add_parser("capsule")
+    sp.add_argument("--task")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_capsule)
 
     sp = sub.add_parser("progress")
     sp.add_argument("--note")
@@ -8455,10 +11304,18 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--owner")
     c.add_argument("--scope")
     c.add_argument("--deps")
+    c.add_argument("--type", dest="task_type", choices=sorted(TASK_TYPES), default="generic")
     c.add_argument("--force", action="store_true")
     sh = tsub.add_parser("show")
     sh.add_argument("id")
     sp.set_defaults(func=cmd_task)
+
+    sp = sub.add_parser("reconcile")
+    rsub = sp.add_subparsers(dest="reconcile_action", required=True)
+    rsub.add_parser("check")
+    rsub.add_parser("render")
+    rsub.add_parser("migrate")
+    sp.set_defaults(func=cmd_reconcile)
 
     sp = sub.add_parser("agents")
     asub = sp.add_subparsers(dest="agents_action", required=True)
@@ -8514,6 +11371,74 @@ def build_parser() -> argparse.ArgumentParser:
         help="Acknowledge an inspected missing checkout before releasing its lease",
     )
     sp.set_defaults(func=cmd_worktree)
+
+    sp = sub.add_parser("lease")
+    lsub = sp.add_subparsers(dest="lease_action", required=True)
+    ll = lsub.add_parser("list")
+    ll.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_lease)
+
+    sp = sub.add_parser("run")
+    rsub = sp.add_subparsers(dest="run_action", required=True)
+    rs = rsub.add_parser("start")
+    rs.add_argument("--task")
+    rs.add_argument("--cwd")
+    rs.add_argument("--output", action="append", required=True)
+    rs.add_argument("--resource", action="append", default=[])
+    rs.add_argument("--gpu-watchdog", action="store_true")
+    rs.add_argument("--gpu-idle-seconds", type=float)
+    rs.add_argument("--gpu-grace-seconds", type=float)
+    rs.add_argument("--gpu-sample-seconds", type=float)
+    rs.add_argument("--gpu-kill-seconds", type=float)
+    rs.add_argument("--gpu-utilization-max", type=float)
+    rs.add_argument("--gpu-memory-min-mib", type=float)
+    rs.add_argument("--gpu-probe-timeout-seconds", type=float)
+    rs.add_argument("--gpu-idle-action", choices=["report", "terminate"])
+    rs.add_argument("command", nargs=argparse.REMAINDER)
+    ra = rsub.add_parser("adopt")
+    ra.add_argument("--pid", required=True)
+    ra.add_argument("--cwd", required=True)
+    ra.add_argument("--output", action="append", required=True)
+    ra.add_argument("--resource", action="append", default=[])
+    ra.add_argument("--command-sha256")
+    rl = rsub.add_parser("list")
+    rl.add_argument("--json", action="store_true")
+    rshow = rsub.add_parser("show")
+    rshow.add_argument("lease")
+    rshow.add_argument("--json", action="store_true")
+    rw = rsub.add_parser("wait")
+    rw.add_argument("lease")
+    rw.add_argument("--timeout", type=float, default=3600)
+    rp = rsub.add_parser("progress")
+    rp.add_argument("lease", nargs="?")
+    rp.add_argument("--phase", required=True)
+    rp.add_argument("--token")
+    rp.add_argument("--idle-exempt-seconds", type=float, default=0.0)
+    rf = rsub.add_parser("finish")
+    rf.add_argument("lease")
+    rf.add_argument("--status", choices=["succeeded", "failed", "cancelled"], required=True)
+    rf.add_argument("--reason", required=True)
+    rstop = rsub.add_parser("stop")
+    rstop.add_argument("lease")
+    rstop.add_argument("--reason", required=True)
+    sp.set_defaults(func=cmd_run)
+
+    sp = sub.add_parser("resource")
+    rsub = sp.add_subparsers(dest="resource_action", required=True)
+    racquire = rsub.add_parser("acquire")
+    racquire.add_argument("resource")
+    rstatus = rsub.add_parser("status")
+    rstatus.add_argument("--json", action="store_true")
+    rrelease = rsub.add_parser("release")
+    rrelease.add_argument("lease")
+    rrelease.add_argument("--reason", required=True)
+    sp.set_defaults(func=cmd_resource)
+
+    sp = sub.add_parser("_run-supervise", help=argparse.SUPPRESS)
+    sp.add_argument("--root", required=True)
+    sp.add_argument("--lease", required=True)
+    sp.add_argument("--token", required=True)
+    sp.set_defaults(func=cmd_run, run_action="_supervise")
 
     sp = sub.add_parser("eval")
     esub = sp.add_subparsers(dest="eval_action", required=True)
@@ -8671,6 +11596,19 @@ def build_parser() -> argparse.ArgumentParser:
     sr.add_argument("--reason", required=True)
     sp.set_defaults(func=cmd_sessions)
 
+    sp = sub.add_parser("upgrade")
+    usub = sp.add_subparsers(dest="upgrade_action", required=True)
+    ub = usub.add_parser("begin")
+    ub.add_argument("--target-epoch", required=True, type=int)
+    ub.add_argument("--target-version")
+    ust = usub.add_parser("status")
+    ust.add_argument("--json", action="store_true")
+    uv = usub.add_parser("validate")
+    uv.add_argument("--json", action="store_true")
+    usub.add_parser("complete")
+    usub.add_parser("rebind")
+    sp.set_defaults(func=cmd_upgrade)
+
     sp = sub.add_parser("status")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_status)
@@ -8685,6 +11623,11 @@ def main(argv=None) -> int:
         if identity_error:
             print(f"agentctl: {identity_error}", file=sys.stderr)
             return 2
+    if getattr(args, "cmd", "") != "init":
+        upgrade_error = _upgrade_command_error(_repo_root(), args)
+        if upgrade_error:
+            print(f"agentctl: {upgrade_error}", file=sys.stderr)
+            return 1
     return args.func(args)
 
 

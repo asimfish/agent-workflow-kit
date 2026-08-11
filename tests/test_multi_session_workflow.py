@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -92,30 +93,53 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             self.agentctl("sessions", "list", "--json", session=session).stdout
         )
 
-    def test_read_only_hook_heartbeats_without_a_redundant_status_spawn(self):
-        """Efficiency: a read-only command refreshes the heartbeat in one spawn.
-
-        The read-only PreToolUse path must still keep the session heartbeat
-        fresh (peers rely on it for liveness) and must never block, but it
-        should not pay two agentctl subprocess launches per read.
-        """
+    def test_read_only_hook_debounces_heartbeat_without_losing_liveness(self):
+        """Efficiency: only the first read in a short window spawns heartbeat."""
         self.start("one", "T-101", "src/one/")
         self.agentctl("refresh", session="one")
         before = json.loads(self.agentctl("status", "--json", session="one").stdout)
+        session_view = self.root / ".agent" / "state" / "SESSIONS.md"
+        view_mtime_ns = session_view.stat().st_mtime_ns
 
-        import time as _t
-        _t.sleep(1.1)
         ro = self.hook(
             "pre-tool-use",
             {"tool_name": "Bash", "tool_input": {"command": "grep -r x src/one"}},
             session="one",
         )
         self.assertEqual(ro.stdout, "", ro.stdout)  # never blocks a read
-        after = json.loads(self.agentctl("status", "--json", session="one").stdout)
+        deadline = time.monotonic() + 10
+        while True:
+            after = json.loads(
+                self.agentctl("status", "--json", session="one").stdout
+            )
+            if int(after.get("heartbeat_ns") or 0) > int(
+                    before.get("heartbeat_ns") or 0):
+                break
+            if time.monotonic() >= deadline:
+                self.fail("background heartbeat did not refresh liveness")
+            time.sleep(0.05)
         # The read-only path advanced the heartbeat (liveness preserved).
         self.assertGreater(
             int(after.get("heartbeat_ns") or 0),
             int(before.get("heartbeat_ns") or 0),
+        )
+        self.assertEqual(
+            session_view.stat().st_mtime_ns,
+            view_mtime_ns,
+            "heartbeat should not rebuild the shared generated view",
+        )
+        again = self.hook(
+            "pre-tool-use",
+            {"tool_name": "Bash", "tool_input": {"command": "rg y src/one"}},
+            session="one",
+        )
+        self.assertEqual(again.stdout, "")
+        debounced = json.loads(
+            self.agentctl("status", "--json", session="one").stdout
+        )
+        self.assertEqual(
+            int(debounced.get("heartbeat_ns") or 0),
+            int(after.get("heartbeat_ns") or 0),
         )
         # A read-only command with NO active session must still pass silently.
         idle = self.hook(
@@ -1136,9 +1160,15 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             return paths
 
         expected = {
-            ("init",), ("work",), ("start",), ("focus",), ("progress",),
+            ("init",), ("work",), ("start",), ("focus",), ("capsule",), ("progress",),
             ("note",), ("complete",), ("finish",), ("gate",), ("refresh",),
             ("board",), ("task", "create"), ("task", "show"),
+            ("reconcile", "check"), ("reconcile", "migrate"),
+            ("reconcile", "render"), ("lease", "list"),
+            ("run", "start"), ("run", "adopt"), ("run", "list"),
+            ("run", "show"), ("run", "wait"), ("run", "progress"), ("run", "finish"),
+            ("run", "stop"), ("resource", "acquire"),
+            ("resource", "status"), ("resource", "release"),
             ("agents", "add"), ("agents", "list"),
             ("handoff", "create"), ("handoff", "list"),
             ("handoff", "show"), ("handoff", "mark"),
@@ -1153,7 +1183,10 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             ("loop", "resume"), ("loop", "stop"), ("check",),
             ("doctor",), ("migrate",), ("sessions", "list"),
             ("sessions", "heartbeat"), ("sessions", "guard"),
-            ("sessions", "release"), ("status",),
+            ("sessions", "release"), ("upgrade", "begin"),
+            ("upgrade", "status"), ("upgrade", "validate"),
+            ("upgrade", "complete"), ("upgrade", "rebind"),
+            ("_run-supervise",), ("status",),
         }
         discovered = leaf_paths(agentctl.build_parser())
         self.assertEqual(discovered, expected)
