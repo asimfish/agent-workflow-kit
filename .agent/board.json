@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 06:53:12",
+  "updated_at": "2026-08-12 06:57:00",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2103,7 +2103,7 @@
     "TA08B0CC413F151F5-009": {
       "title": "grace window for missing-holder resource release",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "cursor",
       "scope": [
         "tools/",
@@ -2111,7 +2111,19 @@
       ],
       "deps": [],
       "created_at": "2026-08-12 06:50:34",
-      "updated_at": "2026-08-12 06:53:12"
+      "updated_at": "2026-08-12 06:56:47"
+    },
+    "T5CCA8C280CC6FDD5-001": {
+      "title": "independent review of missing-holder grace window",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:56:19",
+      "updated_at": "2026-08-12 06:57:00"
     }
   }
 }
