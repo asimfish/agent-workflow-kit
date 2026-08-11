@@ -46,3 +46,13 @@ jobs:
 
       - name: Verify Windows guidance dispatch
         run: python -m unittest tests.test_guidance_workflow -v
+
+      - name: Verify Windows run lifecycle and stop tree
+        # Exercises the taskkill /T termination branch, supervisor claim
+        # confirmation, and replay rejection at runtime instead of relying
+        # on static review of the Windows-only code paths.
+        run: >-
+          python -m unittest -v
+          tests.test_execution_lease_workflow.ExecutionLeaseWorkflowRegressionTest.test_only_the_owner_conversation_can_stop_a_run
+          tests.test_execution_lease_workflow.ExecutionLeaseWorkflowRegressionTest.test_supervisor_entrypoint_is_single_use
+          tests.test_execution_lease_workflow.ExecutionLeaseWorkflowRegressionTest.test_await_supervisor_claim_flags_pre_claim_death_and_slow_start

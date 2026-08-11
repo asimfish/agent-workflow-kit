@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -117,7 +118,7 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             session="two", expect=1,
         )
         self.assertIn("already locked", blocked.stderr)
-        self.agentctl("run", "wait", run_id, "--timeout", "20", session="one")
+        self.wait_run_with_diagnostics(run_id)
         self.assertEqual(
             (self.root / "outputs" / "T-311" / "result.txt").read_text(encoding="utf-8"),
             "ok",
@@ -521,9 +522,11 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
     def test_only_the_owner_conversation_can_stop_a_run(self):
         self.start("owner", "T-341", "outputs/T-341/")
         self.start("peer", "T-342", "outputs/T-342/")
+        # The payload must outlive the refusal/stop round trips even on slow
+        # Windows runners; run stop terminates it long before 60s.
         started = self.agentctl(
             "run", "start", "--output", "outputs/T-341/result.txt", "--",
-            sys.executable, "-c", "import time; time.sleep(5)",
+            sys.executable, "-c", "import time; time.sleep(60)",
             session="owner",
         )
         run_id = self.lease_id(started.stdout, "run")
@@ -667,6 +670,35 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
                 self.root, "run-claimed00000001", timeout_seconds=0.3,
             ),
             "claimed",
+        )
+
+    def test_signal_run_process_routes_windows_signals_through_taskkill(self):
+        from tools import agentctl as workflow
+
+        # signal.SIGKILL does not exist on Windows, so the nt branch must
+        # not reference it; the portable constant keeps the same value.
+        self.assertEqual(
+            workflow.PORTABLE_SIGKILL, getattr(signal, "SIGKILL", 9),
+        )
+        calls = []
+
+        def fake_run(command, **kwargs):
+            calls.append(list(command))
+            return subprocess.CompletedProcess(command, 0)
+
+        process = {"pid": 4242, "process_group": None}
+        with (
+            mock.patch.object(workflow.os, "name", "nt"),
+            mock.patch.object(workflow.subprocess, "run", side_effect=fake_run),
+        ):
+            workflow._signal_run_process(process, signal.SIGTERM)
+            workflow._signal_run_process(process, workflow.PORTABLE_SIGKILL)
+        self.assertEqual(
+            calls,
+            [
+                ["taskkill", "/PID", "4242", "/T"],
+                ["taskkill", "/PID", "4242", "/T", "/F"],
+            ],
         )
 
     @unittest.skipIf(os.name != "posix", "flock-based contention fixture")

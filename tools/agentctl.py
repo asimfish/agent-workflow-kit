@@ -169,6 +169,10 @@ RESOURCE_LOCK_ENV = "AGENT_WORKFLOW_RESOURCE_LOCK_DIR"
 RESOURCE_REMOTE_PREFIX = "ssh://"
 RUN_ID_ENV = "AGENT_WORKFLOW_RUN_ID"
 RUN_HEARTBEAT_SECONDS = 2.0
+# signal.SIGKILL does not exist on Windows; referencing it there raises
+# AttributeError at call time, which broke every run stop. The numeric value
+# routes to taskkill /F on Windows and to the real SIGKILL elsewhere.
+PORTABLE_SIGKILL = getattr(signal, "SIGKILL", 9)
 TASK_TYPES = {"code", "experiment", "docs", "review", "maintenance", "generic"}
 ISOLATION_MODES = {"auto", "shared", "worktree", "read-only", "exclusive"}
 TASK_ID_NAMESPACE_FILE = "task-id-namespace.key"
@@ -6162,9 +6166,9 @@ def _signal_run_process(process: dict, signum: int) -> None:
     if os.name == "posix" and process_group:
         os.killpg(int(process_group), signum)
         return
-    if os.name == "nt" and signum in {signal.SIGTERM, signal.SIGKILL}:
+    if os.name == "nt" and signum in {signal.SIGTERM, PORTABLE_SIGKILL}:
         command = ["taskkill", "/PID", str(pid), "/T"]
-        if signum == signal.SIGKILL:
+        if signum == PORTABLE_SIGKILL:
             command.append("/F")
         try:
             completed = subprocess.run(
@@ -6203,7 +6207,7 @@ def _settle_stopped_run_tree(root: Path, lease_id: str, process: dict) -> bool:
     if _posix_process_group_exists(process_group):
         sent_at_ns = time.time_ns()
         try:
-            _signal_run_process(process, signal.SIGKILL)
+            _signal_run_process(process, PORTABLE_SIGKILL)
         except OSError:
             pass
         _run_update(root, lease_id, lambda lease: lease.update({
@@ -6438,7 +6442,7 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
                     kill_deadline_ns = int(watchdog.get("kill_deadline_ns") or 0)
                     if kill_deadline_ns and now_ns >= kill_deadline_ns:
                         try:
-                            _signal_run_process(child_record, signal.SIGKILL)
+                            _signal_run_process(child_record, PORTABLE_SIGKILL)
                             watchdog["kill_sent_at_ns"] = now_ns
                         except OSError:
                             pass
@@ -6886,6 +6890,13 @@ def _run_wait(root: Path, args: argparse.Namespace) -> int:
         )
         if status not in {"starting", "running", "stopping"} and not settling_supervisor:
             print(f"agentctl: run {args.lease} -> {status}")
+            if status == "exited_unknown" and lease.get("mode") == "supervised":
+                print(
+                    "agentctl: the supervisor exited without recording a result; "
+                    f"inspect {_runtime_runs_dir(root) / (str(args.lease) + '.supervisor.log')} "
+                    "and reconcile with 'agentctl run finish'",
+                    file=sys.stderr,
+                )
             return 0 if status == "succeeded" else 1
         if time.monotonic() >= deadline:
             print(f"agentctl: run {args.lease} still {status} after timeout", file=sys.stderr)

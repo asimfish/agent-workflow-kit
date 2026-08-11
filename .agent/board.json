@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 04:18:14",
+  "updated_at": "2026-08-12 05:15:03",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -1985,6 +1985,68 @@
       "deps": [],
       "created_at": "2026-08-12 04:17:23",
       "updated_at": "2026-08-12 04:18:14"
+    },
+    "TA08B0CC413F151F5-005": {
+      "title": "verify windows run stop tree at runtime in ci",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        ".github/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 04:42:05",
+      "updated_at": "2026-08-12 04:48:30"
+    },
+    "TA4590F0D1CAC6C44-001": {
+      "title": "independent review of windows run stop ci coverage",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 04:47:58",
+      "updated_at": "2026-08-12 04:48:41"
+    },
+    "TA08B0CC413F151F5-006": {
+      "title": "portable kill signal for windows run termination",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 05:01:39",
+      "updated_at": "2026-08-12 05:10:06"
+    },
+    "TCA99BA4AB445E207-001": {
+      "title": "independent review of portable windows kill signal",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 05:09:35",
+      "updated_at": "2026-08-12 05:10:21"
+    },
+    "T4116DD2E51AFDABA-001": {
+      "title": "independent review of portable windows kill signal",
+      "type": "review",
+      "status": "review",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 05:12:34",
+      "updated_at": "2026-08-12 05:15:03"
     }
   }
 }

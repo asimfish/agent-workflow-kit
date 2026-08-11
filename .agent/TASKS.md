@@ -140,3 +140,8 @@
 | T258C28F1DAE958F4-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T258C28F1DAE958F4-001.md](tasks/T258C28F1DAE958F4-001.md) | independent review of decided-review closure |
 | TA08B0CC413F151F5-004 | done | cursor | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-004.md](tasks/TA08B0CC413F151F5-004.md) | persist supervised run terminal state through lock contention |
 | TF96DBC8BC409FA2D-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TF96DBC8BC409FA2D-001.md](tasks/TF96DBC8BC409FA2D-001.md) | independent review of supervisor persistence hardening |
+| TA08B0CC413F151F5-005 | done | cursor | `.github/, tests/` | [.agent/tasks/TA08B0CC413F151F5-005.md](tasks/TA08B0CC413F151F5-005.md) | verify windows run stop tree at runtime in ci |
+| TA4590F0D1CAC6C44-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TA4590F0D1CAC6C44-001.md](tasks/TA4590F0D1CAC6C44-001.md) | independent review of windows run stop ci coverage |
+| TA08B0CC413F151F5-006 | done | cursor | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-006.md](tasks/TA08B0CC413F151F5-006.md) | portable kill signal for windows run termination |
+| TCA99BA4AB445E207-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TCA99BA4AB445E207-001.md](tasks/TCA99BA4AB445E207-001.md) | independent review of portable windows kill signal |
+| T4116DD2E51AFDABA-001 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T4116DD2E51AFDABA-001.md](tasks/T4116DD2E51AFDABA-001.md) | independent review of portable windows kill signal |
