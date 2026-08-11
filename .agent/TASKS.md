@@ -131,3 +131,4 @@
 | TA80D9103F5316278-001 | review | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/` | [.agent/tasks/TA80D9103F5316278-001.md](tasks/TA80D9103F5316278-001.md) | independently review residual repo-wide Git guard closure |
 | TD851EF749F675DC5-001 | review | claude-sonnet-reviewer | `.agent/` | [.agent/tasks/TD851EF749F675DC5-001.md](tasks/TD851EF749F675DC5-001.md) | review pre-push published-commit filter |
 | TB0621800D60E51C4-002 | in_progress | independent-reviewer | `.agent/` | [.agent/tasks/TB0621800D60E51C4-002.md](tasks/TB0621800D60E51C4-002.md) | independent review of unified multi-session architecture |
+| T3D6917C0AC71CAAE-001 | review | codex | `tools/, templates/project/tools/, tests/, docs/, README.md` | [.agent/tasks/T3D6917C0AC71CAAE-001.md](tasks/T3D6917C0AC71CAAE-001.md) | isolate stale session admission and supervise idle GPU runs |

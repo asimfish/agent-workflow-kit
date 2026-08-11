@@ -53,6 +53,7 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+from typing import Protocol
 from urllib.parse import urlparse
 
 WORKFLOW_DIR = ".agent"
@@ -166,6 +167,7 @@ RUNTIME_RUNS_DIR = "runs"
 RUNTIME_POLICY_FILE = "runtime-policy.json"
 RESOURCE_LOCK_ENV = "AGENT_WORKFLOW_RESOURCE_LOCK_DIR"
 RESOURCE_REMOTE_PREFIX = "ssh://"
+RUN_ID_ENV = "AGENT_WORKFLOW_RUN_ID"
 RUN_HEARTBEAT_SECONDS = 2.0
 TASK_TYPES = {"code", "experiment", "docs", "review", "maintenance", "generic"}
 ISOLATION_MODES = {"auto", "shared", "worktree", "read-only", "exclusive"}
@@ -5597,6 +5599,251 @@ def _resource_lock_location(resource: str) -> dict:
     return {"provider": "local-mkdir", "path": str((base / digest).resolve())}
 
 
+class _ResourceTelemetryProbe(Protocol):
+    def __call__(self, target: dict, timeout_seconds: float) -> dict:
+        ...
+
+
+def _gpu_resource_target(resource: str) -> dict | None:
+    local = re.fullmatch(r"gpu:(\d+)", resource)
+    if local:
+        return {
+            "kind": "gpu-local",
+            "resource": resource,
+            "index": int(local.group(1)),
+            "host": platform.node(),
+        }
+    if not resource.startswith(RESOURCE_REMOTE_PREFIX):
+        return None
+    parsed = urlparse(resource)
+    remote = re.fullmatch(r"gpu:(\d+)", parsed.path.strip("/"))
+    remote_host = re.fullmatch(
+        r"(?:[A-Za-z0-9_][A-Za-z0-9_.-]*@)?[A-Za-z0-9][A-Za-z0-9_.-]*",
+        parsed.netloc,
+    )
+    if not remote_host or not remote or parsed.params or parsed.query or parsed.fragment:
+        return None
+    return {
+        "kind": "gpu-ssh",
+        "resource": resource,
+        "index": int(remote.group(1)),
+        "host": parsed.netloc,
+    }
+
+
+def _nvidia_smi_sample(command: list[str], target: dict,
+                       timeout_seconds: float) -> dict:
+    sampled_at_ns = time.time_ns()
+    try:
+        proc = subprocess.run(
+            command, text=True, capture_output=True,
+            timeout=max(0.1, float(timeout_seconds)),
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return {
+            "ok": False,
+            "target": target,
+            "sampled_at_ns": sampled_at_ns,
+            "error": str(exc)[:500],
+        }
+    if proc.returncode:
+        detail = proc.stderr.strip() or proc.stdout.strip() or "nvidia-smi failed"
+        return {
+            "ok": False,
+            "target": target,
+            "sampled_at_ns": sampled_at_ns,
+            "error": detail[-500:],
+        }
+    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    try:
+        utilization, memory = [float(part.strip()) for part in lines[0].split(",")[:2]]
+    except (IndexError, TypeError, ValueError):
+        return {
+            "ok": False,
+            "target": target,
+            "sampled_at_ns": sampled_at_ns,
+            "error": "nvidia-smi returned an invalid utilization,memory sample",
+        }
+    if not math.isfinite(utilization) or not math.isfinite(memory):
+        return {
+            "ok": False,
+            "target": target,
+            "sampled_at_ns": sampled_at_ns,
+            "error": "nvidia-smi returned a non-finite sample",
+        }
+    return {
+        "ok": True,
+        "target": target,
+        "sampled_at_ns": sampled_at_ns,
+        "utilization_percent": max(0.0, min(100.0, utilization)),
+        "memory_mib": max(0.0, memory),
+    }
+
+
+def _probe_local_gpu(target: dict, timeout_seconds: float) -> dict:
+    executable = shutil.which("nvidia-smi") or "nvidia-smi"
+    return _nvidia_smi_sample([
+        executable,
+        "-i", str(target["index"]),
+        "--query-gpu=utilization.gpu,memory.used",
+        "--format=csv,noheader,nounits",
+    ], target, timeout_seconds)
+
+
+def _probe_ssh_gpu(target: dict, timeout_seconds: float) -> dict:
+    return _nvidia_smi_sample([
+        "ssh", "-o", "BatchMode=yes", str(target["host"]),
+        "nvidia-smi", "-i", str(target["index"]),
+        "--query-gpu=utilization.gpu,memory.used",
+        "--format=csv,noheader,nounits",
+    ], target, timeout_seconds)
+
+
+_RESOURCE_TELEMETRY_PROBES: dict[str, _ResourceTelemetryProbe] = {
+    "gpu-local": _probe_local_gpu,
+    "gpu-ssh": _probe_ssh_gpu,
+}
+
+
+def _gpu_watchdog_policy(root: Path, args: argparse.Namespace) -> tuple[dict | None, str | None]:
+    configured = _runtime_policy(root).get("gpu_watchdog") or {}
+    if not isinstance(configured, dict):
+        configured = {}
+    explicitly_enabled = bool(getattr(args, "gpu_watchdog", False))
+    configured_enabled = configured.get("enabled") is True
+    if not explicitly_enabled and not configured_enabled:
+        return None, None
+
+    targets = []
+    for resource in list(getattr(args, "resource", None) or []):
+        target = _gpu_resource_target(str(resource))
+        if target:
+            targets.append(target)
+    if not targets and configured_enabled and not explicitly_enabled:
+        return None, None
+    if not targets:
+        return None, (
+            "GPU watchdog requires a canonical --resource gpu:<index> or "
+            "ssh://<host>/gpu:<index>"
+        )
+
+    def value(name: str, default: float) -> float:
+        cli_value = getattr(args, f"gpu_{name}", None)
+        raw = cli_value if cli_value is not None else configured.get(name, default)
+        return float(raw)
+
+    try:
+        policy = {
+            "idle_seconds": value("idle_seconds", 600.0),
+            "grace_seconds": value("grace_seconds", 300.0),
+            "sample_seconds": value("sample_seconds", 15.0),
+            "kill_seconds": value("kill_seconds", 30.0),
+            "utilization_max": value("utilization_max", 5.0),
+            "memory_min_mib": value("memory_min_mib", 1024.0),
+            "probe_timeout_seconds": value("probe_timeout_seconds", 10.0),
+            "action": (
+                getattr(args, "gpu_idle_action", None)
+                or configured.get("action")
+                or "report"
+            ),
+        }
+    except (TypeError, ValueError):
+        return None, "GPU watchdog numeric policy values must be finite numbers"
+    bounds = {
+        "idle_seconds": (0.0, 30 * 24 * 3600.0),
+        "grace_seconds": (0.0, 24 * 3600.0),
+        "sample_seconds": (0.01, 3600.0),
+        "kill_seconds": (0.1, 3600.0),
+        "utilization_max": (0.0, 100.0),
+        "memory_min_mib": (0.0, 10_000_000.0),
+        "probe_timeout_seconds": (0.1, 300.0),
+    }
+    for name, (minimum, maximum) in bounds.items():
+        current = policy[name]
+        if not math.isfinite(current) or not minimum <= current <= maximum:
+            return None, f"GPU watchdog {name.replace('_', '-')} is outside {minimum}..{maximum}"
+    if policy["action"] not in {"report", "terminate"}:
+        return None, "GPU watchdog action must be report or terminate"
+
+    if policy["action"] == "terminate" and any(
+        target["kind"] != "gpu-local" for target in targets
+    ):
+        return None, (
+            "automatic GPU termination is host-local; run agentctl on the remote "
+            "host or use --gpu-idle-action report"
+        )
+    policy["targets"] = targets
+    return policy, None
+
+
+def _gpu_watchdog_transition(
+    state: dict, policy: dict, sample: dict, *, now_ns: int,
+    progress_marker: str, progress_updated_ns: int, exempt_until_ns: int,
+) -> tuple[dict, str | None]:
+    current = dict(state or {})
+    previous_marker = str(current.get("last_progress_marker") or "")
+    previous_progress_ns = int(current.get("last_progress_updated_ns") or 0)
+    current["last_progress_marker"] = progress_marker
+    current["last_progress_updated_ns"] = max(previous_progress_ns, progress_updated_ns)
+    current["last_sample"] = sample
+    current["updated_at_ns"] = now_ns
+
+    progress_changed = bool(previous_marker and progress_marker != previous_marker)
+    progress_changed = progress_changed or progress_updated_ns > previous_progress_ns
+    exempt = exempt_until_ns > now_ns
+    if progress_changed or exempt:
+        current.update({
+            "state": "exempt" if exempt else "active",
+            "low_samples": 0,
+            "low_since_ns": None,
+            "grace_since_ns": None,
+        })
+        return current, None
+    if not sample.get("ok"):
+        current.update({
+            "state": "probe_error",
+            "low_samples": 0,
+            "low_since_ns": None,
+            "grace_since_ns": None,
+        })
+        return current, None
+
+    idle = (
+        float(sample.get("utilization_percent") or 0.0) <= float(policy["utilization_max"])
+        and float(sample.get("memory_mib") or 0.0) >= float(policy["memory_min_mib"])
+    )
+    if not idle:
+        current.update({
+            "state": "active",
+            "low_samples": 0,
+            "low_since_ns": None,
+            "grace_since_ns": None,
+        })
+        return current, None
+
+    low_since_ns = int(current.get("low_since_ns") or now_ns)
+    low_samples = int(current.get("low_samples") or 0) + 1
+    current["low_since_ns"] = low_since_ns
+    current["low_samples"] = low_samples
+    idle_elapsed = max(0.0, (now_ns - low_since_ns) / 1_000_000_000)
+    if low_samples < 2 or idle_elapsed < float(policy["idle_seconds"]):
+        current["state"] = "suspected_idle"
+        return current, None
+
+    grace_since_ns = current.get("grace_since_ns")
+    if grace_since_ns is None:
+        current["grace_since_ns"] = now_ns
+        current["state"] = "grace"
+        return current, None
+    grace_elapsed = max(0.0, (now_ns - int(grace_since_ns)) / 1_000_000_000)
+    if grace_elapsed < float(policy["grace_seconds"]):
+        current["state"] = "grace"
+        return current, None
+    current["state"] = "reclaimable"
+    current["reclaimable_at_ns"] = now_ns
+    return current, str(policy["action"])
+
+
 def _external_resource_acquire(resource: str, owner: dict) -> tuple[dict | None, str | None]:
     try:
         location = _resource_lock_location(resource)
@@ -5765,6 +6012,164 @@ def _run_log_paths(root: Path, lease_id: str) -> tuple[Path, Path]:
     return base / f"{lease_id}.stdout.log", base / f"{lease_id}.stderr.log"
 
 
+def _run_progress_marker(lease: dict) -> str:
+    rows = []
+    for raw in [lease.get("stdout"), lease.get("stderr"), *(lease.get("outputs") or [])]:
+        if not raw:
+            continue
+        path = Path(str(raw))
+        try:
+            stat = path.stat()
+            rows.append((str(path), stat.st_size, stat.st_mtime_ns, path.is_dir()))
+        except OSError:
+            rows.append((str(path), None, None, None))
+    return hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+def _sample_gpu_watchdog(watchdog: dict) -> dict:
+    policy = watchdog.get("policy") or {}
+    samples = []
+    for target in policy.get("targets") or []:
+        probe = _RESOURCE_TELEMETRY_PROBES.get(str(target.get("kind") or ""))
+        if probe is None:
+            samples.append({
+                "ok": False,
+                "target": target,
+                "sampled_at_ns": time.time_ns(),
+                "error": f"no telemetry probe for {target.get('kind')}",
+            })
+            continue
+        try:
+            samples.append(probe(target, float(policy["probe_timeout_seconds"])))
+        except Exception as exc:
+            samples.append({
+                "ok": False,
+                "target": target,
+                "sampled_at_ns": time.time_ns(),
+                "error": str(exc)[:500],
+            })
+    if not samples or any(not sample.get("ok") for sample in samples):
+        return {
+            "ok": False,
+            "samples": samples,
+            "sampled_at_ns": time.time_ns(),
+            "error": "one or more GPU telemetry probes failed",
+        }
+    return {
+        "ok": True,
+        "samples": samples,
+        "sampled_at_ns": max(int(sample["sampled_at_ns"]) for sample in samples),
+        "utilization_percent": max(float(sample["utilization_percent"]) for sample in samples),
+        "memory_mib": sum(float(sample["memory_mib"]) for sample in samples),
+    }
+
+
+def _persist_run_watchdog(root: Path, lease_id: str, watchdog: dict, *,
+                          status: str | None = None,
+                          stop_reason: str | None = None) -> dict | None:
+    found = {"lease": None}
+
+    def update(data: dict) -> None:
+        resource_ids = []
+        for lease in data.get("leases") or []:
+            if not isinstance(lease, dict) or lease.get("id") != lease_id:
+                continue
+            lease["watchdog"] = dict(watchdog)
+            lease["heartbeat_at"] = _now()
+            if status:
+                lease["status"] = status
+            if stop_reason:
+                lease["stop_reason"] = stop_reason
+            resource_ids = [str(item) for item in lease.get("resource_lease_ids") or []]
+            found["lease"] = dict(lease)
+            break
+        for lease in data.get("leases") or []:
+            if not isinstance(lease, dict) or str(lease.get("id") or "") not in resource_ids:
+                continue
+            lease["supervision"] = {
+                "run_id": lease_id,
+                "state": watchdog.get("state"),
+                "policy": watchdog.get("policy"),
+                "last_sample": watchdog.get("last_sample"),
+                "updated_at_ns": watchdog.get("updated_at_ns"),
+            }
+            lease["heartbeat_at"] = _now()
+
+    _update_runtime_leases(root, update)
+    return found["lease"]
+
+
+def _signal_run_process(process: dict, signum: int) -> None:
+    pid = int(process["pid"])
+    process_group = process.get("process_group")
+    if os.name == "posix" and process_group:
+        os.killpg(int(process_group), signum)
+        return
+    if os.name == "nt" and signum in {signal.SIGTERM, signal.SIGKILL}:
+        command = ["taskkill", "/PID", str(pid), "/T"]
+        if signum == signal.SIGKILL:
+            command.append("/F")
+        try:
+            completed = subprocess.run(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+                check=False,
+            )
+            if completed.returncode == 0:
+                return
+        except (OSError, subprocess.SubprocessError):
+            pass
+    os.kill(pid, signum)
+
+
+def _settle_stopped_run_tree(root: Path, lease_id: str, process: dict) -> bool:
+    current = _runtime_lease(root, lease_id) or {}
+    if current.get("status") != "stopping":
+        return True
+    process_group = process.get("process_group")
+    if os.name != "posix" or not process_group:
+        return True
+    watchdog = current.get("watchdog") or {}
+    deadline_ns = int(
+        watchdog.get("kill_deadline_ns")
+        or current.get("termination_deadline_ns")
+        or time.time_ns()
+    )
+    while _posix_process_group_exists(process_group) and time.time_ns() < deadline_ns:
+        _run_update(root, lease_id, lambda lease: lease.update({
+            "heartbeat_at": _now(),
+        }))
+        remaining = max(0.01, (deadline_ns - time.time_ns()) / 1_000_000_000)
+        time.sleep(min(RUN_HEARTBEAT_SECONDS, remaining))
+    if _posix_process_group_exists(process_group):
+        sent_at_ns = time.time_ns()
+        try:
+            _signal_run_process(process, signal.SIGKILL)
+        except OSError:
+            pass
+        _run_update(root, lease_id, lambda lease: lease.update({
+            "process_group_kill_sent_at_ns": sent_at_ns,
+            "heartbeat_at": _now(),
+        }))
+        settle_deadline = time.monotonic() + RUN_HEARTBEAT_SECONDS
+        while (
+            _posix_process_group_exists(process_group)
+            and time.monotonic() < settle_deadline
+        ):
+            time.sleep(0.02)
+    if _posix_process_group_exists(process_group):
+        _run_update(root, lease_id, lambda lease: lease.update({
+            "cleanup_error": "owned process group remains alive after SIGKILL",
+            "heartbeat_at": _now(),
+        }))
+        return False
+    return True
+
+
 def _run_update(root: Path, lease_id: str, updater) -> dict | None:
     found = {"lease": None}
 
@@ -5861,16 +6266,26 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
     stdout_path, stderr_path = _run_log_paths(root, lease_id)
     try:
         with stdout_path.open("ab", buffering=0) as stdout, stderr_path.open("ab", buffering=0) as stderr:
-            child = subprocess.Popen(
-                [str(item) for item in command],
-                cwd=str(cwd),
-                stdout=stdout,
-                stderr=stderr,
-            )
+            child_env = os.environ.copy()
+            child_env[RUN_ID_ENV] = lease_id
+            popen_options = {
+                "cwd": str(cwd),
+                "stdout": stdout,
+                "stderr": stderr,
+                "env": child_env,
+            }
+            if os.name == "posix":
+                popen_options["start_new_session"] = True
+            elif os.name == "nt":
+                popen_options["creationflags"] = getattr(
+                    subprocess, "CREATE_NEW_PROCESS_GROUP", 0
+                )
+            child = subprocess.Popen([str(item) for item in command], **popen_options)
             child_record = {
                 "role": "command",
                 "pid": child.pid,
                 "birth_marker": _process_birth_marker(child.pid),
+                "process_group": child.pid if os.name == "posix" else None,
             }
             _run_update(root, lease_id, lambda lease: lease.update({
                 "status": "running",
@@ -5878,11 +6293,89 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
                 "heartbeat_at": _now(),
             }))
             while child.poll() is None:
-                _run_update(root, lease_id, lambda lease: lease.update({
-                    "heartbeat_at": _now(),
-                }))
-                time.sleep(RUN_HEARTBEAT_SECONDS)
+                current = _runtime_lease(root, lease_id) or {}
+                watchdog = dict(current.get("watchdog") or {})
+                policy = watchdog.get("policy") or {}
+                if watchdog.get("enabled"):
+                    now_ns = time.time_ns()
+                    sample_interval_ns = int(
+                        float(policy["sample_seconds"]) * 1_000_000_000
+                    )
+                    kill_deadline_ns = int(watchdog.get("kill_deadline_ns") or 0)
+                    if kill_deadline_ns and now_ns >= kill_deadline_ns:
+                        try:
+                            _signal_run_process(child_record, signal.SIGKILL)
+                            watchdog["kill_sent_at_ns"] = now_ns
+                        except OSError:
+                            pass
+                        watchdog["kill_deadline_ns"] = now_ns + int(
+                            RUN_HEARTBEAT_SECONDS * 1_000_000_000
+                        )
+                        watchdog["updated_at_ns"] = now_ns
+                        _persist_run_watchdog(root, lease_id, watchdog)
+                    elif current.get("status") == "stopping" and watchdog.get(
+                        "auto_termination_at_ns"
+                    ):
+                        watchdog["state"] = "reclaiming"
+                        watchdog["updated_at_ns"] = now_ns
+                        _persist_run_watchdog(root, lease_id, watchdog)
+                    else:
+                        next_sample_at_ns = int(watchdog.get("next_sample_at_ns") or 0)
+                        if now_ns >= next_sample_at_ns:
+                            sample = _sample_gpu_watchdog(watchdog)
+                            progress = current.get("progress") or {}
+                            watchdog, action = _gpu_watchdog_transition(
+                                watchdog,
+                                policy,
+                                sample,
+                                now_ns=now_ns,
+                                progress_marker=_run_progress_marker(current),
+                                progress_updated_ns=int(progress.get("updated_at_ns") or 0),
+                                exempt_until_ns=int(progress.get("idle_exempt_until_ns") or 0),
+                            )
+                            watchdog["next_sample_at_ns"] = now_ns + sample_interval_ns
+                            if action == "terminate":
+                                reason = (
+                                    "GPU watchdog confirmed consecutive low utilization, "
+                                    "allocated memory, absent progress, and expired grace"
+                                )
+                                try:
+                                    _signal_run_process(child_record, signal.SIGTERM)
+                                except OSError:
+                                    pass
+                                watchdog.update({
+                                    "state": "reclaiming",
+                                    "auto_termination_at_ns": now_ns,
+                                    "kill_deadline_ns": now_ns + int(
+                                        float(policy["kill_seconds"]) * 1_000_000_000
+                                    ),
+                                    "updated_at_ns": now_ns,
+                                })
+                                _persist_run_watchdog(
+                                    root, lease_id, watchdog,
+                                    status="stopping", stop_reason=reason,
+                                )
+                            else:
+                                _persist_run_watchdog(root, lease_id, watchdog)
+                        else:
+                            _run_update(root, lease_id, lambda lease: lease.update({
+                                "heartbeat_at": _now(),
+                            }))
+                    kill_deadline_ns = int(watchdog.get("kill_deadline_ns") or 0)
+                    next_event_ns = int(watchdog.get("next_sample_at_ns") or 0)
+                    if kill_deadline_ns:
+                        next_event_ns = min(next_event_ns or kill_deadline_ns, kill_deadline_ns)
+                    until_event = max(0.01, (next_event_ns - now_ns) / 1_000_000_000)
+                    sleep_seconds = min(RUN_HEARTBEAT_SECONDS, until_event)
+                else:
+                    _run_update(root, lease_id, lambda lease: lease.update({
+                        "heartbeat_at": _now(),
+                    }))
+                    sleep_seconds = RUN_HEARTBEAT_SECONDS
+                time.sleep(sleep_seconds)
             returncode = int(child.returncode or 0)
+            if not _settle_stopped_run_tree(root, lease_id, child_record):
+                return 2
     except Exception as exc:
         current = _run_update(root, lease_id, lambda lease: lease.update({
             "status": "failed",
@@ -5931,6 +6424,10 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
         for problem in problems:
             print(f"agentctl: {problem}", file=sys.stderr)
         return 1
+    watchdog_policy, watchdog_error = _gpu_watchdog_policy(root, args)
+    if watchdog_error:
+        print(f"agentctl: {watchdog_error}", file=sys.stderr)
+        return 1
     lease_id = "run-" + hashlib.sha256(
         f"{task}:{_workflow_session_key()}:{time.time_ns()}".encode("utf-8")
     ).hexdigest()[:16]
@@ -5975,6 +6472,13 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
         "cwd": str(cwd),
         "stdout": str(stdout_path),
         "stderr": str(stderr_path),
+        "progress": {
+            "phase": "starting",
+            "token": "",
+            "updated_at": _now(),
+            "updated_at_ns": time.time_ns(),
+            "idle_exempt_until_ns": 0,
+        },
         "supervisor_token_sha256": hashlib.sha256(
             supervisor_token.encode("utf-8")
         ).hexdigest(),
@@ -5982,6 +6486,14 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
         "heartbeat_at": _now(),
         "status": "starting",
     }
+    if watchdog_policy:
+        lease["watchdog"] = {
+            "enabled": True,
+            "policy": watchdog_policy,
+            "state": "active",
+            "low_samples": 0,
+            "created_at_ns": time.time_ns(),
+        }
     _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(lease))
     try:
         supervisor = subprocess.Popen(
@@ -6108,9 +6620,11 @@ def _run_list(root: Path, args: argparse.Namespace) -> int:
         print(json.dumps({"runs": rows}, indent=2, ensure_ascii=False))
     else:
         for row in rows:
+            watchdog_state = str((row.get("watchdog") or {}).get("state") or "-")
             print(
                 f"{row.get('id')} status={row.get('status')} task={row.get('task')} "
-                f"mode={row.get('mode')} resources={','.join(row.get('resources') or []) or '-'}"
+                f"mode={row.get('mode')} resources={','.join(row.get('resources') or []) or '-'} "
+                f"watchdog={watchdog_state}"
             )
         if not rows:
             print("agentctl: no run leases")
@@ -6137,6 +6651,56 @@ def _run_wait(root: Path, args: argparse.Namespace) -> int:
             print(f"agentctl: run {args.lease} still {status} after timeout", file=sys.stderr)
             return 1
         time.sleep(min(0.2, max(0.0, deadline - time.monotonic())))
+
+
+def _run_progress(root: Path, args: argparse.Namespace) -> int:
+    lease_id = str(args.lease or os.environ.get(RUN_ID_ENV) or "")
+    if not lease_id:
+        print(
+            f"agentctl: run progress requires a lease or inherited {RUN_ID_ENV}",
+            file=sys.stderr,
+        )
+        return 2
+    lease = _runtime_lease(root, lease_id)
+    if not lease or lease.get("kind") != "run":
+        print(f"agentctl: run lease not found: {lease_id}", file=sys.stderr)
+        return 2
+    owner_error = _run_owner_error(root, lease)
+    if owner_error:
+        print(f"agentctl: {owner_error}", file=sys.stderr)
+        return 1
+    if lease.get("status") not in {"starting", "running"}:
+        print(
+            f"agentctl: run {lease_id} cannot accept progress while {lease.get('status')}",
+            file=sys.stderr,
+        )
+        return 1
+    phase = str(args.phase or "").strip()
+    token = str(args.token or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,64}", phase):
+        print("agentctl: progress phase must be a 1..64 character stable identifier", file=sys.stderr)
+        return 2
+    if len(token) > 256:
+        print("agentctl: progress token must be at most 256 characters", file=sys.stderr)
+        return 2
+    exempt_seconds = float(args.idle_exempt_seconds or 0.0)
+    if not math.isfinite(exempt_seconds) or not 0.0 <= exempt_seconds <= 24 * 3600.0:
+        print("agentctl: idle exemption must be between 0 and 86400 seconds", file=sys.stderr)
+        return 2
+    now_ns = time.time_ns()
+    progress = {
+        "phase": phase,
+        "token": token,
+        "updated_at": _now(),
+        "updated_at_ns": now_ns,
+        "idle_exempt_until_ns": now_ns + int(exempt_seconds * 1_000_000_000),
+    }
+    _run_update(root, lease_id, lambda item: item.update({
+        "progress": progress,
+        "heartbeat_at": _now(),
+    }))
+    print(f"agentctl: run {lease_id} progress phase={phase}")
+    return 0
 
 
 def _run_finish(root: Path, args: argparse.Namespace) -> int:
@@ -6182,16 +6746,27 @@ def _run_stop(root: Path, args: argparse.Namespace) -> int:
     if not _runtime_process_alive(child):
         print("agentctl: run process is not alive; inspect and finish/reconcile it", file=sys.stderr)
         return 1
-    try:
-        os.kill(int(child["pid"]), signal.SIGTERM)
-    except OSError as exc:
-        print(f"agentctl: unable to stop run process: {exc}", file=sys.stderr)
-        return 1
+    watchdog_policy = (lease.get("watchdog") or {}).get("policy") or {}
+    kill_seconds = float(watchdog_policy.get("kill_seconds") or 30.0)
     _run_update(root, args.lease, lambda item: item.update({
         "status": "stopping",
         "stop_reason": args.reason,
+        "termination_deadline_ns": time.time_ns() + int(kill_seconds * 1_000_000_000),
         "heartbeat_at": _now(),
     }))
+    try:
+        _signal_run_process(child, signal.SIGTERM)
+    except OSError as exc:
+        def rollback(item: dict) -> None:
+            if item.get("status") == "stopping" and item.get("stop_reason") == args.reason:
+                item["status"] = "running"
+                item.pop("stop_reason", None)
+                item.pop("termination_deadline_ns", None)
+                item["heartbeat_at"] = _now()
+
+        _run_update(root, args.lease, rollback)
+        print(f"agentctl: unable to stop run process: {exc}", file=sys.stderr)
+        return 1
     print(f"agentctl: stop requested for run {args.lease}")
     return 0
 
@@ -6208,6 +6783,8 @@ def cmd_run(args: argparse.Namespace) -> int:
         return _run_list(root, args)
     if args.run_action == "wait":
         return _run_wait(root, args)
+    if args.run_action == "progress":
+        return _run_progress(root, args)
     if args.run_action == "finish":
         return _run_finish(root, args)
     if args.run_action == "stop":
@@ -6227,10 +6804,13 @@ def cmd_resource(args: argparse.Namespace) -> int:
             print(json.dumps({"resources": rows}, indent=2, ensure_ascii=False))
         else:
             for row in rows:
+                supervision_state = str(
+                    (row.get("supervision") or {}).get("state") or "-"
+                )
                 print(
                     f"{row.get('id')} status={row.get('status')} "
                     f"resource={','.join(row.get('resources') or [])} "
-                    f"task={row.get('task')}"
+                    f"task={row.get('task')} supervision={supervision_state}"
                 )
             if not rows:
                 print("agentctl: no resource leases")
@@ -9737,6 +10317,7 @@ def _migration_report(root: Path) -> dict:
     peer_stale = [
         row for row in rows
         if row.get("observed_status") == "stale"
+        and row.get("identity_source")
         and str(row.get("_record_path") or "") != current_record
     ]
     unknown_peers = [
@@ -9747,6 +10328,7 @@ def _migration_report(root: Path) -> dict:
     ]
 
     reasons: list[str] = []
+    warnings: list[str] = []
     next_steps: list[str] = []
     if not installation["ok"]:
         action = "repair_install"
@@ -9779,18 +10361,6 @@ def _migration_report(root: Path) -> dict:
             "After the old conversation is closed, release only its verified claim "
             "with agentctl sessions release <session-key> --reason <verified-reason>.",
             "Run agentctl migrate again before selecting work.",
-        ])
-    elif peer_stale:
-        action = "inspect_stale"
-        owners = ", ".join(
-            f"{row.get('workflow_session_key')}:{row.get('task')}" for row in peer_stale
-        )
-        reasons.append(f"stale session claims require inspection: {owners}")
-        next_steps.extend([
-            "Run agentctl sessions list and inspect each stale task document and working tree.",
-            "Release a session only after verification, using agentctl sessions "
-            "release <session-key> --reason <verified-reason>.",
-            "Run agentctl migrate again after claims are reconciled.",
         ])
     elif source in {"shared_legacy", "singleton_legacy"}:
         action = "refresh"
@@ -9853,6 +10423,22 @@ def _migration_report(root: Path) -> dict:
                 "<agent-name> to claim or create a task."
             )
 
+    if peer_stale:
+        owners = ", ".join(
+            f"{row.get('workflow_session_key')}:{row.get('task')}" for row in peer_stale
+        )
+        warnings.append(
+            "stale session claims remain authoritative for same-task, overlapping-scope, "
+            f"and exclusive admission, but do not block migration compatibility: {owners}"
+        )
+        if action == "continue":
+            next_steps.extend([
+                "Run agentctl sessions list and inspect each stale task document and working tree; "
+                "unrelated work may continue through normal admission.",
+                "Release a stale session only after verification, using agentctl sessions "
+                "release <session-key> --reason <verified-reason>.",
+            ])
+
     categorized = {
         status: [row for row in public_rows if row.get("observed_status") == status]
         for status in ("active", "stale", "released")
@@ -9878,6 +10464,7 @@ def _migration_report(root: Path) -> dict:
         },
         "sessions": categorized,
         "reasons": reasons,
+        "warnings": warnings,
         "next_steps": next_steps,
     }
 
@@ -9890,6 +10477,8 @@ def cmd_migrate(args: argparse.Namespace) -> int:
         print(f"agentctl migrate: {report['action'].upper()}")
         for reason in report["reasons"]:
             print(f"  - {reason}")
+        for warning in report["warnings"]:
+            print(f"  ! {warning}")
         print("Next:")
         for index, step in enumerate(report["next_steps"], start=1):
             print(f"  {index}. {step}")
@@ -10796,6 +11385,15 @@ def build_parser() -> argparse.ArgumentParser:
     rs.add_argument("--cwd")
     rs.add_argument("--output", action="append", required=True)
     rs.add_argument("--resource", action="append", default=[])
+    rs.add_argument("--gpu-watchdog", action="store_true")
+    rs.add_argument("--gpu-idle-seconds", type=float)
+    rs.add_argument("--gpu-grace-seconds", type=float)
+    rs.add_argument("--gpu-sample-seconds", type=float)
+    rs.add_argument("--gpu-kill-seconds", type=float)
+    rs.add_argument("--gpu-utilization-max", type=float)
+    rs.add_argument("--gpu-memory-min-mib", type=float)
+    rs.add_argument("--gpu-probe-timeout-seconds", type=float)
+    rs.add_argument("--gpu-idle-action", choices=["report", "terminate"])
     rs.add_argument("command", nargs=argparse.REMAINDER)
     ra = rsub.add_parser("adopt")
     ra.add_argument("--pid", required=True)
@@ -10811,6 +11409,11 @@ def build_parser() -> argparse.ArgumentParser:
     rw = rsub.add_parser("wait")
     rw.add_argument("lease")
     rw.add_argument("--timeout", type=float, default=3600)
+    rp = rsub.add_parser("progress")
+    rp.add_argument("lease", nargs="?")
+    rp.add_argument("--phase", required=True)
+    rp.add_argument("--token")
+    rp.add_argument("--idle-exempt-seconds", type=float, default=0.0)
     rf = rsub.add_parser("finish")
     rf.add_argument("lease")
     rf.add_argument("--status", choices=["succeeded", "failed", "cancelled"], required=True)

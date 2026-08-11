@@ -1166,7 +1166,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             ("reconcile", "check"), ("reconcile", "migrate"),
             ("reconcile", "render"), ("lease", "list"),
             ("run", "start"), ("run", "adopt"), ("run", "list"),
-            ("run", "show"), ("run", "wait"), ("run", "finish"),
+            ("run", "show"), ("run", "wait"), ("run", "progress"), ("run", "finish"),
             ("run", "stop"), ("resource", "acquire"),
             ("resource", "status"), ("resource", "release"),
             ("agents", "add"), ("agents", "list"),

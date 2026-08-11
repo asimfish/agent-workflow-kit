@@ -229,6 +229,283 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             self.assertEqual(workflow._run_wait(self.root, args), 0)
         self.assertEqual(load_lease.call_count, 2)
 
+    def test_gpu_watchdog_requires_consecutive_idle_samples_and_no_progress(self):
+        from tools import agentctl as workflow
+
+        policy = {
+            "idle_seconds": 10.0,
+            "grace_seconds": 5.0,
+            "utilization_max": 5.0,
+            "memory_min_mib": 1024.0,
+            "action": "terminate",
+        }
+        idle = {"ok": True, "utilization_percent": 0.0, "memory_mib": 2048.0}
+        state, action = workflow._gpu_watchdog_transition(
+            {}, policy, idle, now_ns=1_000_000_000, progress_marker="same",
+            progress_updated_ns=0, exempt_until_ns=0,
+        )
+        self.assertEqual(state["state"], "suspected_idle")
+        self.assertIsNone(action)
+
+        state, action = workflow._gpu_watchdog_transition(
+            state, policy, idle, now_ns=12_000_000_000, progress_marker="same",
+            progress_updated_ns=0, exempt_until_ns=0,
+        )
+        self.assertEqual(state["state"], "grace")
+        self.assertIsNone(action)
+
+        state, action = workflow._gpu_watchdog_transition(
+            state, policy, idle, now_ns=18_000_000_000, progress_marker="same",
+            progress_updated_ns=0, exempt_until_ns=0,
+        )
+        self.assertEqual(state["state"], "reclaimable")
+        self.assertEqual(action, "terminate")
+
+        state, action = workflow._gpu_watchdog_transition(
+            state, policy, idle, now_ns=19_000_000_000, progress_marker="advanced",
+            progress_updated_ns=19_000_000_000, exempt_until_ns=0,
+        )
+        self.assertEqual(state["state"], "active")
+        self.assertIsNone(action)
+
+    def test_supervised_gpu_watchdog_reclaims_idle_but_preserves_progress(self):
+        from tools import agentctl as workflow
+
+        self.start("one", "T-336", "outputs/T-336/")
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        nvidia_smi = fake_bin / "nvidia-smi"
+        nvidia_smi.write_text("#!/bin/sh\nprintf '0, 2048\\n'\n", encoding="utf-8")
+        nvidia_smi.chmod(0o755)
+        env = self.env("one", PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+
+        idle_pid_file = self.root / "outputs" / "T-336" / "idle.txt"
+        idle_command = (
+            "import pathlib, subprocess, sys, time; "
+            "child=subprocess.Popen([sys.executable, '-c', "
+            "'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); "
+            "time.sleep(10)']); "
+            f"p=pathlib.Path({str(idle_pid_file)!r}); "
+            "p.parent.mkdir(parents=True, exist_ok=True); "
+            "p.write_text(str(child.pid), encoding='utf-8'); time.sleep(10)"
+        )
+        idle = self.agentctl(
+            "run", "start", "--output", "outputs/T-336/idle.txt",
+            "--resource", "gpu:0", "--gpu-watchdog",
+            "--gpu-idle-seconds", "0.05", "--gpu-grace-seconds", "0.05",
+            "--gpu-sample-seconds", "0.02", "--gpu-kill-seconds", "0.2",
+            "--gpu-idle-action", "terminate", "--",
+            sys.executable, "-c", idle_command,
+            env=env,
+        )
+        idle_id = self.lease_id(idle.stdout, "run")
+        deadline = time.monotonic() + 2
+        while not idle_pid_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        self.assertTrue(idle_pid_file.exists())
+        waited = self.agentctl(
+            "run", "wait", idle_id, "--timeout", "5",
+            env=env, expect=1,
+        )
+        self.assertIn("cancelled", waited.stdout)
+        idle_run = json.loads(
+            self.agentctl("run", "show", idle_id, "--json", env=env).stdout
+        )["runs"][0]
+        self.assertEqual(idle_run["watchdog"]["state"], "reclaiming")
+        resource_rows = json.loads(
+            self.agentctl("resource", "status", "--json", env=env).stdout
+        )["resources"]
+        idle_resource = next(row for row in resource_rows if row["holder"]["id"] == idle_id)
+        self.assertEqual(idle_resource["status"], "released")
+        self.assertEqual(idle_resource["supervision"]["state"], "reclaiming")
+        self.assertIn(
+            "supervision=reclaiming",
+            self.agentctl("resource", "status", env=env).stdout,
+        )
+        if os.name == "posix":
+            process_group = idle_run["processes"][0]["process_group"]
+            deadline = time.monotonic() + 2
+            while (
+                workflow._posix_process_group_exists(process_group)
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.02)
+            self.assertFalse(workflow._posix_process_group_exists(process_group))
+
+        command = (
+            "import time; "
+            "[(print(i, flush=True), time.sleep(0.03)) for i in range(20)]"
+        )
+        progressing = self.agentctl(
+            "run", "start", "--output", "outputs/T-336/progress.txt",
+            "--resource", "gpu:0", "--gpu-watchdog",
+            "--gpu-idle-seconds", "0.12", "--gpu-grace-seconds", "0.12",
+            "--gpu-sample-seconds", "0.02", "--gpu-idle-action", "terminate", "--",
+            sys.executable, "-c", command, env=env,
+        )
+        progressing_id = self.lease_id(progressing.stdout, "run")
+        self.agentctl("run", "wait", progressing_id, "--timeout", "5", env=env)
+        progressing_run = json.loads(
+            self.agentctl("run", "show", progressing_id, "--json", env=env).stdout
+        )["runs"][0]
+        self.assertEqual(progressing_run["status"], "succeeded")
+        self.assertNotEqual(progressing_run["watchdog"]["state"], "reclaiming")
+
+    def test_gpu_watchdog_progress_is_owner_bound_and_phase_exempt(self):
+        self.start("owner", "T-337", "outputs/T-337/")
+        self.start("peer", "T-338", "outputs/T-338/")
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        nvidia_smi = fake_bin / "nvidia-smi"
+        nvidia_smi.write_text("#!/bin/sh\nprintf '0, 2048\\n'\n", encoding="utf-8")
+        nvidia_smi.chmod(0o755)
+        owner_env = self.env(
+            "owner", PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"
+        )
+        started = self.agentctl(
+            "run", "start", "--output", "outputs/T-337/exempt.txt",
+            "--resource", "gpu:0", "--gpu-watchdog",
+            "--gpu-idle-seconds", "0.5", "--gpu-grace-seconds", "0.5",
+            "--gpu-sample-seconds", "0.05", "--gpu-idle-action", "terminate", "--",
+            sys.executable, "-c", "import time; time.sleep(5)", env=owner_env,
+        )
+        run_id = self.lease_id(started.stdout, "run")
+        deadline = time.monotonic() + 5
+        while True:
+            running = json.loads(
+                self.agentctl("run", "show", run_id, "--json", env=owner_env).stdout
+            )["runs"][0]
+            if running["status"] == "running":
+                break
+            if time.monotonic() >= deadline:
+                self.fail(f"run did not become observable as running: {running}")
+            time.sleep(0.05)
+        self.agentctl(
+            "run", "progress", run_id, "--phase", "compile", "--token", "kernel-1",
+            "--idle-exempt-seconds", "2", env=owner_env,
+        )
+        refused = self.agentctl(
+            "run", "progress", run_id, "--phase", "compile", "--token", "peer",
+            "--idle-exempt-seconds", "1", session="peer", expect=1,
+        )
+        self.assertIn("belongs to conversation", refused.stderr)
+        time.sleep(1.2)
+        shown = json.loads(
+            self.agentctl("run", "show", run_id, "--json", env=owner_env).stdout
+        )["runs"][0]
+        self.assertEqual(shown["status"], "running")
+        self.assertEqual(shown["progress"]["phase"], "compile")
+        self.assertNotEqual(shown["watchdog"]["state"], "reclaiming")
+        self.agentctl(
+            "run", "stop", run_id, "--reason", "phase exemption verified", env=owner_env,
+        )
+        self.agentctl(
+            "run", "wait", run_id, "--timeout", "5", env=owner_env, expect=1,
+        )
+        terminal_progress = self.agentctl(
+            "run", "progress", run_id, "--phase", "late", env=owner_env, expect=1,
+        )
+        self.assertIn("cannot accept progress while cancelled", terminal_progress.stderr)
+
+    def test_gpu_watchdog_fails_safe_for_remote_termination_and_probe_errors(self):
+        self.start("one", "T-339", "outputs/T-339/")
+        remote = self.agentctl(
+            "run", "start", "--output", "outputs/T-339/remote.txt",
+            "--resource", "ssh://example.invalid/gpu:0", "--gpu-watchdog",
+            "--gpu-idle-action", "terminate", "--",
+            sys.executable, "-c", "print('never launched')", expect=1,
+        )
+        self.assertIn("automatic GPU termination is host-local", remote.stderr)
+
+        unsafe_host = self.agentctl(
+            "run", "start", "--output", "outputs/T-339/unsafe-host.txt",
+            "--resource", "ssh://-Fmalicious/gpu:0", "--gpu-watchdog",
+            "--gpu-idle-action", "report", "--",
+            sys.executable, "-c", "print('never launched')", expect=1,
+        )
+        self.assertIn("requires a canonical", unsafe_host.stderr)
+
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        nvidia_smi = fake_bin / "nvidia-smi"
+        nvidia_smi.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+        nvidia_smi.chmod(0o755)
+        env = self.env("one", PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+        started = self.agentctl(
+            "run", "start", "--output", "outputs/T-339/probe-error.txt",
+            "--resource", "gpu:0", "--gpu-watchdog",
+            "--gpu-idle-seconds", "0", "--gpu-grace-seconds", "0",
+            "--gpu-sample-seconds", "0.02", "--gpu-idle-action", "terminate", "--",
+            sys.executable, "-c", "import time; time.sleep(0.8)", env=env,
+        )
+        run_id = self.lease_id(started.stdout, "run")
+        self.agentctl("run", "wait", run_id, "--timeout", "5", env=env)
+        shown = json.loads(
+            self.agentctl("run", "show", run_id, "--json", env=env).stdout
+        )["runs"][0]
+        self.assertEqual(shown["status"], "succeeded")
+        self.assertEqual(shown["watchdog"]["state"], "probe_error")
+
+    def test_gpu_watchdog_keeps_heartbeats_between_samples_and_rejects_bad_policy(self):
+        self.start("one", "T-340", "outputs/T-340/")
+        fake_bin = self.root / "fake-bin"
+        fake_bin.mkdir()
+        nvidia_smi = fake_bin / "nvidia-smi"
+        nvidia_smi.write_text("#!/bin/sh\nprintf '50, 2048\\n'\n", encoding="utf-8")
+        nvidia_smi.chmod(0o755)
+        env = self.env("one", PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+
+        started = self.agentctl(
+            "run", "start", "--output", "outputs/T-340/heartbeat.txt",
+            "--resource", "gpu:0", "--gpu-watchdog",
+            "--gpu-sample-seconds", "30", "--gpu-idle-action", "report", "--",
+            sys.executable, "-c", "import time; time.sleep(10)", env=env,
+        )
+        run_id = self.lease_id(started.stdout, "run")
+        deadline = time.monotonic() + 5
+        while True:
+            initial = json.loads(
+                self.agentctl("run", "show", run_id, "--json", env=env).stdout
+            )["runs"][0]
+            if initial["status"] == "running" and initial["watchdog"].get(
+                "next_sample_at_ns"
+            ):
+                break
+            if time.monotonic() >= deadline:
+                self.fail(f"watchdog did not publish its first sample: {initial}")
+            time.sleep(0.05)
+        time.sleep(2.3)
+        refreshed = json.loads(
+            self.agentctl("run", "show", run_id, "--json", env=env).stdout
+        )["runs"][0]
+        self.assertNotEqual(initial["heartbeat_at"], refreshed["heartbeat_at"])
+        self.assertIn("watchdog=active", self.agentctl("run", "list", env=env).stdout)
+        self.agentctl(
+            "run", "stop", run_id, "--reason", "heartbeat verified", env=env,
+        )
+        self.agentctl(
+            "run", "wait", run_id, "--timeout", "5", env=env, expect=1,
+        )
+
+        policy_path = self.root / ".agent" / "runtime-policy.json"
+        policy = json.loads(policy_path.read_text(encoding="utf-8"))
+        policy["gpu_watchdog"] = {"enabled": True, "idle_seconds": "not-a-number"}
+        policy_path.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
+        invalid = self.agentctl(
+            "run", "start", "--output", "outputs/T-340/invalid.txt",
+            "--resource", "gpu:0", "--",
+            sys.executable, "-c", "print('never launched')", env=env, expect=1,
+        )
+        self.assertIn("numeric policy values", invalid.stderr)
+        self.assertNotIn("Traceback", invalid.stderr)
+
+        cpu = self.agentctl(
+            "run", "start", "--output", "outputs/T-340/cpu.txt", "--",
+            sys.executable, "-c", "import time; time.sleep(0.2); print('cpu-only')", env=env,
+        )
+        cpu_id = self.lease_id(cpu.stdout, "run")
+        self.agentctl("run", "wait", cpu_id, "--timeout", "5", env=env)
+
     def test_only_the_owner_conversation_can_stop_a_run(self):
         self.start("owner", "T-341", "outputs/T-341/")
         self.start("peer", "T-342", "outputs/T-342/")

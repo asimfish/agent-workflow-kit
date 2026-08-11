@@ -36,6 +36,14 @@ persisted absolute checkout path no longer exists, it is reported as
 because the old writer no longer has a project path. Permission or transient
 filesystem probe failures remain `stale` and fail closed.
 
+Migration compatibility and work admission are separate decisions. An
+identifiable stale peer is an advisory warning from `agentctl migrate`; this
+prevents one expired conversation from denying every new task in the checkout.
+The stale claim is not released. `work/start` remains the enforcement point and
+still rejects same-task, overlapping-scope, and exclusive-maintenance conflicts.
+Pre-identity peer records remain a blocking migration inspection because their
+owner and compatibility cannot be established safely.
+
 ## Isolation Policy
 
 Task type selects the default:
@@ -79,6 +87,57 @@ matching conversation holder, while run cleanup presents the matching
 
 An experiment cannot finish until one of its successful run leases has at least
 one existing declared output.
+
+### GPU supervision
+
+Supervised runs can opt into GPU telemetry with canonical resource identifiers:
+
+- `gpu:<index>` observes a GPU on the host running `agentctl`;
+- `ssh://<host>/gpu:<index>` observes a remote GPU through structured SSH
+  arguments and is report-only from the local host.
+
+Example:
+
+```bash
+python3 tools/agentctl.py run start \
+  --output .agent-artifacts/T-123/checkpoints/ \
+  --resource gpu:0 \
+  --gpu-watchdog \
+  --gpu-idle-seconds 600 \
+  --gpu-grace-seconds 300 \
+  --gpu-idle-action terminate \
+  -- python3 train.py
+```
+
+The private supervisor persists after the conversation exits. A fixed heartbeat
+keeps ownership observable while an independent timer samples at the configured
+interval. It combines utilization, allocated memory, log/output
+metadata, and explicit progress. The state machine is `active ->
+suspected_idle -> grace -> reclaimable -> reclaiming`. Two or more consecutive
+low samples are mandatory. Progress, an explicit phase exemption, or a probe
+error resets or suspends reclamation; one 0% sample can never terminate a run.
+
+A child process inherits `AGENT_WORKFLOW_RUN_ID` and may report a legitimate
+low-utilization phase without copying a supervisor token:
+
+```bash
+python3 tools/agentctl.py run progress \
+  --phase compile --token kernel-cache-v2 --idle-exempt-seconds 900
+```
+
+The same conversation identity and task ownership are still required. The child
+command runs in its own process group, so explicit automatic termination covers
+its descendants instead of releasing the GPU when only the parent exits. Policy
+may be supplied by CLI flags or the optional `gpu_watchdog` object in
+`.agent/runtime-policy.json`; CLI values take precedence. The default action is
+`report`. A globally enabled policy applies only to runs that declare canonical
+GPU resources, so CPU-only runs remain compatible. `terminate` is rejected for SSH-observed resources because killing a
+local SSH client does not prove the remote GPU process stopped. To reclaim a
+remote GPU automatically, run agentctl on that host so it owns and supervises
+the actual process. Raw SSH/systemd jobs that bypass `run start` remain outside
+the automatic-watchdog boundary. `run adopt` records an existing PID and its
+resources, but cannot retroactively create a safe private supervisor or process
+group, so it does not enable automatic GPU termination.
 
 ## Upgrade Barrier
 

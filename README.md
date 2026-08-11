@@ -253,7 +253,9 @@ The coordination policy is deliberately small:
   task; task docs and working files are preserved. A stale record whose
   persisted absolute checkout path no longer exists is shown as `orphaned` and
   retained for audit, but no longer blocks work. Filesystem probe errors remain
-  fail-closed as `stale`.
+  fail-closed as `stale`. `agentctl migrate` reports identifiable stale peers as
+  warnings instead of globally blocking unrelated work selection; `work/start`
+  still rejects same-task, overlapping-scope, and exclusive conflicts.
 - Task/plan/log transitions are serialized with an OS advisory lock, and each
   session writes only its own atomically replaced JSON record.
 - `agentctl run` owns detached commands and declared outputs. `agentctl
@@ -262,7 +264,14 @@ The coordination policy is deliberately small:
   single-use supervisor claim prevents replay. A supervised run releases its
   resources only after confirmed completion. Resource release has no public
   force-takeover option; direct and run-owned leases must present their exact
-  holder type and ID. Experiment tasks require a
+  holder type and ID. An opt-in GPU watchdog can sample canonical `gpu:<index>`
+  resources after the launching conversation exits. It requires consecutive
+  low-utilization samples, allocated memory, absent log/output or explicit
+  progress, an idle timeout, and a grace timeout before reporting or reclaiming.
+  Automatic termination is explicit, host-local, and covers the owned child
+  process group; probe failures fail safe. CPU-only runs are unaffected by a
+  globally enabled GPU policy.
+  Experiment tasks require a
   successful run with an existing declared output before finish.
 
 These hooks are coordination guardrails, not an OS sandbox. Commands with hidden
@@ -765,7 +774,7 @@ agentctl loop auto --checkpoint <name> --once       run checkpoint policy
 agentctl loop cycle --checkpoint <name> --cycles N  run a durable bounded cycle
 agentctl loop status|resume|stop                    inspect or control the latest cycle
 agentctl lease list [--json]                        inspect unified execution ownership
-agentctl run start|adopt|list|show|wait|finish|stop supervise background work
+agentctl run start|adopt|list|show|wait|progress|finish|stop supervise background work
 agentctl resource acquire|status|release             lease a local or remote resource
 agentctl upgrade begin|status|validate|complete      manage a protocol drain barrier
 agentctl upgrade rebind                              bind an old session to the installed epoch
