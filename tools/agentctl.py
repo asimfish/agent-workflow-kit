@@ -6247,6 +6247,55 @@ def _run_release_resources(root: Path, lease: dict, reason: str) -> None:
         )
 
 
+def _await_supervisor_claim(root: Path, lease_id: str, *,
+                            timeout_seconds: float = 30.0,
+                            poll_seconds: float = 0.05) -> str:
+    """Watch a freshly spawned supervisor until it claims its lease.
+
+    Returns "claimed" once the claim landed (or the lease already moved
+    past starting), "pending" when the supervisor is still alive but has
+    not claimed within the timeout, and "died" when the recorded
+    supervisor process exited before claiming. A pre-claim death would
+    otherwise leave the lease unresolved forever, observed only as
+    exited_unknown.
+    """
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while True:
+        lease = _runtime_lease(root, lease_id) or {}
+        if lease.get("supervisor_claimed_at") or (
+            str(lease.get("status") or "starting") != "starting"
+        ):
+            return "claimed"
+        supervisor = lease.get("supervisor_process")
+        if supervisor and not _runtime_process_alive(supervisor):
+            return "died"
+        if time.monotonic() >= deadline:
+            return "pending"
+        time.sleep(poll_seconds)
+
+
+def _run_update_with_retry(root: Path, lease_id: str, updater, *,
+                           attempts: int = 6,
+                           first_delay_seconds: float = 1.0) -> dict | None:
+    """Persist a run lease update through transient registry lock stalls.
+
+    A supervisor that crashes on a single lock timeout leaves its lease
+    permanently unresolved (observed as exited_unknown) even though the
+    command finished, so state that decides the run outcome must outlast
+    short contention windows.
+    """
+    delay = first_delay_seconds
+    for attempt in range(attempts):
+        try:
+            return _run_update(root, lease_id, updater)
+        except TimeoutError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2.0, 16.0)
+    return None
+
+
 def _run_owner_error(root: Path, lease: dict) -> str | None:
     session = _load_session(root)
     current = _workflow_session_key()
@@ -6294,7 +6343,18 @@ def _run_supervisor_claim(root: Path, lease_id: str, token: str) -> tuple[dict |
 
 
 def _run_supervise(root: Path, lease_id: str, token: str) -> int:
-    claimed, claim_error = _run_supervisor_claim(root, lease_id, token)
+    claimed = None
+    claim_error: str | None = None
+    claim_delay = 1.0
+    for claim_attempt in range(4):
+        try:
+            claimed, claim_error = _run_supervisor_claim(root, lease_id, token)
+            break
+        except TimeoutError as exc:
+            claim_error = str(exc)
+            if claim_attempt < 3:
+                time.sleep(claim_delay)
+                claim_delay = min(claim_delay * 2.0, 8.0)
     if not claimed:
         print(
             f"agentctl: supervisor claim rejected for {lease_id}: {claim_error}",
@@ -6310,11 +6370,19 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
     except FileNotFoundError:
         pass
     if not isinstance(command, list) or not command:
-        failed = _run_update(root, lease_id, lambda lease: lease.update({
-            "status": "failed",
-            "finished_at": _now(),
-            "error": "private command payload is missing or invalid",
-        }))
+        try:
+            failed = _run_update_with_retry(root, lease_id, lambda lease: lease.update({
+                "status": "failed",
+                "finished_at": _now(),
+                "error": "private command payload is missing or invalid",
+            }))
+        except TimeoutError:
+            print(
+                f"agentctl: unable to persist failure for {lease_id}: "
+                "lease registry lock timed out",
+                file=sys.stderr,
+            )
+            return 2
         if failed:
             _run_release_resources(root, failed, "run payload invalid")
         return 2
@@ -6342,11 +6410,22 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
                 "birth_marker": _process_birth_marker(child.pid),
                 "process_group": child.pid if os.name == "posix" else None,
             }
-            _run_update(root, lease_id, lambda lease: lease.update({
+            _run_update_with_retry(root, lease_id, lambda lease: lease.update({
                 "status": "running",
                 "processes": [child_record],
                 "heartbeat_at": _now(),
             }))
+
+            def tolerate_lock_timeout(operation) -> bool:
+                # Heartbeats and telemetry snapshots are periodic; skipping
+                # one beat under registry contention beats marking a healthy
+                # run failed or crashing the supervisor.
+                try:
+                    operation()
+                    return True
+                except TimeoutError:
+                    return False
+
             while child.poll() is None:
                 current = _runtime_lease(root, lease_id) or {}
                 watchdog = dict(current.get("watchdog") or {})
@@ -6367,13 +6446,17 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
                             RUN_HEARTBEAT_SECONDS * 1_000_000_000
                         )
                         watchdog["updated_at_ns"] = now_ns
-                        _persist_run_watchdog(root, lease_id, watchdog)
+                        tolerate_lock_timeout(
+                            lambda: _persist_run_watchdog(root, lease_id, watchdog)
+                        )
                     elif current.get("status") == "stopping" and watchdog.get(
                         "auto_termination_at_ns"
                     ):
                         watchdog["state"] = "reclaiming"
                         watchdog["updated_at_ns"] = now_ns
-                        _persist_run_watchdog(root, lease_id, watchdog)
+                        tolerate_lock_timeout(
+                            lambda: _persist_run_watchdog(root, lease_id, watchdog)
+                        )
                     else:
                         next_sample_at_ns = int(watchdog.get("next_sample_at_ns") or 0)
                         if now_ns >= next_sample_at_ns:
@@ -6406,16 +6489,27 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
                                     ),
                                     "updated_at_ns": now_ns,
                                 })
-                                _persist_run_watchdog(
-                                    root, lease_id, watchdog,
-                                    status="stopping", stop_reason=reason,
+                                tolerate_lock_timeout(
+                                    lambda: _persist_run_watchdog(
+                                        root, lease_id, watchdog,
+                                        status="stopping", stop_reason=reason,
+                                    )
                                 )
                             else:
-                                _persist_run_watchdog(root, lease_id, watchdog)
+                                tolerate_lock_timeout(
+                                    lambda: _persist_run_watchdog(
+                                        root, lease_id, watchdog,
+                                    )
+                                )
                         else:
-                            _run_update(root, lease_id, lambda lease: lease.update({
-                                "heartbeat_at": _now(),
-                            }))
+                            tolerate_lock_timeout(
+                                lambda: _run_update(
+                                    root, lease_id,
+                                    lambda lease: lease.update({
+                                        "heartbeat_at": _now(),
+                                    }),
+                                )
+                            )
                     kill_deadline_ns = int(watchdog.get("kill_deadline_ns") or 0)
                     next_event_ns = int(watchdog.get("next_sample_at_ns") or 0)
                     if kill_deadline_ns:
@@ -6423,35 +6517,67 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
                     until_event = max(0.01, (next_event_ns - now_ns) / 1_000_000_000)
                     sleep_seconds = min(RUN_HEARTBEAT_SECONDS, until_event)
                 else:
-                    _run_update(root, lease_id, lambda lease: lease.update({
-                        "heartbeat_at": _now(),
-                    }))
+                    tolerate_lock_timeout(
+                        lambda: _run_update(
+                            root, lease_id,
+                            lambda lease: lease.update({
+                                "heartbeat_at": _now(),
+                            }),
+                        )
+                    )
                     sleep_seconds = RUN_HEARTBEAT_SECONDS
                 time.sleep(sleep_seconds)
             returncode = int(child.returncode or 0)
             if not _settle_stopped_run_tree(root, lease_id, child_record):
                 return 2
     except Exception as exc:
-        current = _run_update(root, lease_id, lambda lease: lease.update({
-            "status": "failed",
-            "finished_at": _now(),
-            "error": str(exc),
-            "heartbeat_at": _now(),
-        }))
+        try:
+            current = _run_update_with_retry(root, lease_id, lambda lease: lease.update({
+                "status": "failed",
+                "finished_at": _now(),
+                "error": str(exc),
+                "heartbeat_at": _now(),
+            }))
+        except TimeoutError:
+            print(
+                f"agentctl: unable to persist failure for {lease_id}: "
+                "lease registry lock timed out",
+                file=sys.stderr,
+            )
+            return 2
         if current:
-            _run_release_resources(root, current, "run launch failed")
+            try:
+                _run_release_resources(root, current, "run launch failed")
+            except TimeoutError:
+                pass
         return 2
     current = _runtime_lease(root, lease_id) or {}
     requested_stop = current.get("status") == "stopping"
     final_status = "cancelled" if requested_stop else ("succeeded" if returncode == 0 else "failed")
-    completed = _run_update(root, lease_id, lambda lease: lease.update({
-        "status": final_status,
-        "returncode": returncode,
-        "finished_at": _now(),
-        "heartbeat_at": _now(),
-    }))
+    try:
+        completed = _run_update_with_retry(root, lease_id, lambda lease: lease.update({
+            "status": final_status,
+            "returncode": returncode,
+            "finished_at": _now(),
+            "heartbeat_at": _now(),
+        }))
+    except TimeoutError:
+        print(
+            f"agentctl: unable to persist terminal state for {lease_id}: "
+            "lease registry lock timed out",
+            file=sys.stderr,
+        )
+        return 2
     if completed:
-        _run_release_resources(root, completed, f"run {final_status}")
+        try:
+            _run_release_resources(root, completed, f"run {final_status}")
+        except TimeoutError:
+            print(
+                f"agentctl: run {lease_id} recorded {final_status} but resource "
+                "release hit lease registry lock contention; release or "
+                "reconcile the resources manually",
+                file=sys.stderr,
+            )
     return 0 if final_status == "succeeded" else 1
 
 
@@ -6550,39 +6676,98 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
             "created_at_ns": time.time_ns(),
         }
     _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(lease))
-    try:
-        supervisor = subprocess.Popen(
-            [sys.executable, str(Path(__file__).resolve()), "_run-supervise",
-             "--root", str(root), "--lease", lease_id, "--token", supervisor_token],
-            cwd=str(root),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except Exception as exc:
-        failed = _run_update(root, lease_id, lambda item: item.update({
-            "status": "failed",
-            "finished_at": _now(),
-            "error": f"unable to launch supervisor: {exc}",
+    supervisor_log_path = _runtime_runs_dir(root) / f"{lease_id}.supervisor.log"
+    outcome = "pending"
+    for spawn_attempt in (1, 2):
+        try:
+            # Keep the supervisor's own stderr on disk: a supervisor that
+            # dies before persisting state is otherwise undiagnosable,
+            # because the lease just reports exited_unknown.
+            with supervisor_log_path.open("ab") as supervisor_log:
+                supervisor = subprocess.Popen(
+                    [sys.executable, str(Path(__file__).resolve()), "_run-supervise",
+                     "--root", str(root), "--lease", lease_id, "--token", supervisor_token],
+                    cwd=str(root),
+                    stdout=subprocess.DEVNULL,
+                    stderr=supervisor_log,
+                    start_new_session=True,
+                )
+        except Exception as exc:
+            failed = _run_update(root, lease_id, lambda item: item.update({
+                "status": "failed",
+                "finished_at": _now(),
+                "error": f"unable to launch supervisor: {exc}",
+                "heartbeat_at": _now(),
+            }))
+            if failed:
+                _run_release_resources(root, failed, "supervisor launch failed")
+            try:
+                payload_path.unlink()
+            except FileNotFoundError:
+                pass
+            print(f"agentctl: unable to launch run supervisor: {exc}", file=sys.stderr)
+            return 1
+        supervisor_record = {
+            "role": "supervisor",
+            "pid": supervisor.pid,
+            "birth_marker": _process_birth_marker(supervisor.pid),
+        }
+        _run_update(root, lease_id, lambda item: item.update({
+            "supervisor_process": supervisor_record,
             "heartbeat_at": _now(),
         }))
+        outcome = _await_supervisor_claim(root, lease_id)
+        if outcome != "died":
+            break
+        if spawn_attempt == 1:
+            print(
+                f"agentctl: run supervisor pid={supervisor.pid} exited before "
+                f"claiming {lease_id}; spawning a replacement",
+                file=sys.stderr,
+            )
+            continue
+        detail = ""
+        try:
+            tail = supervisor_log_path.read_text(
+                encoding="utf-8", errors="replace",
+            ).strip()
+            if tail:
+                detail = " Last supervisor output: " + tail[-400:]
+        except OSError:
+            pass
+        try:
+            failed = _run_update_with_retry(root, lease_id, lambda item: item.update({
+                "status": "failed",
+                "finished_at": _now(),
+                "error": (
+                    "supervisor exited before claiming the run twice; "
+                    f"see {supervisor_log_path}.{detail}"
+                ),
+                "heartbeat_at": _now(),
+            }))
+        except TimeoutError:
+            failed = None
         if failed:
-            _run_release_resources(root, failed, "supervisor launch failed")
+            try:
+                _run_release_resources(root, failed, "supervisor died before claim")
+            except TimeoutError:
+                pass
         try:
             payload_path.unlink()
         except FileNotFoundError:
             pass
-        print(f"agentctl: unable to launch run supervisor: {exc}", file=sys.stderr)
+        print(
+            f"agentctl: run supervisor for {lease_id} exited before claiming "
+            f"twice; the run is failed. Inspect {supervisor_log_path}",
+            file=sys.stderr,
+        )
         return 1
-    supervisor_record = {
-        "role": "supervisor",
-        "pid": supervisor.pid,
-        "birth_marker": _process_birth_marker(supervisor.pid),
-    }
-    _run_update(root, lease_id, lambda item: item.update({
-        "supervisor_process": supervisor_record,
-        "heartbeat_at": _now(),
-    }))
+    if outcome == "pending":
+        print(
+            f"agentctl: run supervisor for {lease_id} is alive but has not "
+            "claimed within its startup window; track it with 'agentctl run show'",
+            file=sys.stderr,
+        )
     print(f"agentctl: run lease {lease_id} started")
     print(f"  task={task} pid={supervisor.pid}")
     print(f"  outputs={', '.join(outputs)}")
