@@ -14,6 +14,16 @@
 8. Worker completes with `agentctl finish`.
 9. Git hooks verify active task context, doc updates, and commit format.
 
+Worker tasks stay in `review` until an independent reviewer runs `agentctl
+gate approve|reject`. A `review`-type task whose session already issued a
+recorded gate decision closes as `done` on its own `finish`: its deliverable
+is the decision in `.agent/gates/`, and demanding another gate on the review
+task itself only recurses. The closure stays fail-closed — the task must be
+declared `--type review`, restricted to `.agent/` writes, and named as the
+reviewer task by at least one recorded decision. `agentctl reconcile
+close-decided-reviews` applies the same evidence rule to review tasks parked
+in `review` from before this behavior existed.
+
 Harness and workflow changes add one supervisor-owned evaluation step before the
 ordinary review gate. The same suite runs against clean baseline and candidate
 worktrees, and both held-in and held-out scores must avoid regression. See

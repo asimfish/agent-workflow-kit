@@ -2795,6 +2795,49 @@ def _task_output_requirement_error(root: Path, task: str) -> str | None:
     )
 
 
+def _decided_review_evidence(root: Path, task: str) -> list[str]:
+    """Gate documents that record a decision issued from this review task."""
+    gates_dir = root / WORKFLOW_DIR / GATES_DIR
+    if not gates_dir.is_dir():
+        return []
+    marker = f"- Reviewer task: {task}"
+    evidence = []
+    for path in sorted(gates_dir.glob("*.md")):
+        try:
+            body = _read(path)
+        except OSError:
+            continue
+        if re.search(rf"^{re.escape(marker)}$", body, flags=re.M):
+            evidence.append(path.name)
+    return evidence
+
+
+def _review_scope_only(entry: dict) -> bool:
+    """True when the task could only write workflow records under .agent/."""
+    scope = [str(item).strip() for item in entry.get("scope") or [] if str(item).strip()]
+    if not scope:
+        return False
+    return all(item == WORKFLOW_DIR or item.startswith(f"{WORKFLOW_DIR}/") for item in scope)
+
+
+def _decided_review_closure(root: Path, task: str, entry: dict, *,
+                            require_review_type: bool) -> list[str]:
+    """Evidence that lets a finished review task close without its own gate.
+
+    A review task's deliverable is the gate decision it issued on another
+    task, recorded with independence proof in `.agent/gates/`. Requiring a
+    second gate on the review task itself only recurses. Closure stays
+    fail-closed: the task must be restricted to workflow records under
+    `.agent/`, and at least one recorded decision must name it as the
+    reviewer task.
+    """
+    if require_review_type and str(entry.get("type") or "") != "review":
+        return []
+    if not _review_scope_only(entry):
+        return []
+    return _decided_review_evidence(root, task)
+
+
 def cmd_complete(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
@@ -2883,6 +2926,12 @@ def cmd_complete(args: argparse.Namespace) -> int:
         st = current
         _record_runtime_identity(st)
         ts = _now()
+        board = _load_board(root)
+        t = board.get("tasks", {}).get(task)
+        decisions = _decided_review_closure(
+            root, task, t or {}, require_review_type=True,
+        )
+        final_status = "done" if decisions else "review"
         task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
         if task_doc.is_file():
             body = _read(task_doc)
@@ -2899,31 +2948,37 @@ def cmd_complete(args: argparse.Namespace) -> int:
                 body = body[:i] + "## Completion Record\n" + record
             else:
                 body += "\n## Completion Record\n" + record
-            body = re.sub(r"^Status: .*$", "Status: review", body, count=1, flags=re.M)
+            body = re.sub(r"^Status: .*$", f"Status: {final_status}", body, count=1, flags=re.M)
             _write(task_doc, body)
-        board = _load_board(root)
-        t = board.get("tasks", {}).get(task)
         if t:
-            t["status"] = "review"
+            t["status"] = final_status
             t["updated_at"] = ts
             _save_board(root, board)
             _update_tasks_index(
-                root, task, status="review", owner=t.get("owner"),
+                root, task, status=final_status, owner=t.get("owner"),
                 scope=t.get("scope"), title=t.get("title"),
             )
+        if final_status == "done":
+            _check_plan_box(root, task)
         lp = _lock_path(root, task)
         if lp.is_file():
             lp.unlink()
-        st["status"] = "review"
+        st["status"] = final_status
         st["completed_at"] = ts
         st["doc_hashes"] = _hash_docs(root, task)
         _save_session(root, st)
     finally:
         _release_lock_file(lock, fd)
-    print(
-        f"agentctl: {task} -> review. independent reviewer gate: start a separate review task, "
-        f"then run agentctl gate approve --task {task} --by <reviewer>"
-    )
+    if final_status == "done":
+        print(
+            f"agentctl: {task} -> done. review task closed on its recorded "
+            f"gate decisions: {', '.join(decisions)}"
+        )
+    else:
+        print(
+            f"agentctl: {task} -> review. independent reviewer gate: start a separate review task, "
+            f"then run agentctl gate approve --task {task} --by <reviewer>"
+        )
     _run_loop_checkpoint(root, "post-finish", once=True, trigger="post-finish", strict=False)
     return 0
 
@@ -8050,6 +8105,51 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
             + (": " + ", ".join(extras) if extras else " (nothing to migrate)")
         )
         return 0
+    if args.reconcile_action == "close-decided-reviews":
+        st = _load_session(root)
+        recorder = str(st.get("agent") or "")
+        role = str(_agent_profile(root, recorder).get("role") or "").lower()
+        if not recorder or not any(
+            label in role for label in ("supervisor", "planning", "review")
+        ):
+            print(
+                "agentctl: closing decided reviews requires an active "
+                "supervisor/planning/review session",
+                file=sys.stderr,
+            )
+            return 1
+        lock = _session_coordination_lock_path(root)
+        fd = _acquire_lock_file(lock)
+        try:
+            board = _load_board(root)
+            closed = []
+            for tid, entry in sorted((board.get("tasks") or {}).items()):
+                if not isinstance(entry, dict) or entry.get("status") != "review":
+                    continue
+                # Legacy review tasks predate task types, so the backlog pass
+                # keys on the recorded decisions plus the .agent-only scope.
+                decisions = _decided_review_closure(
+                    root, tid, entry, require_review_type=False,
+                )
+                if not decisions:
+                    continue
+                entry["status"] = "done"
+                entry["updated_at"] = _now()
+                _check_plan_box(root, tid)
+                _set_task_doc_status(root, tid, "done")
+                _update_tasks_index(
+                    root, tid, status="done", owner=entry.get("owner"),
+                    scope=entry.get("scope"), title=entry.get("title"),
+                )
+                closed.append((tid, decisions))
+            if closed:
+                _save_board(root, board)
+        finally:
+            _release_lock_file(lock, fd)
+        for tid, decisions in closed:
+            print(f"agentctl: {tid} -> done (decisions: {', '.join(decisions)})")
+        print(f"agentctl: closed {len(closed)} decided review task(s)")
+        return 0
     print("agentctl: unknown reconcile action", file=sys.stderr)
     return 2
 
@@ -11315,6 +11415,7 @@ def build_parser() -> argparse.ArgumentParser:
     rsub.add_parser("check")
     rsub.add_parser("render")
     rsub.add_parser("migrate")
+    rsub.add_parser("close-decided-reviews")
     sp.set_defaults(func=cmd_reconcile)
 
     sp = sub.add_parser("agents")

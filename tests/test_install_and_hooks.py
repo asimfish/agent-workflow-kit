@@ -370,6 +370,79 @@ class IndependentGateRegressionTest(unittest.TestCase):
             workflow_session="reviewer-session",
         )
 
+    def test_decided_review_task_closes_on_finish_and_backlog_reconciles(self):
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-201",
+            "--title", "worker change", "--scope", "src/",
+        )
+        self.agentctl("finish", "--summary", "worker evidence", "--tests", "unit")
+
+        self.agentctl(
+            "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-202",
+            "--title", "review that never decided", "--scope", ".agent/",
+            "--type", "review",
+            runtime="idle-reviewer-runtime", workflow_session="idle-reviewer-session",
+        )
+        parked = self.agentctl(
+            "finish", "--summary", "no decision issued", "--tests", "none",
+            runtime="idle-reviewer-runtime", workflow_session="idle-reviewer-session",
+        )
+        self.assertIn("-> review", parked.stdout)
+
+        self.agentctl(
+            "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-203",
+            "--title", "review worker change", "--scope", ".agent/",
+            "--type", "review",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+        self.agentctl(
+            "gate", "approve", "--task", "T-201", "--by", "supervisor",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+        closed = self.agentctl(
+            "finish", "--summary", "approved worker change", "--tests", "gate evidence",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+        self.assertIn("-> done", closed.stdout)
+        self.assertIn("recorded gate decisions: T-201.md", closed.stdout)
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertEqual(board["tasks"]["T-203"]["status"], "done")
+        self.assertEqual(board["tasks"]["T-202"]["status"], "review")
+        plan = (self.root / ".agent" / "PROJECT_PLAN.md").read_text(encoding="utf-8")
+        self.assertRegex(plan, r"- \[x\] T-203")
+
+        # Simulate the pre-existing backlog: a decided review task parked in
+        # review, plus forged reviewer evidence pointing at a worker-scoped
+        # task that must never close through this path.
+        board_path = self.root / ".agent" / "board.json"
+        payload = json.loads(board_path.read_text(encoding="utf-8"))
+        payload["tasks"]["T-203"]["status"] = "review"
+        payload["tasks"]["T-201"]["status"] = "review"
+        board_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
+        )
+        forged = self.root / ".agent" / "gates" / "legacy-forged.md"
+        forged.write_text(
+            "# Gate legacy-forged\n\n- Decision: approved\n- Reviewer task: T-201\n",
+            encoding="utf-8",
+        )
+
+        refused = self.agentctl(
+            "reconcile", "close-decided-reviews", expect=1,
+        )
+        self.assertIn("supervisor/planning/review session", refused.stderr)
+
+        swept = self.agentctl(
+            "reconcile", "close-decided-reviews",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+        self.assertIn("T-203 -> done (decisions: T-201.md)", swept.stdout)
+        self.assertIn("closed 1 decided review task(s)", swept.stdout)
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertEqual(board["tasks"]["T-203"]["status"], "done")
+        self.assertEqual(board["tasks"]["T-202"]["status"], "review")
+        self.assertEqual(board["tasks"]["T-201"]["status"], "review")
+
 
 class GithubMergeGateRegressionTest(unittest.TestCase):
     def setUp(self):

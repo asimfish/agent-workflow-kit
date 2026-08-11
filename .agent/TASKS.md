@@ -136,3 +136,4 @@
 | T8BA964DFB191095A-001 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T8BA964DFB191095A-001.md](tasks/T8BA964DFB191095A-001.md) | independent review of upgrade fixture deflake |
 | TA08B0CC413F151F5-002 | done | cursor | `tests/` | [.agent/tasks/TA08B0CC413F151F5-002.md](tasks/TA08B0CC413F151F5-002.md) | widen gpu watchdog phase-exempt test timing margins |
 | T62E2091C45F77EE5-001 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T62E2091C45F77EE5-001.md](tasks/T62E2091C45F77EE5-001.md) | independent review of gpu watchdog test deflake |
+| TA08B0CC413F151F5-003 | review | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-003.md](tasks/TA08B0CC413F151F5-003.md) | close decided review tasks on finish and reconcile backlog |
