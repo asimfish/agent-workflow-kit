@@ -4,7 +4,7 @@ Detailed history lives in the task documents under `.agent/tasks/` and the
 review records under `.agent/gates/`. Entries here map to merged, reviewed
 pull requests.
 
-## 0.5.x — 2026-08
+## 0.5.x â€” 2026-08
 
 The multi-session release (#30). One controller now tracks conversations,
 runs, resources, worktrees, and loops as leases with recorded owners.
@@ -21,7 +21,7 @@ report-only. Validated live on shared RTX 5090s.
 
 Reliability work found by dogfooding: supervisors now survive registry
 lock stalls and pre-claim deaths (#34), `run stop` was completely broken
-on Windows because `signal.SIGKILL` does not exist there — caught the
+on Windows because `signal.SIGKILL` does not exist there â€” caught the
 first time CI actually ran the path on windows-latest (#35), review-type
 tasks no longer demand reviews of their own reviews (#33, which also
 closed 33 stuck historical tasks), old run leases and logs age out (#36),

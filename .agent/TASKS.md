@@ -158,3 +158,4 @@
 | TE228821572B5963B-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TE228821572B5963B-001.md](tasks/TE228821572B5963B-001.md) | independent review of oss packaging |
 | TA08B0CC413F151F5-012 | done | cursor | `README.md, README_CN.md, CHANGELOG.md, CONTRIBUTING.md` | [.agent/tasks/TA08B0CC413F151F5-012.md](tasks/TA08B0CC413F151F5-012.md) | rewrite readmes in plain human prose |
 | TB764E661F72A7FD7-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TB764E661F72A7FD7-001.md](tasks/TB764E661F72A7FD7-001.md) | independent review of plain prose rewrite |
+| TA08B0CC413F151F5-013 | review | cursor | `CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-013.md](tasks/TA08B0CC413F151F5-013.md) | repair invalid utf-8 bytes in changelog |
