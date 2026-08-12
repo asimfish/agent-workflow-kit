@@ -151,3 +151,6 @@
 | T4C7B83C03F3DE7D5-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T4C7B83C03F3DE7D5-001.md](tasks/T4C7B83C03F3DE7D5-001.md) | independent review of orphaned resource self-heal |
 | TA08B0CC413F151F5-009 | done | cursor | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-009.md](tasks/TA08B0CC413F151F5-009.md) | grace window for missing-holder resource release |
 | T5CCA8C280CC6FDD5-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T5CCA8C280CC6FDD5-001.md](tasks/T5CCA8C280CC6FDD5-001.md) | independent review of missing-holder grace window |
+| TA08B0CC413F151F5-010 | done | cursor | `README.md, docs/` | [.agent/tasks/TA08B0CC413F151F5-010.md](tasks/TA08B0CC413F151F5-010.md) | restructure readme into a concise entry page |
+| T76B9194109FD03F0-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T76B9194109FD03F0-001.md](tasks/T76B9194109FD03F0-001.md) | independent review of readme restructure |
+| TE475DD513ACDF9CA-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TE475DD513ACDF9CA-001.md](tasks/TE475DD513ACDF9CA-001.md) | re-review of readme restructure fixes |

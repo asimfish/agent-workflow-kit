@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 06:57:00",
+  "updated_at": "2026-08-12 22:04:06",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2124,6 +2124,43 @@
       "deps": [],
       "created_at": "2026-08-12 06:56:19",
       "updated_at": "2026-08-12 06:57:00"
+    },
+    "TA08B0CC413F151F5-010": {
+      "title": "restructure readme into a concise entry page",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 21:42:43",
+      "updated_at": "2026-08-12 22:03:48"
+    },
+    "T76B9194109FD03F0-001": {
+      "title": "independent review of readme restructure",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 21:55:55",
+      "updated_at": "2026-08-12 21:57:23"
+    },
+    "TE475DD513ACDF9CA-001": {
+      "title": "re-review of readme restructure fixes",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 22:03:15",
+      "updated_at": "2026-08-12 22:04:06"
     }
   }
 }
