@@ -44,6 +44,71 @@ still rejects same-task, overlapping-scope, and exclusive-maintenance conflicts.
 Pre-identity peer records remain a blocking migration inspection because their
 owner and compatibility cannot be established safely.
 
+## Identity Binding, Forks, And Clones
+
+Some nested CLIs expose their conversation ID only in hook payloads and do not
+export it to later shell subprocesses. `SessionStart` normally exports the
+provider identity; if that export is absent, the first `agentctl work` hook
+atomically binds the hashed payload identity to the hashed host runtime in
+checkout-local Git-common-dir state. Only that provider conversation may reuse
+the runtime-owned task; a second payload on the same pending or active runtime
+and checkout fails closed. Independent worktrees use distinct binding keys, raw
+provider IDs and checkout paths are never written to the binding record, and
+exactly one active session may be pinned by its anonymous workflow key —
+multiple matches fail closed instead of selecting one.
+
+Forked or cloned conversations are isolated as separate runtime instances. A
+persisted workflow ID is bound to the host runtime that created it, so a child
+that inherits the parent's environment cannot use that stale ID to resume the
+parent's task. Native `parent`/`fork`/`branch`/`clone` hook metadata supplies an
+additional instance key when needed; `.agent/state/SESSIONS.md` shows the
+hashed fork lineage without storing the raw parent ID.
+
+A full Git clone has a different Git common directory, so it never reads or
+writes the source clone's live session records. Committed plan/task files are
+only a snapshot across independent clones; live cross-clone coordination is
+intentionally not inferred. Default `work --auto-create` task IDs are clone-
+and conversation-safe (`T<checkout/session shard>-NNN`), so branches created
+from the same board snapshot do not reuse the same automatic ID.
+
+## Opaque Writers And Escaped Writes
+
+Commands whose written paths cannot be enumerated statically — interpreters
+(`python3 -c`, scripts), test/build runners, archive/download/extract tools,
+nested shells, and unknown executables — are exclusive per checkout: refused
+beside another live session and pointed at a task worktree; alone, they require
+an active task session. Only explicit, argument-verified read forms (`ls`,
+`cat`, plain `rg`/`fd`, safe Git/GitHub reads, print-only `sed`) pass without a
+claim; tool names alone are never sufficient — output/exec options such as Git
+`--output`, `find`/`tree` output actions, `xxd` output operands, and GNU
+target-directory forms are path-checked or fail closed. Native
+write/edit/notebook/filesystem-MCP tools are checked by every concrete source
+and destination path; a mutating tool with no bounded path contract is opaque.
+
+Every mutating action reconciles the working tree afterwards: a tracked file
+modified outside every live session's scope is treated as an escaped write and
+blocks further mutations until it is reverted, claimed, or committed separately
+by a human.
+
+## Document Ownership And Read Receipts
+
+Controller-generated files — `board.json`, `TASKS.md`, the agent registry,
+`state/`, the shared progress log, `gates/`, loop runtime/reports, the guidance
+bus and handoffs, eval runs/decisions/keys, and the install manifest — are
+never editable through agent tool calls, even when the task scope covers
+`.agent/`. Each denial names the `agentctl` command that owns the file. Policy
+definitions (`loops/checkpoints.json`, `evals/suites.json`) remain scope-based.
+The active task's own document (`.agent/tasks/<id>.md`) is always inside the
+effective write scope; `PROJECT_PLAN.md`, rules, and other tasks' documents
+follow the declared scope.
+
+Read receipts are scope-aware so shared-index churn does not stall the room:
+another task being created or finished rewrites only its own `TASKS.md` row,
+its own plan checklist row, and the plan Change Log, none of which invalidates
+other conversations' receipts. Plan-body edits, rule changes, this task's own
+row, and this task's own document still require re-reading plus
+`agentctl refresh` before further writes.
+
 ## Isolation Policy
 
 Task type selects the default:

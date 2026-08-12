@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 06:57:00",
+  "updated_at": "2026-08-12 21:46:00",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2124,6 +2124,19 @@
       "deps": [],
       "created_at": "2026-08-12 06:56:19",
       "updated_at": "2026-08-12 06:57:00"
+    },
+    "TA08B0CC413F151F5-010": {
+      "title": "restructure readme into a concise entry page",
+      "type": "docs",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 21:42:43",
+      "updated_at": "2026-08-12 21:46:00"
     }
   }
 }
