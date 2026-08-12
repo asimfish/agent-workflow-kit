@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-13 04:37:11",
+  "updated_at": "2026-08-13 04:45:18",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2196,7 +2196,7 @@
     "TA08B0CC413F151F5-012": {
       "title": "rewrite readmes in plain human prose",
       "type": "docs",
-      "status": "review",
+      "status": "done",
       "owner": "cursor",
       "scope": [
         "README.md",
@@ -2206,7 +2206,19 @@
       ],
       "deps": [],
       "created_at": "2026-08-13 04:34:34",
-      "updated_at": "2026-08-13 04:37:11"
+      "updated_at": "2026-08-13 04:45:02"
+    },
+    "TB764E661F72A7FD7-001": {
+      "title": "independent review of plain prose rewrite",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 04:44:13",
+      "updated_at": "2026-08-13 04:45:18"
     }
   }
 }
