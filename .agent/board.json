@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-12 22:04:06",
+  "updated_at": "2026-08-13 01:56:32",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2161,6 +2161,37 @@
       "deps": [],
       "created_at": "2026-08-12 22:03:15",
       "updated_at": "2026-08-12 22:04:06"
+    },
+    "TA08B0CC413F151F5-011": {
+      "title": "open source packaging: license, contributing, architecture diagram, bilingual readme",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "LICENSE",
+        "CONTRIBUTING.md",
+        "CHANGELOG.md",
+        "CITATION.cff",
+        ".github/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 01:41:12",
+      "updated_at": "2026-08-13 01:56:00"
+    },
+    "TE228821572B5963B-001": {
+      "title": "independent review of oss packaging",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 01:55:09",
+      "updated_at": "2026-08-13 01:56:32"
     }
   }
 }
