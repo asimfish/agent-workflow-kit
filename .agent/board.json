@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-13 01:56:32",
+  "updated_at": "2026-08-13 04:47:49",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2192,6 +2192,45 @@
       "deps": [],
       "created_at": "2026-08-13 01:55:09",
       "updated_at": "2026-08-13 01:56:32"
+    },
+    "TA08B0CC413F151F5-012": {
+      "title": "rewrite readmes in plain human prose",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 04:34:34",
+      "updated_at": "2026-08-13 04:45:02"
+    },
+    "TB764E661F72A7FD7-001": {
+      "title": "independent review of plain prose rewrite",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 04:44:13",
+      "updated_at": "2026-08-13 04:45:18"
+    },
+    "TA08B0CC413F151F5-013": {
+      "title": "repair invalid utf-8 bytes in changelog",
+      "type": "docs",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 04:47:47",
+      "updated_at": "2026-08-13 04:47:49"
     }
   }
 }
