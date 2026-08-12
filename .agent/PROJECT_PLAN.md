@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] T76B9194109FD03F0-001 - independent review of readme restructure (owner: independent-reviewer-2)
 - [ ] TA08B0CC413F151F5-010 - restructure readme into a concise entry page (owner: cursor)
 - [x] T5CCA8C280CC6FDD5-001 - independent review of missing-holder grace window (owner: independent-reviewer-2)
 - [x] TA08B0CC413F151F5-009 - grace window for missing-holder resource release (owner: cursor)
