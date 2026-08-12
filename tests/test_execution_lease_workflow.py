@@ -60,8 +60,30 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             cwd=self.root, env=env or self.env(session), text=True,
             capture_output=True, timeout=timeout,
         )
-        self.assertEqual(proc.returncode, expect, proc.stdout + proc.stderr)
+        if proc.returncode != expect:
+            # CI runners destroy the temp checkout after a failure, so any
+            # supervisor stderr must be surfaced in the assertion itself or
+            # a silent pre-claim supervisor death stays undiagnosable.
+            self.fail(
+                f"agentctl {' '.join(str(a) for a in args)} "
+                f"rc={proc.returncode} expected={expect}\n"
+                f"{proc.stdout}{proc.stderr}\n"
+                f"supervisor logs:\n{self.supervisor_log_dump()}"
+            )
         return proc
+
+    def supervisor_log_dump(self):
+        """Every per-lease supervisor stderr log, for failure diagnostics."""
+        try:
+            runs_dir = self.workflow_common_dir() / "runs"
+            chunks = []
+            for path in sorted(runs_dir.glob("*.supervisor.log")):
+                body = path.read_text(encoding="utf-8", errors="replace").strip()
+                if body:
+                    chunks.append(f"--- {path.name} ---\n{body}")
+            return "\n\n".join(chunks) or "<no supervisor log content>"
+        except OSError as exc:
+            return f"<supervisor logs unreadable: {exc}>"
 
     def start(self, session, task, scope):
         return self.agentctl(
@@ -386,7 +408,10 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             if running["status"] == "running":
                 break
             if time.monotonic() >= deadline:
-                self.fail(f"run did not become observable as running: {running}")
+                self.fail(
+                    f"run did not become observable as running: {running}\n"
+                    f"supervisor logs:\n{self.supervisor_log_dump()}"
+                )
             time.sleep(0.05)
         self.agentctl(
             "run", "progress", run_id, "--phase", "compile", "--token", "kernel-1",
@@ -405,7 +430,10 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             if (shown.get("watchdog") or {}).get("state") == "exempt":
                 break
             if time.monotonic() >= deadline:
-                self.fail(f"watchdog never observed the phase exemption: {shown}")
+                self.fail(
+                    f"watchdog never observed the phase exemption: {shown}\n"
+                    f"supervisor logs:\n{self.supervisor_log_dump()}"
+                )
             time.sleep(0.05)
         self.assertEqual(shown["status"], "running")
         self.assertEqual(shown["progress"]["phase"], "compile")
@@ -875,7 +903,10 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             if shown["status"] == "running":
                 break
             if time.monotonic() >= deadline:
-                self.fail(f"run never became observable as running: {shown}")
+                self.fail(
+                    f"run never became observable as running: {shown}\n"
+                    f"supervisor logs:\n{self.supervisor_log_dump()}"
+                )
             time.sleep(0.05)
             shown = json.loads(
                 self.agentctl("run", "show", run_id, "--json", session="one").stdout
