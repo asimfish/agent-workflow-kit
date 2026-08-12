@@ -156,3 +156,4 @@
 | TE475DD513ACDF9CA-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TE475DD513ACDF9CA-001.md](tasks/TE475DD513ACDF9CA-001.md) | re-review of readme restructure fixes |
 | TA08B0CC413F151F5-011 | done | cursor | `README.md, README_CN.md, LICENSE, CONTRIBUTING.md, CHANGELOG.md, CITATION.cff, .github/, docs/` | [.agent/tasks/TA08B0CC413F151F5-011.md](tasks/TA08B0CC413F151F5-011.md) | open source packaging: license, contributing, architecture diagram, bilingual readme |
 | TE228821572B5963B-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TE228821572B5963B-001.md](tasks/TE228821572B5963B-001.md) | independent review of oss packaging |
+| TA08B0CC413F151F5-012 | review | cursor | `README.md, README_CN.md, CHANGELOG.md, CONTRIBUTING.md` | [.agent/tasks/TA08B0CC413F151F5-012.md](tasks/TA08B0CC413F151F5-012.md) | rewrite readmes in plain human prose |

@@ -1,40 +1,32 @@
 # Changelog
 
-Notable changes to the Agent Workflow Kit. Full per-change history lives in
-the task documents under `.agent/tasks/` and their gate records under
-`.agent/gates/`; every entry below maps to merged, independently reviewed
+Detailed history lives in the task documents under `.agent/tasks/` and the
+review records under `.agent/gates/`. Entries here map to merged, reviewed
 pull requests.
 
 ## 0.5.x — 2026-08
 
-- Unified multi-session execution architecture: canonical per-task records,
-  conversation/run/resource/worktree/loop leases, fork- and clone-history
-  isolation, task-type worktree policy, and a protocol upgrade barrier
-  (#30).
-- Stale-session scoping: identifiable stale peers downgrade to migration
-  warnings while same-task, overlapping-scope, and exclusive admission stay
-  fail-closed (#30).
-- GPU lease supervision: opt-in watchdog that reclaims idle GPU-holding runs
-  only on consecutive low-utilization, allocated-memory, absent-progress,
-  and expired-grace evidence, with phase exemptions, fail-safe probes,
-  report-only remote GPUs, and process-group cleanup (#30); validated live
-  on shared RTX 5090s.
-- Review-gate recursion closed: review-type tasks that issued a recorded
-  gate decision close on finish, and `reconcile close-decided-reviews`
-  sweeps historical backlogs under the same evidence rule (#33).
-- Supervisor durability: claim and terminal-state writes retry through
-  registry lock stalls, heartbeats tolerate missed beats, supervisor stderr
-  persists per lease, and `run start` confirms the claim with one automatic
-  respawn before failing closed (#34).
-- Windows correctness: the run-stop/taskkill path is exercised at runtime in
-  CI, which immediately caught and fixed a crash — `signal.SIGKILL` does not
-  exist on Windows (#35).
-- Retention and self-healing: terminal run leases and per-run artifacts age
-  out on a configurable window, and resources orphaned by finished runs
-  release automatically with a grace window against startup races (#36,
-  #37).
-- Test reliability: hermetic upgrade-barrier fixtures and load-tolerant GPU
-  watchdog regressions (#31, #32).
-- Documentation: concise entry-page README with an architecture diagram,
-  bilingual README, install/upgrade guide, and expanded multi-session
-  reference (#38+).
+The multi-session release (#30). One controller now tracks conversations,
+runs, resources, worktrees, and loops as leases with recorded owners.
+Forked or copied conversations cannot inherit a parent's authority. A dead
+session's claims warn instead of blocking unrelated work, while real
+conflicts still refuse. Code and experiment tasks get isolated worktrees
+by default.
+
+GPU supervision (#30): a run can lease `gpu:N` and opt into a watchdog
+that reclaims the card only after sustained zero-utilization with memory
+held, no progress, and an expired grace period. Compilation phases can
+declare exemptions. Probe failures never kill anything. Remote GPUs are
+report-only. Validated live on shared RTX 5090s.
+
+Reliability work found by dogfooding: supervisors now survive registry
+lock stalls and pre-claim deaths (#34), `run stop` was completely broken
+on Windows because `signal.SIGKILL` does not exist there — caught the
+first time CI actually ran the path on windows-latest (#35), review-type
+tasks no longer demand reviews of their own reviews (#33, which also
+closed 33 stuck historical tasks), old run leases and logs age out (#36),
+and resources orphaned by finished runs release themselves (#37).
+
+Two test-suite fixes (#31, #32), a rewritten README with an architecture
+diagram (#38), and open-source packaging: license, contributing guide,
+citation file, issue templates, bilingual README (#39).
