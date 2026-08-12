@@ -154,3 +154,4 @@
 | TA08B0CC413F151F5-010 | done | cursor | `README.md, docs/` | [.agent/tasks/TA08B0CC413F151F5-010.md](tasks/TA08B0CC413F151F5-010.md) | restructure readme into a concise entry page |
 | T76B9194109FD03F0-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T76B9194109FD03F0-001.md](tasks/T76B9194109FD03F0-001.md) | independent review of readme restructure |
 | TE475DD513ACDF9CA-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TE475DD513ACDF9CA-001.md](tasks/TE475DD513ACDF9CA-001.md) | re-review of readme restructure fixes |
+| TA08B0CC413F151F5-011 | review | cursor | `README.md, README_CN.md, LICENSE, CONTRIBUTING.md, CHANGELOG.md, CITATION.cff, .github/, docs/` | [.agent/tasks/TA08B0CC413F151F5-011.md](tasks/TA08B0CC413F151F5-011.md) | open source packaging: license, contributing, architecture diagram, bilingual readme |

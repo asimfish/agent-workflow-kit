@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use this workflow kit in your research or tooling, please cite it as below."
+title: "Agent Workflow Kit"
+authors:
+  - family-names: "asimfish"
+repository-code: "https://github.com/asimfish/super_project"
+license: MIT
+keywords:
+  - ai-agents
+  - multi-agent-coordination
+  - workflow
+  - gpu-supervision
+  - code-review
+abstract: >-
+  A project-level workflow kit for AI coding agents: durable task documents,
+  multi-session coordination with fail-closed identity and lease semantics,
+  supervised background runs with GPU idle reclamation, bounded feedback
+  loops, and an independent review gate enforced across Codex, Claude Code,
+  and Cursor.

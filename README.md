@@ -1,9 +1,17 @@
 # Agent Workflow Kit
 
+[![CI](https://github.com/asimfish/super_project/actions/workflows/agent-workflow-check.yml/badge.svg)](https://github.com/asimfish/super_project/actions/workflows/agent-workflow-check.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.9+](https://img.shields.io/badge/python-3.9%2B-blue.svg)](tools/agentctl.py)
+[![Platforms](https://img.shields.io/badge/platforms-POSIX%20%7C%20Windows-lightgrey.svg)](.github/workflows/agent-workflow-check.yml)
+
+**English** | [中文](README_CN.md)
+
 Project-level workflow kit for AI agents. Install it into any Git repository so
 Codex, Claude Code, Cursor, or another coding agent can follow the same plan,
 task docs, loop checks, and GitHub standards without the human repeating the
-workflow every time.
+workflow every time. One dependency-free Python file, durable Markdown state,
+fail-closed coordination.
 
 Repository: <https://github.com/asimfish/super_project>
 
@@ -58,6 +66,66 @@ tools/agent_workflow_hook.py
 
 The installed `.agent/` directory belongs to that project. It is not a global
 agent memory.
+
+## Architecture
+
+```mermaid
+flowchart TB
+    subgraph clients["Agent conversations — Codex / Claude Code / Cursor"]
+        W1["Worker session A"]
+        W2["Worker session B"]
+        REV["Independent reviewer"]
+    end
+
+    subgraph hooks["Provider + Git hooks"]
+        GUARD["fail-closed identity, scope,<br/>and opaque-writer guards"]
+    end
+
+    subgraph controller["tools/agentctl.py — single-file controller"]
+        LIFE["work / note / finish<br/>task lifecycle"]
+        GATE["gate approve / reject<br/>runtime-independent review"]
+        RUN["run / resource<br/>supervised background work"]
+        LOOP["loop checkpoints<br/>bounded feedback cycles"]
+    end
+
+    subgraph durable[".agent/ — durable state, committed"]
+        PLAN["PROJECT_PLAN.md / TASKS.md"]
+        TASKS["tasks/*.md contracts + stage logs"]
+        GATES["gates/ review records"]
+    end
+
+    subgraph live["Git common dir — live state, local"]
+        SESS["session records + execution leases"]
+        SUP["run supervisors, logs,<br/>GPU watchdog telemetry"]
+    end
+
+    subgraph ci["GitHub"]
+        CHECK["Actions: Ubuntu + Windows checks"]
+        PR["PR merge to main"]
+    end
+
+    W1 --> GUARD
+    W2 --> GUARD
+    REV --> GUARD
+    GUARD --> controller
+    LIFE --> durable
+    GATE --> durable
+    RUN --> live
+    LOOP --> durable
+    SESS -.->|"stale peers: advisory<br/>conflicts: fail closed"| LIFE
+    SUP -.->|"idle evidence chain<br/>reclaim + release lease"| RUN
+    durable --> CHECK
+    GATE -->|"required before merge"| PR
+    CHECK --> PR
+```
+
+How to read it: conversations never touch state directly — every tool call
+passes the hook guards and every state change goes through the controller.
+Durable state (plans, task contracts, gate records) is committed and reviewed;
+live state (sessions, leases, run supervision) stays in the Git common
+directory and heals itself. Merging to `main` requires both green CI and a
+gate decision recorded by a reviewer whose host runtime never participated in
+the work.
 
 ## Daily Use
 
@@ -215,3 +283,15 @@ Intentionally not included:
 - `docs/harness-evaluation.md`: deterministic suite schema and trust boundary.
 - `docs/enforcement.md`: hook and GitHub enforcement layers.
 - `.agent/rules/github-standards.md`: commit, push, and PR standards.
+- `CHANGELOG.md`: notable released changes.
+
+## Contributing
+
+Contributions go through the same workflow the kit ships — task, tests,
+independent review gate, PR. See [CONTRIBUTING.md](CONTRIBUTING.md) and the
+issue templates.
+
+## License And Citation
+
+MIT — see [LICENSE](LICENSE). If this kit is useful in your research or
+tooling, cite it via [CITATION.cff](CITATION.cff).
