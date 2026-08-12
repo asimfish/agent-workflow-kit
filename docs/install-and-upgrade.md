@@ -13,7 +13,7 @@ Install https://github.com/asimfish/super_project.git into this project.
 After installation, start normal work with:
 
 ```text
-? .agent ???????
+按 .agent 规范开始工作。
 ```
 
 The agent should read the installed `AGENTS.md` and `.agent/WORKFLOW_ENTRY.md`,

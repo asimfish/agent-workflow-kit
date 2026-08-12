@@ -139,6 +139,37 @@ The transport does not weaken target-session permissions and does not create a
 background daemon. A worker session should use an isolated worktree when another
 agent is actively changing the same repository checkout.
 
+### Dispatch Mechanics
+
+Register the target worker once so guidance can route by agent name:
+
+```bash
+python3 tools/agentctl.py agents add \
+  --id codex-gpt55xhigh \
+  --role "implementation worker" \
+  --backend codex \
+  --model gpt-5.5 \
+  --reasoning-effort xhigh \
+  --session-id <session-id>
+```
+
+- The dispatch call is synchronous and bounded (default timeout: 7200
+  seconds). It inherits the target Codex session's configured trust, approval,
+  and sandbox policy; the kit never adds a dangerous bypass flag.
+- The guidance prompt is UTF-8 text supplied on standard input, not a
+  command-line argument.
+- The packet records transport status, attempt count, timestamps, and exit
+  code; the worker's final message and raw receipt stay under the gitignored
+  `.agent/state/dispatch/`.
+- `guidance dispatch <packet-id> --dry-run` prints the exact resume command
+  without starting Codex. Omitting `--dispatch` keeps the original
+  asynchronous, file-only mode; file-only guidance can target an agent
+  without a session ID, while active dispatch requires a registered or
+  explicit target session.
+- A human-facing phrase such as `gpt5.5xhigh` is two runtime settings: model
+  `gpt-5.5` plus reasoning effort `xhigh`. Never pass the combined phrase as
+  a Codex model ID.
+
 ## Managed Worktree Allocation
 
 The supervisor owns worktree allocation. First commit the task plan and reach a
