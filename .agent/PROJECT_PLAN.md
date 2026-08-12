@@ -36,7 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] TA08B0CC413F151F5-014 - surface supervisor logs in test failures (owner: cursor)
+- [x] T13F0C74DBED8E114-001 - independent review of supervisor log diagnostics (owner: independent-reviewer-2)
+- [x] TA08B0CC413F151F5-014 - surface supervisor logs in test failures (owner: cursor)
 - [ ] TA08B0CC413F151F5-013 - repair invalid utf-8 bytes in changelog (owner: cursor)
 - [x] TB764E661F72A7FD7-001 - independent review of plain prose rewrite (owner: independent-reviewer-2)
 - [x] TA08B0CC413F151F5-012 - rewrite readmes in plain human prose (owner: cursor)
