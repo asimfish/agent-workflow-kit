@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-13 05:17:37",
+  "updated_at": "2026-08-14 05:08:10",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2255,6 +2255,32 @@
       "deps": [],
       "created_at": "2026-08-13 05:16:51",
       "updated_at": "2026-08-13 05:17:37"
+    },
+    "TA08B0CC413F151F5-015": {
+      "title": "archive aged done tasks out of the live board",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 04:28:43",
+      "updated_at": "2026-08-14 05:07:54"
+    },
+    "T126754FDB1001EB1-001": {
+      "title": "review TA08B0CC413F151F5-015 archive feature",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 05:03:32",
+      "updated_at": "2026-08-14 05:08:04"
     }
   }
 }
