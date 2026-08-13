@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-14 04:56:19",
+  "updated_at": "2026-08-14 05:37:04",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2259,7 +2259,7 @@
     "TA08B0CC413F151F5-015": {
       "title": "archive aged done tasks out of the live board",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "cursor",
       "scope": [
         "tools/",
@@ -2268,7 +2268,34 @@
       ],
       "deps": [],
       "created_at": "2026-08-14 04:28:43",
-      "updated_at": "2026-08-14 04:56:19"
+      "updated_at": "2026-08-14 05:07:54"
+    },
+    "T126754FDB1001EB1-001": {
+      "title": "review TA08B0CC413F151F5-015 archive feature",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 05:03:32",
+      "updated_at": "2026-08-14 05:08:04"
+    },
+    "TA08B0CC413F151F5-016": {
+      "title": "point self-references at the renamed agent-workflow-kit repo",
+      "type": "docs",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "docs/",
+        "CITATION.cff"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 05:20:32",
+      "updated_at": "2026-08-14 05:37:04"
     }
   }
 }

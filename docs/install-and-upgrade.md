@@ -7,7 +7,7 @@
 Start an agent inside your target project and say:
 
 ```text
-Install https://github.com/asimfish/super_project.git into this project.
+Install https://github.com/asimfish/agent-workflow-kit.git into this project.
 ```
 
 After installation, start normal work with:
@@ -22,8 +22,8 @@ then run the workflow by itself.
 ### Option B: install manually
 
 ```bash
-git clone https://github.com/asimfish/super_project.git
-cd super_project
+git clone https://github.com/asimfish/agent-workflow-kit.git
+cd agent-workflow-kit
 ./install.sh /path/to/your/project
 # equivalent to:
 python3 tools/agentctl.py init /path/to/your/project
@@ -61,7 +61,7 @@ python3 tools/agentctl.py init /path/to/your/project --force-managed
 Give one agent this instruction from the target project:
 
 ```text
-Upgrade this project's Agent Workflow Kit from https://github.com/asimfish/super_project.git.
+Upgrade this project's Agent Workflow Kit from https://github.com/asimfish/agent-workflow-kit.git.
 Preserve project-owned .agent plans and task history, run agentctl migrate, and
 follow its action until it returns continue. Never auto-release another session.
 ```

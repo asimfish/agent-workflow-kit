@@ -161,4 +161,6 @@
 | TA08B0CC413F151F5-013 | review | cursor | `CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-013.md](tasks/TA08B0CC413F151F5-013.md) | repair invalid utf-8 bytes in changelog |
 | TA08B0CC413F151F5-014 | done | cursor | `tests/` | [.agent/tasks/TA08B0CC413F151F5-014.md](tasks/TA08B0CC413F151F5-014.md) | surface supervisor logs in test failures |
 | T13F0C74DBED8E114-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T13F0C74DBED8E114-001.md](tasks/T13F0C74DBED8E114-001.md) | independent review of supervisor log diagnostics |
-| TA08B0CC413F151F5-015 | review | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-015.md](tasks/TA08B0CC413F151F5-015.md) | archive aged done tasks out of the live board |
+| TA08B0CC413F151F5-015 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-015.md](tasks/TA08B0CC413F151F5-015.md) | archive aged done tasks out of the live board |
+| T126754FDB1001EB1-001 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-001.md](tasks/T126754FDB1001EB1-001.md) | review TA08B0CC413F151F5-015 archive feature |
+| TA08B0CC413F151F5-016 | review | cursor | `README.md, README_CN.md, docs/, CITATION.cff` | [.agent/tasks/TA08B0CC413F151F5-016.md](tasks/TA08B0CC413F151F5-016.md) | point self-references at the renamed agent-workflow-kit repo |

@@ -1,6 +1,6 @@
 # Agent Workflow Kit（智能体工作流套件）
 
-[![CI](https://github.com/asimfish/super_project/actions/workflows/agent-workflow-check.yml/badge.svg)](https://github.com/asimfish/super_project/actions/workflows/agent-workflow-check.yml)
+[![CI](https://github.com/asimfish/agent-workflow-kit/actions/workflows/agent-workflow-check.yml/badge.svg)](https://github.com/asimfish/agent-workflow-kit/actions/workflows/agent-workflow-check.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 [English](README.md) | 中文
@@ -21,13 +21,13 @@ Markdown 和 JSON，像普通文件一样提交；运行态（谁在干活、什
 ## 安装
 
 ```bash
-git clone https://github.com/asimfish/super_project.git
-cd super_project
+git clone https://github.com/asimfish/agent-workflow-kit.git
+cd agent-workflow-kit
 ./install.sh /path/to/your/project
 ```
 
 或者直接在你的项目里对智能体说一句：
-`Install https://github.com/asimfish/super_project.git into this project.`
+`Install https://github.com/asimfish/agent-workflow-kit.git into this project.`
 
 安装会和已有文件合并而不是覆盖，重复执行无害。装好之后，人只需要一句提示词：
 
