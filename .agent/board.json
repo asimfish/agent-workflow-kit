@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-14 05:08:10",
+  "updated_at": "2026-08-14 05:41:28",
   "tasks": {
     "T-000": {
       "title": "Replace starter task with real work",
@@ -2281,6 +2281,33 @@
       "deps": [],
       "created_at": "2026-08-14 05:03:32",
       "updated_at": "2026-08-14 05:08:04"
+    },
+    "TA08B0CC413F151F5-016": {
+      "title": "point self-references at the renamed agent-workflow-kit repo",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "docs/",
+        "CITATION.cff"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 05:20:32",
+      "updated_at": "2026-08-14 05:41:20"
+    },
+    "T126754FDB1001EB1-002": {
+      "title": "review TA08B0CC413F151F5-016 rename references",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 05:41:08",
+      "updated_at": "2026-08-14 05:41:28"
     }
   }
 }
