@@ -443,6 +443,68 @@ class IndependentGateRegressionTest(unittest.TestCase):
         self.assertEqual(board["tasks"]["T-202"]["status"], "review")
         self.assertEqual(board["tasks"]["T-201"]["status"], "review")
 
+    def test_archive_moves_aged_done_tasks_and_keeps_live_state(self):
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-301",
+            "--title", "old finished work", "--scope", "src/a/",
+        )
+        self.agentctl("finish", "--summary", "done work", "--tests", "unit")
+        self.agentctl(
+            "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-302",
+            "--title", "review old work", "--scope", ".agent/", "--type", "review",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+        self.agentctl(
+            "gate", "approve", "--task", "T-301", "--by", "supervisor",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+
+        refused = self.agentctl("reconcile", "archive", expect=1)
+        self.assertIn("supervisor/planning/review session", refused.stderr)
+
+        none_yet = self.agentctl(
+            "reconcile", "archive",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+        self.assertIn("no done tasks older", none_yet.stdout)
+
+        board_path = self.root / ".agent" / "board.json"
+        payload = json.loads(board_path.read_text(encoding="utf-8"))
+        payload["tasks"]["T-301"]["updated_at"] = "2026-01-01 00:00:00"
+        board_path.write_text(
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+
+        swept = self.agentctl(
+            "reconcile", "archive", "--days", "30",
+            runtime="reviewer-runtime", workflow_session="reviewer-session",
+        )
+        self.assertIn("archived T-301", swept.stdout)
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertNotIn("T-301", board["tasks"])
+        self.assertIn("T-302", board["tasks"])
+        self.assertFalse((self.root / ".agent" / "tasks" / "T-301.md").exists())
+        self.assertTrue(
+            (self.root / ".agent" / "archive" / "tasks" / "T-301.md").is_file()
+        )
+        self.assertTrue(
+            (self.root / ".agent" / "archive" / "gates" / "T-301.md").is_file()
+        )
+        archived = json.loads(
+            (self.root / ".agent" / "archive" / "board.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertIn("T-301", archived["tasks"])
+        tasks_view = (self.root / ".agent" / "TASKS.md").read_text(encoding="utf-8")
+        self.assertNotIn("T-301", tasks_view)
+        plan_view = (self.root / ".agent" / "PROJECT_PLAN.md").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("T-301", plan_view)
+        self.agentctl("reconcile", "check")
+
 
 class GithubMergeGateRegressionTest(unittest.TestCase):
     def setUp(self):

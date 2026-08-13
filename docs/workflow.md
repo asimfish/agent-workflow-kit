@@ -24,6 +24,13 @@ reviewer task by at least one recorded decision. `agentctl reconcile
 close-decided-reviews` applies the same evidence rule to review tasks parked
 in `review` from before this behavior existed.
 
+The board only shows work that can still change. `agentctl reconcile archive
+--days N` (default 30) moves `done` tasks older than the window into
+`.agent/archive/` — board entry, task doc, and gate record together — and
+re-renders the live views. Archived history stays in Git and in
+`.agent/archive/board.json`; nothing is deleted. Like the closure sweep, the
+command requires a supervisor, planning, or review session.
+
 Harness and workflow changes add one supervisor-owned evaluation step before the
 ordinary review gate. The same suite runs against clean baseline and candidate
 worktrees, and both held-in and held-out scores must avoid regression. See

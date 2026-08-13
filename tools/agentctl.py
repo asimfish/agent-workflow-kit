@@ -8486,6 +8486,91 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
             + (": " + ", ".join(extras) if extras else " (nothing to migrate)")
         )
         return 0
+    if args.reconcile_action == "archive":
+        st = _load_session(root)
+        recorder = str(st.get("agent") or "")
+        role = str(_agent_profile(root, recorder).get("role") or "").lower()
+        if not recorder or not any(
+            label in role for label in ("supervisor", "planning", "review")
+        ):
+            print(
+                "agentctl: archiving requires an active supervisor/planning/review session",
+                file=sys.stderr,
+            )
+            return 1
+        try:
+            days = float(args.days)
+        except (TypeError, ValueError):
+            print("agentctl: --days must be a number", file=sys.stderr)
+            return 2
+        if not math.isfinite(days) or days < 0:
+            print("agentctl: --days must be a nonnegative finite number", file=sys.stderr)
+            return 2
+        cutoff = _dt.datetime.now() - _dt.timedelta(days=days)
+        archive_root = root / WORKFLOW_DIR / "archive"
+        lock = _session_coordination_lock_path(root)
+        fd = _acquire_lock_file(lock)
+        moved: list[tuple[Path, Path]] = []
+        try:
+            board = _load_board(root)
+            tasks = board.get("tasks") or {}
+            aged = []
+            for tid, entry in tasks.items():
+                if not isinstance(entry, dict) or entry.get("status") != "done":
+                    continue
+                stamp = _parse_workflow_timestamp(entry.get("updated_at"))
+                if stamp is None or stamp >= cutoff:
+                    # Unparseable timestamps stay live rather than vanish
+                    # into the archive unnoticed.
+                    continue
+                aged.append(tid)
+            if not aged:
+                print("agentctl: no done tasks older than the archive window")
+                return 0
+            try:
+                for tid in aged:
+                    for source_dir, target_dir in (
+                        (root / WORKFLOW_DIR / TASKS_DIR, archive_root / "tasks"),
+                        (root / WORKFLOW_DIR / GATES_DIR, archive_root / "gates"),
+                    ):
+                        source = source_dir / f"{tid}.md"
+                        if not source.is_file():
+                            continue
+                        target_dir.mkdir(parents=True, exist_ok=True)
+                        target = target_dir / f"{tid}.md"
+                        os.replace(source, target)
+                        moved.append((source, target))
+            except OSError as exc:
+                for source, target in reversed(moved):
+                    try:
+                        os.replace(target, source)
+                    except OSError:
+                        pass
+                print(f"agentctl: archive aborted, no state changed: {exc}", file=sys.stderr)
+                return 2
+            archived_board_path = archive_root / "board.json"
+            archived = _load_json(
+                archived_board_path, {"version": 1, "tasks": {}},
+            )
+            if not isinstance(archived, dict):
+                archived = {"version": 1, "tasks": {}}
+            archived.setdefault("tasks", {})
+            for tid in aged:
+                archived["tasks"][tid] = tasks.pop(tid)
+            archived["updated_at"] = _now()
+            archive_root.mkdir(parents=True, exist_ok=True)
+            _save_json(archived_board_path, archived)
+            _save_board(root, board)
+            _render_task_views(root, board)
+        finally:
+            _release_lock_file(lock, fd)
+        for tid in aged:
+            print(f"agentctl: archived {tid}")
+        print(
+            f"agentctl: archived {len(aged)} done task(s) older than {days:g} days "
+            f"into {archive_root}"
+        )
+        return 0
     if args.reconcile_action == "close-decided-reviews":
         st = _load_session(root)
         recorder = str(st.get("agent") or "")
@@ -11797,6 +11882,8 @@ def build_parser() -> argparse.ArgumentParser:
     rsub.add_parser("render")
     rsub.add_parser("migrate")
     rsub.add_parser("close-decided-reviews")
+    ra = rsub.add_parser("archive")
+    ra.add_argument("--days", type=float, default=30.0)
     sp.set_defaults(func=cmd_reconcile)
 
     sp = sub.add_parser("agents")
