@@ -3,7 +3,7 @@ message: "If you use this workflow kit in your research or tooling, please cite 
 title: "Agent Workflow Kit"
 authors:
   - family-names: "asimfish"
-repository-code: "https://github.com/asimfish/super_project"
+repository-code: "https://github.com/asimfish/agent-workflow-kit"
 license: MIT
 keywords:
   - ai-agents

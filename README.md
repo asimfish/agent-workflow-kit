@@ -1,6 +1,6 @@
 # Agent Workflow Kit
 
-[![CI](https://github.com/asimfish/super_project/actions/workflows/agent-workflow-check.yml/badge.svg)](https://github.com/asimfish/super_project/actions/workflows/agent-workflow-check.yml)
+[![CI](https://github.com/asimfish/agent-workflow-kit/actions/workflows/agent-workflow-check.yml/badge.svg)](https://github.com/asimfish/agent-workflow-kit/actions/workflows/agent-workflow-check.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 English | [中文](README_CN.md)
@@ -26,13 +26,13 @@ and CI check what agents try to commit.
 ## Install
 
 ```bash
-git clone https://github.com/asimfish/super_project.git
-cd super_project
+git clone https://github.com/asimfish/agent-workflow-kit.git
+cd agent-workflow-kit
 ./install.sh /path/to/your/project
 ```
 
 Or just tell an agent inside your project:
-`Install https://github.com/asimfish/super_project.git into this project.`
+`Install https://github.com/asimfish/agent-workflow-kit.git into this project.`
 
 Installation merges with existing files instead of overwriting them, and
 running it again is harmless. Afterwards the only prompt a human needs is:
