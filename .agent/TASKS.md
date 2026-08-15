@@ -163,4 +163,5 @@
 | T13F0C74DBED8E114-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T13F0C74DBED8E114-001.md](tasks/T13F0C74DBED8E114-001.md) | independent review of supervisor log diagnostics |
 | TA08B0CC413F151F5-015 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-015.md](tasks/TA08B0CC413F151F5-015.md) | archive aged done tasks out of the live board |
 | T126754FDB1001EB1-001 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-001.md](tasks/T126754FDB1001EB1-001.md) | review TA08B0CC413F151F5-015 archive feature |
-| TA08B0CC413F151F5-016 | review | cursor | `README.md, README_CN.md, docs/, CITATION.cff` | [.agent/tasks/TA08B0CC413F151F5-016.md](tasks/TA08B0CC413F151F5-016.md) | point self-references at the renamed agent-workflow-kit repo |
+| TA08B0CC413F151F5-016 | done | cursor | `README.md, README_CN.md, docs/, CITATION.cff` | [.agent/tasks/TA08B0CC413F151F5-016.md](tasks/TA08B0CC413F151F5-016.md) | point self-references at the renamed agent-workflow-kit repo |
+| T126754FDB1001EB1-002 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-002.md](tasks/T126754FDB1001EB1-002.md) | review TA08B0CC413F151F5-016 rename references |
