@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-16 01:10:30",
+  "updated_at": "2026-08-25 04:43:44",
   "tasks": {
     "T-033": {
       "title": "reconcile merged GitHub reviews",
@@ -1726,6 +1726,32 @@
       "deps": [],
       "created_at": "2026-08-16 01:08:00",
       "updated_at": "2026-08-16 01:10:30"
+    },
+    "TA08B0CC413F151F5-017": {
+      "title": "idempotent submission boundary with request ids for auto-create and run start",
+      "type": "code",
+      "status": "blocked",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-25 02:12:20",
+      "updated_at": "2026-08-25 04:37:03"
+    },
+    "T126754FDB1001EB1-004": {
+      "title": "review TA08B0CC413F151F5-017 idempotent requests",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-25 04:35:12",
+      "updated_at": "2026-08-25 04:42:47"
     }
   }
 }

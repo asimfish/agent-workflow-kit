@@ -7,9 +7,9 @@
       "last_report": ".agent/loops/runs/20260816-010803-daily-plan-triage.md"
     },
     "doc-hygiene": {
-      "last_run_at": "2026-08-16 01:10:30",
+      "last_run_at": "2026-08-25 04:43:44",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260816-011030-doc-hygiene-2.md"
+      "last_report": ".agent/loops/runs/20260825-044344-doc-hygiene.md"
     },
     "experiment-monitor": {
       "last_run_at": "2026-07-01 18:47:12",
@@ -35,12 +35,12 @@
       "open_follow_up": null
     },
     "pre-finish": {
-      "last_run_at": "2026-08-16 01:10:30",
+      "last_run_at": "2026-08-25 04:42:47",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260816-011030-doc-hygiene.md"
+        ".agent/loops/runs/20260825-044247-doc-hygiene.md"
       ],
-      "last_input_hash": "5baccad1404c6c42",
+      "last_input_hash": "5acde9c69719cf84",
       "strict": true,
       "trigger": "pre-finish",
       "open_follow_up": null
@@ -55,12 +55,12 @@
       "trigger": "manual"
     },
     "post-finish": {
-      "last_run_at": "2026-08-16 01:10:30",
+      "last_run_at": "2026-08-25 04:43:44",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260816-011030-doc-hygiene-2.md"
+        ".agent/loops/runs/20260825-044344-doc-hygiene.md"
       ],
-      "last_input_hash": "6f102c0bc4922174",
+      "last_input_hash": "a9c7b550090a3a4e",
       "strict": false,
       "trigger": "post-finish",
       "open_follow_up": null
@@ -141,6 +141,24 @@
       "started_at": "2026-07-10 23:15:32",
       "finished_at": "2026-07-10 23:15:32",
       "stop_reason": null
+    }
+  ],
+  "execution_history": [
+    {
+      "token": "f342276a3794a9acb70e",
+      "operation": "checkpoint work-start",
+      "status": "reconciled",
+      "started_at": "2026-08-25 04:36:01",
+      "finished_at": "2026-08-25 04:37:36",
+      "reason": "work-start triage crashed on an OS read timeout (Errno 60, iCloud-backed FS under load 390); daily-plan-triage result unknown, no board mutation observed"
+    },
+    {
+      "token": "d6497a0b4480936d070d",
+      "operation": "checkpoint pre-finish",
+      "status": "reconciled",
+      "started_at": "2026-08-25 04:37:36",
+      "finished_at": "2026-08-25 04:38:58",
+      "reason": "pre-finish checkpoint interrupted when the reviewer shell was killed mid-finish under load; no board mutation observed"
     }
   ]
 }
