@@ -125,5 +125,6 @@
 | TA08B0CC413F151F5-016 | done | cursor | `README.md, README_CN.md, docs/, CITATION.cff` | [.agent/tasks/TA08B0CC413F151F5-016.md](tasks/TA08B0CC413F151F5-016.md) | point self-references at the renamed agent-workflow-kit repo |
 | T126754FDB1001EB1-002 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-002.md](tasks/T126754FDB1001EB1-002.md) | review TA08B0CC413F151F5-016 rename references |
 | T126754FDB1001EB1-003 | review | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-003.md](tasks/T126754FDB1001EB1-003.md) | archive aged board history |
-| TA08B0CC413F151F5-017 | blocked | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-017.md](tasks/TA08B0CC413F151F5-017.md) | idempotent submission boundary with request ids for auto-create and run start |
+| TA08B0CC413F151F5-017 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-017.md](tasks/TA08B0CC413F151F5-017.md) | idempotent submission boundary with request ids for auto-create and run start |
 | T126754FDB1001EB1-004 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-004.md](tasks/T126754FDB1001EB1-004.md) | review TA08B0CC413F151F5-017 idempotent requests |
+| T126754FDB1001EB1-005 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-005.md](tasks/T126754FDB1001EB1-005.md) | re-review TA08B0CC413F151F5-017 archive-state fix |
