@@ -217,6 +217,39 @@ cannot be verified; after inspecting the missing path, use `worktree release
 prunable Git metadata. There is no force removal, automatic branch deletion,
 worktree pool, or merge automation.
 
+Checking out a whole worktree can take minutes on a loaded machine.
+`git worktree add` and the task bootstrap run under a dedicated budget
+(default 900 seconds, `AGENT_WORKTREE_GIT_TIMEOUT`); when it still expires,
+the lease is marked `failed` with the reason and the half-materialized
+checkout and its branch are swept, so the next attempt starts from a clean
+slate instead of colliding with ghosts.
+
+## Idempotent Creation Requests
+
+A creation command can lose its response — client timeout, killed terminal,
+machine stall — after durable state was already written. A blind retry then
+creates the work twice, which for `run start` can mean paying for the same
+GPU experiment two times. Callers that need an exactly-once boundary pass an
+opaque token:
+
+```bash
+agentctl work --agent codex --auto-create --title "..." --scope "src/" \
+  --request-id exp42-create
+agentctl run start --output outputs/ --request-id exp42-launch -- python train.py
+```
+
+The head-side record under the Git common directory
+(`agent-workflow/requests/`) is the authority for what that token already
+created. Retrying with the same token and the same intent returns the
+recorded task or run instead of creating another; the same token with a
+different intent is an error. Admission rejections (scope conflicts, busy
+sessions) erase the record so the token stays reusable once the input is
+fixed. An attempt that was interrupted after allocation converges from
+durable state: if its task or run actually landed, the retry confirms and
+returns it; if nothing landed, the retry is refused until leftovers are
+inspected, never relaunched blindly. Without `--request-id` the commands
+behave exactly as before.
+
 ## Low-Friction Agent Loop
 
 Humans do not need to send the loop. They can say:

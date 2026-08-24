@@ -41,7 +41,7 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.root, check=True, timeout=60)
         install = subprocess.run(
             [sys.executable, str(KIT / "tools" / "agentctl.py"), "init", str(self.root)],
-            cwd=KIT, text=True, capture_output=True, timeout=120,
+            cwd=KIT, text=True, capture_output=True, timeout=600,
         )
         self.assertEqual(install.returncode, 0, install.stdout + install.stderr)
 
@@ -54,7 +54,7 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         env.update(extra)
         return env
 
-    def agentctl(self, *args, session="one", expect=0, env=None, timeout=120):
+    def agentctl(self, *args, session="one", expect=0, env=None, timeout=600):
         proc = subprocess.run(
             [sys.executable, "tools/agentctl.py", *args],
             cwd=self.root, env=env or self.env(session), text=True,
@@ -596,6 +596,151 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             self.root / "outputs" / "T-351" / "pids.txt"
         ).read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 1)
+
+    def test_request_id_makes_auto_create_idempotent(self):
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-701",
+            "--title", "durable creation", "--scope", "src/a/",
+            "--request-id", "req-alpha",
+        )
+        # Same token, same intent: the retry returns the recorded task
+        # instead of creating a second one.
+        replay = self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-701",
+            "--title", "durable creation", "--scope", "src/a/",
+            "--request-id", "req-alpha", session="two",
+        )
+        self.assertIn("already created task T-701", replay.stdout)
+        board = json.loads(self.agentctl("board", "--json").stdout)
+        self.assertIn("T-701", board["tasks"])
+
+        # Same token, different intent: fail closed.
+        conflict = self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-702",
+            "--title", "a different creation", "--scope", "src/b/",
+            "--request-id", "req-alpha", session="three", expect=2,
+        )
+        self.assertIn("different creation intent", conflict.stderr)
+
+        # An interrupted attempt whose allocation never landed anywhere
+        # blocks instead of silently relaunching.
+        import hashlib as _hashlib
+        stuck_payload = {
+            "kind": "auto-create",
+            "agent": "codex",
+            "title": "interrupted creation",
+            "scope": ["src/c/"],
+            "type": "generic",
+            "new_id": "T-703",
+            "deps": "",
+        }
+        stuck_digest = _hashlib.sha256(json.dumps(
+            stuck_payload, sort_keys=True, ensure_ascii=False,
+        ).encode("utf-8")).hexdigest()
+        requests_dir = self.workflow_common_dir() / "requests"
+        requests_dir.mkdir(parents=True, exist_ok=True)
+        token_hash = _hashlib.sha256(b"req-stuck").hexdigest()[:16]
+        (requests_dir / f"req-{token_hash}.json").write_text(json.dumps({
+            "version": 1,
+            "token": "req-stuck",
+            "kind": "auto-create",
+            "intent_digest": stuck_digest,
+            "state": "preparing",
+            "result": {"task": "T-703"},
+            "error": "",
+        }), encoding="utf-8")
+        blocked = self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-703",
+            "--title", "interrupted creation", "--scope", "src/c/",
+            "--request-id", "req-stuck", session="four", expect=1,
+        )
+        self.assertIn("interrupted attempt", blocked.stderr)
+
+        # Once the allocated task is actually durable, the same interrupted
+        # record converges to a confirmed replay instead of blocking.
+        self.agentctl(
+            "task", "create", "--id", "T-703", "--title", "interrupted creation",
+            "--owner", "codex", "--scope", "src/c/", session="four",
+        )
+        converged = self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-703",
+            "--title", "interrupted creation", "--scope", "src/c/",
+            "--request-id", "req-stuck", session="four",
+        )
+        self.assertIn("already created task T-703", converged.stdout)
+
+    def test_request_id_makes_run_start_idempotent(self):
+        self.start("one", "T-711", "src/run/")
+        started = self.agentctl(
+            "run", "start", "--output", "src/run/", "--request-id", "run-alpha",
+            "--", sys.executable, "-c", "print('ok')",
+        )
+        run_id = self.lease_id(started.stdout, "run")
+        replay = self.agentctl(
+            "run", "start", "--output", "src/run/", "--request-id", "run-alpha",
+            "--", sys.executable, "-c", "print('ok')",
+        )
+        self.assertIn(f"already started run {run_id}", replay.stdout)
+        runs = json.loads(self.agentctl("run", "list", "--json").stdout)["runs"]
+        matching = [row for row in runs if row.get("id") == run_id]
+        self.assertEqual(len(matching), 1)
+        conflict = self.agentctl(
+            "run", "start", "--output", "src/run/", "--request-id", "run-alpha",
+            "--", sys.executable, "-c", "print('different')",
+            expect=2,
+        )
+        self.assertIn("different run intent", conflict.stderr)
+
+    def test_worktree_bootstrap_timeout_marks_lease_failed_and_sweeps(self):
+        import argparse
+        import importlib.util
+
+        subprocess.run(
+            ["git", "add", "-A"], cwd=self.root, check=True,
+            capture_output=True, timeout=60,
+        )
+        subprocess.run(
+            ["git", "-c", "user.email=t@example.com", "-c", "user.name=T",
+             "commit", "--no-verify", "-q", "-m", "baseline"],
+            cwd=self.root, check=True, capture_output=True, timeout=60,
+        )
+        spec = importlib.util.spec_from_file_location(
+            "agentctl_worktree_timeout_test", KIT / "tools" / "agentctl.py",
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        real_git_process = module._git_process
+
+        def timing_out_git(root, *cmd, timeout=120):
+            if cmd[:2] == ("worktree", "add"):
+                raise subprocess.TimeoutExpired(list(cmd), timeout)
+            return real_git_process(root, *cmd, timeout=timeout)
+
+        create_args = argparse.Namespace(
+            id="T-721", title="timed out bootstrap", owner="codex",
+            scope="src/w/", deps="", task_type="code", force=False,
+        )
+        with mock.patch.object(module, "_git_process", timing_out_git):
+            rc = module._worktree_bootstrap_task(
+                self.root, create_args, "codex", "worktree",
+            )
+        self.assertEqual(rc, 2)
+        leases = json.loads(
+            (self.workflow_common_dir() / "worktree-leases.json").read_text(
+                encoding="utf-8",
+            )
+        )["leases"]
+        matching = [row for row in leases if row.get("task") == "T-721"]
+        self.assertEqual(len(matching), 1)
+        self.assertEqual(matching[0]["status"], "failed")
+        self.assertIn("timed out", matching[0]["last_error"] or "")
+        # The half-materialized checkout and its branch are swept, so a fresh
+        # attempt is not blocked by leftovers.
+        heads = subprocess.run(
+            ["git", "branch", "--list", "feature/T-721-codex"],
+            cwd=self.root, text=True, capture_output=True, timeout=60,
+        ).stdout.strip()
+        self.assertEqual(heads, "")
 
     def workflow_common_dir(self):
         common = subprocess.run(
