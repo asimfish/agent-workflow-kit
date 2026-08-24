@@ -164,6 +164,13 @@ WORKTREE_LEASES_LOCK = "worktree-leases.lock"
 RUNTIME_LEASES_FILE = "execution-leases.json"
 RUNTIME_LEASES_LOCK = "execution-leases.lock"
 RUNTIME_RUNS_DIR = "runs"
+SUBMISSION_REQUESTS_DIR = "requests"
+SUBMISSION_REQUEST_TOKEN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+# git worktree add checks out the whole tree; on a loaded machine that can
+# take minutes, so it gets a dedicated, overridable budget instead of the
+# default subprocess timeout.
+WORKTREE_GIT_TIMEOUT_ENV = "AGENT_WORKTREE_GIT_TIMEOUT"
+WORKTREE_GIT_TIMEOUT_DEFAULT = 900
 RUNTIME_POLICY_FILE = "runtime-policy.json"
 RESOURCE_LOCK_ENV = "AGENT_WORKFLOW_RESOURCE_LOCK_DIR"
 RESOURCE_REMOTE_PREFIX = "ssh://"
@@ -2391,7 +2398,73 @@ def cmd_work(args: argparse.Namespace) -> int:
             if not args.scope:
                 print("agentctl: --scope is required with --auto-create so the task has a safe write boundary", file=sys.stderr)
                 return 2
+            request_token = (getattr(args, "request_id", "") or "").strip()
+            request_fd = None
+            if request_token:
+                token_error = _submission_request_error(request_token)
+                if token_error:
+                    print(f"agentctl: {token_error}", file=sys.stderr)
+                    return 2
+                intent_digest = _submission_intent_digest({
+                    "kind": "auto-create",
+                    "agent": agent,
+                    "title": str(args.title),
+                    "scope": sorted(
+                        item.strip() for item in str(args.scope).split(",")
+                        if item.strip()
+                    ),
+                    "type": str(args.task_type or "generic"),
+                    "new_id": str(args.new_id or ""),
+                    "deps": str(args.deps or ""),
+                })
+
+                def _resolve_created_task(record: dict):
+                    allocated = str((record.get("result") or {}).get("task") or "")
+                    if allocated and allocated in (_load_board(root).get("tasks") or {}):
+                        return {"task": allocated}
+                    return None
+
+                action, record, request_fd = _submission_request_begin(
+                    root, request_token, intent_digest, "auto-create",
+                    _resolve_created_task,
+                )
+                if action == "replay":
+                    confirmed = str((record.get("result") or {}).get("task") or "")
+                    print(
+                        f"agentctl: request {request_token} already created task "
+                        f"{confirmed}; not creating it again"
+                    )
+                    print(
+                        f"  continue: python3 tools/agentctl.py work "
+                        f"--agent {agent} --task {confirmed}"
+                    )
+                    return 0
+                if action == "replay-reject":
+                    print(
+                        f"agentctl: request {request_token} was already rejected: "
+                        f"{record.get('error') or 'no recorded reason'}",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if action == "conflict":
+                    print(
+                        f"agentctl: request {request_token} was already used with a "
+                        "different creation intent; pick a new request id",
+                        file=sys.stderr,
+                    )
+                    return 2
+                if action == "blocked":
+                    print(
+                        f"agentctl: request {request_token} has an interrupted "
+                        "attempt with no confirmed task; inspect worktree leases "
+                        "and branches for leftovers, then retry with a new "
+                        "request id",
+                        file=sys.stderr,
+                    )
+                    return 1
             task = args.new_id or _next_task_id(root, args.prefix or "T")
+            if request_fd is not None:
+                _submission_request_note(root, request_token, {"task": task})
             create_args = argparse.Namespace(
                 id=task,
                 title=args.title,
@@ -2405,13 +2478,40 @@ def cmd_work(args: argparse.Namespace) -> int:
                 root, {"type": create_args.task_type}, args.isolation,
             )
             if isolation in {"worktree", "exclusive"}:
-                return _worktree_bootstrap_task(root, create_args, agent, isolation)
+                bootstrap_rc = _worktree_bootstrap_task(
+                    root, create_args, agent, isolation,
+                )
+                if request_fd is not None:
+                    if bootstrap_rc == 0:
+                        _submission_request_settle(
+                            root, request_token, request_fd,
+                            "confirmed", {"task": task},
+                        )
+                    elif bootstrap_rc == 1:
+                        # Admission rejection: nothing durable was created, so
+                        # the token stays reusable after the caller fixes the
+                        # conflict.
+                        _submission_request_abandon(
+                            root, request_token, request_fd,
+                        )
+                    else:
+                        # Execution failure past the creation boundary: keep
+                        # "preparing" so a retry converges from durable state
+                        # instead of relaunching blindly.
+                        _submission_request_settle(
+                            root, request_token, request_fd,
+                            "preparing",
+                            error=f"bootstrap exited {bootstrap_rc}",
+                        )
+                return bootstrap_rc
             if not (root / WORKFLOW_DIR / PLAN_FILE).is_file():
                 print(
                     f"agentctl: missing {WORKFLOW_DIR}/{PLAN_FILE}. "
                     "run 'agentctl init' first.",
                     file=sys.stderr,
                 )
+                if request_fd is not None:
+                    _submission_request_abandon(root, request_token, request_fd)
                 return 2
             try:
                 coordination_fd = _acquire_lock_file(
@@ -2419,6 +2519,8 @@ def cmd_work(args: argparse.Namespace) -> int:
                 )
             except TimeoutError as exc:
                 print(f"agentctl: {exc}", file=sys.stderr)
+                if request_fd is not None:
+                    _submission_request_abandon(root, request_token, request_fd)
                 return 2
             try:
                 session_key = _workflow_session_key()
@@ -2440,11 +2542,21 @@ def cmd_work(args: argparse.Namespace) -> int:
                         "was written; inspect sessions or choose disjoint work.",
                         file=sys.stderr,
                     )
+                    if request_fd is not None:
+                        _submission_request_abandon(
+                            root, request_token, request_fd,
+                        )
+                        request_fd = None
                     return 1
                 try:
                     managed_lease = _managed_worktree_lease(root)
                 except RuntimeError as exc:
                     print(f"agentctl: {exc}", file=sys.stderr)
+                    if request_fd is not None:
+                        _submission_request_abandon(
+                            root, request_token, request_fd,
+                        )
+                        request_fd = None
                     return 2
                 if managed_lease:
                     print(
@@ -2454,6 +2566,11 @@ def cmd_work(args: argparse.Namespace) -> int:
                         "from the planning checkout",
                         file=sys.stderr,
                     )
+                    if request_fd is not None:
+                        _submission_request_abandon(
+                            root, request_token, request_fd,
+                        )
+                        request_fd = None
                     return 1
                 board = _load_board(root)
                 if scope and not args.force:
@@ -2468,11 +2585,30 @@ def cmd_work(args: argparse.Namespace) -> int:
                                 "disjoint scope or task worktree.",
                                 file=sys.stderr,
                             )
+                            if request_fd is not None:
+                                _submission_request_abandon(
+                                    root, request_token, request_fd,
+                                )
+                                request_fd = None
                             return 1
                 rc = _task_create_unlocked(root, create_args)
                 if rc:
+                    if request_fd is not None:
+                        _submission_request_abandon(
+                            root, request_token, request_fd,
+                        )
+                        request_fd = None
                     return rc
                 print(f"agentctl: auto-created {task} for {agent}")
+                if request_fd is not None:
+                    # The task is durably on the board; whatever happens to
+                    # session binding next, this request must never create a
+                    # second task.
+                    _submission_request_settle(
+                        root, request_token, request_fd,
+                        "confirmed", {"task": task},
+                    )
+                    request_fd = None
                 start_args = argparse.Namespace(
                     task=task, agent=agent, scope=args.scope, force=args.force,
                     session_id=meta["session_id"], model=meta["model"],
@@ -4760,6 +4896,196 @@ def cmd_handoff(args: argparse.Namespace) -> int:
     return 2
 
 
+def _worktree_git_timeout() -> int:
+    raw = os.environ.get(WORKTREE_GIT_TIMEOUT_ENV, "")
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return WORKTREE_GIT_TIMEOUT_DEFAULT
+    return value if value > 0 else WORKTREE_GIT_TIMEOUT_DEFAULT
+
+
+def _cleanup_interrupted_worktree(root: Path, branch: str, path: Path) -> None:
+    """Best-effort removal of a checkout that never finished materializing.
+
+    The lease is already marked failed, so leftovers only cost disk; every
+    step here may fail without making anything worse.
+    """
+    for command in (
+        ("worktree", "unlock", str(path)),
+        ("worktree", "remove", "--force", str(path)),
+        ("branch", "-D", branch),
+    ):
+        try:
+            _git_process(root, *command, timeout=60)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+
+
+# ---------- durable submission requests ----------
+#
+# A creation command can lose its response (client timeout, killed shell,
+# machine load) after durable state was already written, and a plain retry
+# then creates the work twice. Callers that need an exactly-once boundary
+# pass --request-id; the head-side record under the Git common directory is
+# the authority for whether that request already created something.
+# Modeled on dt's durable submission intent: absent -> preparing ->
+# confirmed | rejected, with "preparing"/interrupted records converging
+# instead of relaunching.
+
+def _submission_request_paths(
+    root: Path, token: str,
+) -> tuple[Path, Path] | tuple[None, None]:
+    common = _git_common_dir(root)
+    if common is None:
+        return None, None
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+    directory = common / WORKTREE_LEASES_DIR / SUBMISSION_REQUESTS_DIR
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory / f"req-{digest}.json", directory / f"req-{digest}.lock"
+
+
+def _submission_intent_digest(payload: dict) -> str:
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _submission_request_error(token: str) -> str | None:
+    if not SUBMISSION_REQUEST_TOKEN_RE.fullmatch(token or ""):
+        return (
+            "request id must be 1-128 characters of letters, digits, "
+            "'.', '_', ':' or '-'"
+        )
+    return None
+
+
+def _load_submission_request(record_path: Path) -> dict | None:
+    if not record_path.is_file():
+        return None
+    record = _load_json(record_path, None)
+    return record if isinstance(record, dict) else None
+
+
+def _write_submission_request(record_path: Path, record: dict) -> None:
+    record["updated_at"] = _now()
+    _save_json(record_path, record)
+
+
+def _submission_request_begin(
+    root: Path,
+    token: str,
+    intent_digest: str,
+    kind: str,
+    resolve_existing,
+):
+    """Open the durable request boundary for one creation attempt.
+
+    Returns (action, record, lock_fd). Actions:
+      proceed        caller may create; it must settle the record and release
+                     lock_fd afterwards
+      replay         same intent already confirmed; return the recorded result
+      replay-reject  same intent already rejected; repeat the rejection
+      conflict       token reused with a different intent
+      blocked        an interrupted attempt cannot be proven settled
+
+    resolve_existing(record) inspects durable state for an interrupted
+    attempt and returns the confirmed result payload (dict) if the earlier
+    attempt actually completed, else None.
+    """
+    record_path, lock_path = _submission_request_paths(root, token)
+    if record_path is None or lock_path is None:
+        return "proceed", None, None
+    fd = _acquire_lock_file(lock_path)
+    lock_handed_over = False
+    try:
+        record = _load_submission_request(record_path)
+        if record is None:
+            record = {
+                "version": 1,
+                "token": token,
+                "kind": kind,
+                "intent_digest": intent_digest,
+                "state": "preparing",
+                "created_at": _now(),
+                "result": {},
+                "error": "",
+            }
+            _write_submission_request(record_path, record)
+            lock_handed_over = True
+            return "proceed", record, fd
+        if record.get("intent_digest") != intent_digest or record.get("kind") != kind:
+            return "conflict", record, None
+        state = record.get("state")
+        if state == "confirmed":
+            return "replay", record, None
+        if state == "rejected":
+            return "replay-reject", record, None
+        # preparing: the earlier attempt was interrupted mid-flight. Converge
+        # from durable state instead of guessing.
+        resolved = resolve_existing(record) if resolve_existing else None
+        if resolved:
+            record["state"] = "confirmed"
+            record["result"] = resolved
+            _write_submission_request(record_path, record)
+            return "replay", record, None
+        return "blocked", record, None
+    finally:
+        if not lock_handed_over:
+            _release_lock_file(lock_path, fd)
+
+
+def _submission_request_note(root: Path, token: str, result: dict) -> None:
+    """Record the allocated identity while the caller still holds the lock."""
+    record_path, _lock_path = _submission_request_paths(root, token)
+    if record_path is None:
+        return
+    record = _load_submission_request(record_path) or {}
+    record["result"] = result
+    _write_submission_request(record_path, record)
+
+
+def _submission_request_settle(
+    root: Path,
+    token: str,
+    lock_fd,
+    state: str,
+    result: dict | None = None,
+    error: str = "",
+) -> None:
+    record_path, lock_path = _submission_request_paths(root, token)
+    if record_path is None or lock_fd is None:
+        return
+    try:
+        record = _load_submission_request(record_path) or {}
+        record["state"] = state
+        if result is not None:
+            record["result"] = result
+        if error:
+            record["error"] = error[-2000:]
+        _write_submission_request(record_path, record)
+    finally:
+        _release_lock_file(lock_path, lock_fd)
+
+
+def _submission_request_abandon(root: Path, token: str, lock_fd) -> None:
+    """Erase a request that was refused before any durable state existed.
+
+    Admission-style rejections (scope conflicts, busy sessions) are often
+    transient, so the same token must be retryable once the caller fixes the
+    input; only attempts that crossed the creation boundary keep a record.
+    """
+    record_path, lock_path = _submission_request_paths(root, token)
+    if record_path is None or lock_fd is None:
+        return
+    try:
+        try:
+            record_path.unlink()
+        except FileNotFoundError:
+            pass
+    finally:
+        _release_lock_file(lock_path, lock_fd)
+
+
 # ---------- worktree leases ----------
 
 def _worktree_lease_paths(root: Path) -> tuple[Path, Path] | tuple[None, None]:
@@ -5062,7 +5388,26 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
         }
         data.setdefault("leases", []).append(lease)
         _save_worktree_leases(root, data)
-        added = _git_process(root, "worktree", "add", "-b", branch, str(path), base_sha)
+        git_budget = _worktree_git_timeout()
+        try:
+            added = _git_process(
+                root, "worktree", "add", "-b", branch, str(path), base_sha,
+                timeout=git_budget,
+            )
+        except subprocess.TimeoutExpired:
+            # The checkout can take minutes on a loaded machine. Leave an
+            # honest failed lease instead of an "active" ghost, and sweep the
+            # half-materialized checkout so admission is not blocked.
+            lease["status"] = "failed"
+            lease["last_error"] = (
+                f"git worktree add timed out after {git_budget}s; "
+                f"raise {WORKTREE_GIT_TIMEOUT_ENV} on slow machines"
+            )
+            lease["updated_at"] = _now()
+            _save_worktree_leases(root, data)
+            _cleanup_interrupted_worktree(root, branch, path)
+            print(f"agentctl: {lease['last_error']}", file=sys.stderr)
+            return 2
         if added.returncode:
             lease["status"] = "failed"
             lease["last_error"] = (added.stderr or added.stdout).strip()[-2000:]
@@ -5081,9 +5426,20 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
         ]
         if create_args.deps:
             create_command.extend(["--deps", str(create_args.deps)])
-        created = subprocess.run(
-            create_command, cwd=str(path), text=True, capture_output=True, timeout=120,
-        )
+        try:
+            created = subprocess.run(
+                create_command, cwd=str(path), text=True, capture_output=True,
+                timeout=git_budget,
+            )
+        except subprocess.TimeoutExpired:
+            lease["status"] = "failed"
+            lease["last_error"] = (
+                f"task bootstrap timed out after {git_budget}s inside {path}"
+            )
+            lease["updated_at"] = _now()
+            _save_worktree_leases(root, data)
+            print(f"agentctl: {lease['last_error']}", file=sys.stderr)
+            return 2
         if created.returncode:
             lease["status"] = "failed"
             lease["last_error"] = (created.stderr or created.stdout).strip()[-2000:]
@@ -6798,9 +7154,66 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
     if watchdog_error:
         print(f"agentctl: {watchdog_error}", file=sys.stderr)
         return 1
+    request_token = (getattr(args, "request_id", "") or "").strip()
+    request_fd = None
+    if request_token:
+        token_error = _submission_request_error(request_token)
+        if token_error:
+            print(f"agentctl: {token_error}", file=sys.stderr)
+            return 2
+        intent_digest = _submission_intent_digest({
+            "kind": "run",
+            "task": str(task),
+            "command": [str(item) for item in command],
+            "cwd": str(cwd),
+            "outputs": sorted(outputs),
+            "resources": sorted(str(item) for item in args.resource or []),
+        })
+
+        def _resolve_started_run(record: dict):
+            allocated = str((record.get("result") or {}).get("run") or "")
+            if allocated and _runtime_lease(root, allocated):
+                return {"run": allocated}
+            return None
+
+        action, record, request_fd = _submission_request_begin(
+            root, request_token, intent_digest, "run", _resolve_started_run,
+        )
+        if action == "replay":
+            confirmed = str((record.get("result") or {}).get("run") or "")
+            print(
+                f"agentctl: request {request_token} already started run "
+                f"{confirmed}; not launching it again"
+            )
+            print(f"  inspect: python3 tools/agentctl.py run show {confirmed}")
+            return 0
+        if action == "replay-reject":
+            print(
+                f"agentctl: request {request_token} was already rejected: "
+                f"{record.get('error') or 'no recorded reason'}",
+                file=sys.stderr,
+            )
+            return 2
+        if action == "conflict":
+            print(
+                f"agentctl: request {request_token} was already used with a "
+                "different run intent; pick a new request id",
+                file=sys.stderr,
+            )
+            return 2
+        if action == "blocked":
+            print(
+                f"agentctl: request {request_token} has an interrupted attempt "
+                "with no registered run; inspect 'agentctl run list' for "
+                "leftovers, then retry with a new request id",
+                file=sys.stderr,
+            )
+            return 1
     lease_id = "run-" + hashlib.sha256(
         f"{task}:{_workflow_session_key()}:{time.time_ns()}".encode("utf-8")
     ).hexdigest()[:16]
+    if request_fd is not None:
+        _submission_request_note(root, request_token, {"run": lease_id})
     resource_leases = []
     for resource in args.resource or []:
         lease, error = _resource_acquire_one(
@@ -6813,6 +7226,8 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
                     holder_type="run", holder_id=lease_id,
                 )
             print(f"agentctl: {error}", file=sys.stderr)
+            if request_fd is not None:
+                _submission_request_abandon(root, request_token, request_fd)
             return 1
         resource_leases.append(lease)
     stdout_path, stderr_path = _run_log_paths(root, lease_id)
@@ -6865,6 +7280,14 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
             "created_at_ns": time.time_ns(),
         }
     _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(lease))
+    if request_fd is not None:
+        # The run lease is durable from here on; even if the supervisor fails
+        # to launch, this request maps to exactly this run and must never
+        # start a second one.
+        _submission_request_settle(
+            root, request_token, request_fd, "confirmed", {"run": lease_id},
+        )
+        request_fd = None
     supervisor_log_path = _runtime_runs_dir(root) / f"{lease_id}.supervisor.log"
     outcome = "pending"
     for spawn_attempt in (1, 2):
@@ -11801,6 +12224,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--model")
     sp.add_argument("--reasoning-effort")
     sp.add_argument("--force", action="store_true")
+    sp.add_argument("--request-id", default="")
     sp.set_defaults(func=cmd_work)
 
     sp = sub.add_parser("start")
@@ -11963,6 +12387,7 @@ def build_parser() -> argparse.ArgumentParser:
     rs.add_argument("--gpu-memory-min-mib", type=float)
     rs.add_argument("--gpu-probe-timeout-seconds", type=float)
     rs.add_argument("--gpu-idle-action", choices=["report", "terminate"])
+    rs.add_argument("--request-id", default="")
     rs.add_argument("command", nargs=argparse.REMAINDER)
     ra = rsub.add_parser("adopt")
     ra.add_argument("--pid", required=True)
