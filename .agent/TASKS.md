@@ -128,4 +128,5 @@
 | TA08B0CC413F151F5-017 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-017.md](tasks/TA08B0CC413F151F5-017.md) | idempotent submission boundary with request ids for auto-create and run start |
 | T126754FDB1001EB1-004 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-004.md](tasks/T126754FDB1001EB1-004.md) | review TA08B0CC413F151F5-017 idempotent requests |
 | T126754FDB1001EB1-005 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-005.md](tasks/T126754FDB1001EB1-005.md) | re-review TA08B0CC413F151F5-017 archive-state fix |
-| TA08B0CC413F151F5-018 | review | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-018.md](tasks/TA08B0CC413F151F5-018.md) | resource and worktree lease deadlock self-healing and diagnostics |
+| TA08B0CC413F151F5-018 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-018.md](tasks/TA08B0CC413F151F5-018.md) | resource and worktree lease deadlock self-healing and diagnostics |
+| TR334F227892EF8BEA-001 | done | independent-reviewer-018 | `.agent/` | [.agent/tasks/TR334F227892EF8BEA-001.md](tasks/TR334F227892EF8BEA-001.md) | independently review TA08B0CC413F151F5-018 interlock self-healing |
