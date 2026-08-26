@@ -36,7 +36,10 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] TA08B0CC413F151F5-017 - idempotent submission boundary with request ids for auto-create and run start (owner: cursor)
+- [ ] TA08B0CC413F151F5-018 - resource and worktree lease deadlock self-healing and diagnostics (owner: cursor)
+- [x] T126754FDB1001EB1-005 - re-review TA08B0CC413F151F5-017 archive-state fix (owner: supervisor)
+- [x] T126754FDB1001EB1-004 - review TA08B0CC413F151F5-017 idempotent requests (owner: supervisor)
+- [x] TA08B0CC413F151F5-017 - idempotent submission boundary with request ids for auto-create and run start (owner: cursor)
 - [ ] T126754FDB1001EB1-003 - archive aged board history (owner: supervisor)
 - [x] T126754FDB1001EB1-002 - review TA08B0CC413F151F5-016 rename references (owner: supervisor)
 - [x] TA08B0CC413F151F5-016 - point self-references at the renamed agent-workflow-kit repo (owner: cursor)

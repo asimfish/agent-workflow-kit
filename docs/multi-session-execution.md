@@ -215,6 +215,35 @@ resource leases whose holding run already resolved: holder binding is
 fail-closed, so without this a release that hit a registry lock stall at
 run completion would strand the resource forever.
 
+## Interlock Self-Healing
+
+The failure this section exists for: nobody is using a GPU, yet no task can
+claim it, because a dead holder still owns the lease and fail-closed holder
+binding stops everyone else from releasing it. The kit breaks these interlocks
+along three lines, ordered from automatic to manual:
+
+1. **Orphan sweeps.** Resource leases whose holder is demonstrably gone are
+   released automatically: a run holder whose lease is terminal (or missing
+   after a 10-minute registration grace window), and a conversation holder
+   whose session record says `released` (or whose record is gone entirely and
+   the lease is over an hour old). The sweep runs on every `run start` and —
+   new — whenever any resource acquisition hits a conflict, so a contested
+   acquire heals the orphan and retries once before reporting failure.
+   Releasing a session with `sessions release` also frees every resource that
+   session still holds. Stale sessions (lost heartbeat) are never auto-released
+   because the conversation may still be working.
+2. **Actionable rejections.** When an acquire is still refused after the
+   self-heal pass, the error names the holding lease, its holder identity and
+   task, when it was acquired, and whether the holder is live. If the holder is
+   demonstrably not live, the message includes the exact recovery command.
+3. **Operator escape hatch.** `agentctl resource release <lease-id>
+   --force-stale --reason <why>` releases a lease whose holder is stale,
+   released, terminal, or missing. Live holders are always refused, so the flag
+   cannot steal a resource that is genuinely in use; the release records who
+   forced it and why. `agentctl doctor` reports every lease stuck without a
+   live holder — including worktree leases whose task is already done and
+   `release_failed` external locks — with the command that resolves each one.
+
 ## Upgrade Barrier
 
 The install manifest records schema, kit version, source commit, and protocol

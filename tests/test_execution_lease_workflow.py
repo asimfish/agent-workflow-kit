@@ -891,7 +891,7 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             self.root, lambda data: data.setdefault("leases", []).extend(leases),
         )
 
-        workflow._release_orphaned_run_resources(self.root)
+        workflow._release_orphaned_resources(self.root)
 
         rows = {
             lease["id"]: lease
@@ -912,6 +912,253 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         self.assertTrue((lock_root / "live-run").exists())
         self.assertTrue((lock_root / "conversation").exists())
         self.assertTrue((lock_root / "starting-run").exists())
+
+    def write_session_record(self, key, **fields):
+        from tools import agentctl as workflow
+
+        record = {
+            "workflow_session_key": key,
+            "task": fields.pop("task", "T-900"),
+            "checkout": str(self.root.resolve()),
+            "heartbeat_at": workflow._now(),
+            "heartbeat_ns": time.time_ns(),
+        }
+        record.update(fields)
+        path = workflow._session_path(self.root, key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        workflow._save_json(path, record)
+
+    def test_resources_orphaned_by_released_sessions_are_released(self):
+        from tools import agentctl as workflow
+
+        lock_root = self.root / ".session-orphan-locks"
+
+        def provider(name):
+            path = lock_root / name
+            path.mkdir(parents=True)
+            (path / "owner.json").write_text("{}", encoding="utf-8")
+            return {"provider": "local-mkdir", "path": str(path)}
+
+        stale_ns = time.time_ns() - 10 * 3600 * 1_000_000_000
+        self.write_session_record("session-gone01", presence_status="released")
+        self.write_session_record("session-live01")
+        self.write_session_record("session-stale1", heartbeat_ns=stale_ns)
+        aged = (
+            workflow._dt.datetime.now() - workflow._dt.timedelta(hours=2)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+        leases = [
+            {"id": "resource-gonegonegonegone", "kind": "resource",
+             "status": "active", "created_at": aged,
+             "holder": {"type": "conversation", "id": "session-gone01"},
+             "provider": provider("released-session")},
+            {"id": "resource-livelivelivelive", "kind": "resource",
+             "status": "active", "created_at": aged,
+             "holder": {"type": "conversation", "id": "session-live01"},
+             "provider": provider("live-session")},
+            {"id": "resource-stalestalestale1", "kind": "resource",
+             "status": "active", "created_at": aged,
+             "holder": {"type": "conversation", "id": "session-stale1"},
+             "provider": provider("stale-session")},
+            {"id": "resource-oldmissingoldmis", "kind": "resource",
+             "status": "active", "created_at": aged,
+             "holder": {"type": "conversation", "id": "session-none01"},
+             "provider": provider("old-missing-session")},
+            {"id": "resource-newmissingnewmis", "kind": "resource",
+             "status": "active", "created_at": workflow._now(),
+             "holder": {"type": "conversation", "id": "session-none01"},
+             "provider": provider("new-missing-session")},
+        ]
+        workflow._update_runtime_leases(
+            self.root, lambda data: data.setdefault("leases", []).extend(leases),
+        )
+
+        workflow._release_orphaned_resources(self.root)
+
+        rows = {
+            lease["id"]: lease
+            for lease in workflow._load_runtime_leases(self.root)["leases"]
+            if isinstance(lease, dict)
+        }
+        self.assertEqual(rows["resource-gonegonegonegone"]["status"], "released")
+        self.assertEqual(
+            rows["resource-gonegonegonegone"]["release_reason"],
+            "holding session released without freeing the resource",
+        )
+        self.assertEqual(rows["resource-livelivelivelive"]["status"], "active")
+        self.assertEqual(rows["resource-stalestalestale1"]["status"], "active")
+        self.assertEqual(rows["resource-oldmissingoldmis"]["status"], "released")
+        self.assertEqual(
+            rows["resource-oldmissingoldmis"]["release_reason"],
+            "holding session record no longer exists",
+        )
+        self.assertEqual(rows["resource-newmissingnewmis"]["status"], "active")
+        self.assertFalse((lock_root / "released-session").exists())
+        self.assertTrue((lock_root / "live-session").exists())
+        self.assertTrue((lock_root / "stale-session").exists())
+        self.assertFalse((lock_root / "old-missing-session").exists())
+        self.assertTrue((lock_root / "new-missing-session").exists())
+
+    def test_acquire_self_heals_dead_holders_and_explains_live_conflicts(self):
+        from tools import agentctl as workflow
+
+        with mock.patch.dict(os.environ, {
+            "AGENT_WORKFLOW_RESOURCE_LOCK_DIR": str(self.root / ".resource-locks"),
+        }):
+            # A finished run left its resource behind: the next acquire
+            # must release the orphan and succeed instead of interlocking.
+            dead, error = workflow._resource_acquire_one(
+                self.root, "T-931", "host:heal:gpu:0",
+                "run", "run-deaddeaddeaddead",
+            )
+            self.assertIsNone(error)
+            workflow._update_runtime_leases(
+                self.root,
+                lambda data: data.setdefault("leases", []).append({
+                    "id": "run-deaddeaddeaddead", "kind": "run",
+                    "mode": "supervised", "status": "succeeded",
+                    "finished_at": workflow._now(),
+                }),
+            )
+            healed, error = workflow._resource_acquire_one(
+                self.root, "T-932", "host:heal:gpu:0",
+                "conversation", "session-live01",
+            )
+            self.assertIsNone(error, error)
+            rows = {
+                lease["id"]: lease
+                for lease in workflow._load_runtime_leases(self.root)["leases"]
+                if isinstance(lease, dict)
+            }
+            self.assertEqual(rows[dead["id"]]["status"], "released")
+            self.assertEqual(rows[healed["id"]]["status"], "active")
+
+            # A live conversation holder is a genuine conflict: the
+            # rejection must name the holder without inviting a forced
+            # release.
+            self.write_session_record("session-live01")
+            refused, error = workflow._resource_acquire_one(
+                self.root, "T-933", "host:heal:gpu:0",
+                "conversation", "session-other1",
+            )
+            self.assertIsNone(refused)
+            self.assertIn("conversation:session-live01", error)
+            self.assertIn("is active", error)
+            self.assertNotIn("--force-stale", error)
+
+            # A stale holder keeps the lock but the rejection must point
+            # at the recovery command.
+            stale_ns = time.time_ns() - 10 * 3600 * 1_000_000_000
+            self.write_session_record("session-stale1", heartbeat_ns=stale_ns)
+            held, error = workflow._resource_acquire_one(
+                self.root, "T-934", "host:heal:gpu:1",
+                "conversation", "session-stale1",
+            )
+            self.assertIsNone(error)
+            refused, error = workflow._resource_acquire_one(
+                self.root, "T-935", "host:heal:gpu:1",
+                "conversation", "session-other1",
+            )
+            self.assertIsNone(refused)
+            self.assertIn(held["id"], error)
+            self.assertIn("--force-stale", error)
+
+    def test_sessions_release_frees_resources_held_by_the_session(self):
+        self.start("one", "T-941", "outputs/T-941/")
+        acquired = self.agentctl(
+            "resource", "acquire", "host:release:gpu:0", session="one",
+        )
+        resource_id = self.lease_id(acquired.stdout, "resource")
+
+        released = self.agentctl(
+            "sessions", "release", "--reason", "handoff", session="one",
+        )
+        self.assertIn("released 1 resource lease(s)", released.stdout)
+        self.assertIn(resource_id, released.stdout)
+
+        rows = json.loads(
+            self.agentctl("resource", "status", "--json", session="two").stdout
+        )["resources"]
+        lease = next(row for row in rows if row["id"] == resource_id)
+        self.assertEqual(lease["status"], "released")
+        self.assertEqual(lease["release_reason"], "holding session released")
+
+    def test_force_stale_release_frees_dead_holders_but_refuses_live_ones(self):
+        from tools import agentctl as workflow
+
+        self.start("owner", "T-951", "outputs/T-951/")
+        self.start("peer", "T-952", "outputs/T-952/")
+        acquired = self.agentctl(
+            "resource", "acquire", "host:force:gpu:0", session="owner",
+        )
+        live_id = self.lease_id(acquired.stdout, "resource")
+
+        refused = self.agentctl(
+            "resource", "release", live_id, "--reason", "takeover",
+            "--force-stale", session="peer", expect=1,
+        )
+        self.assertIn("still live", refused.stderr)
+
+        # A lease held by a run that no longer exists is exactly the
+        # interlock the flag exists for.
+        lock_dir = self.root / ".resource-locks-dead"
+        lock_dir.mkdir()
+        (lock_dir / "owner.json").write_text("{}", encoding="utf-8")
+        workflow._update_runtime_leases(
+            self.root,
+            lambda data: data.setdefault("leases", []).append({
+                "id": "resource-deadholderdeadho", "kind": "resource",
+                "status": "active", "created_at": workflow._now(),
+                "resources": ["host:force:gpu:9"],
+                "holder": {"type": "run", "id": "run-vanished00000000"},
+                "provider": {"provider": "local-mkdir", "path": str(lock_dir)},
+            }),
+        )
+        self.agentctl(
+            "resource", "release", "resource-deadholderdeadho",
+            "--reason", "dead run cleanup", "--force-stale", session="peer",
+        )
+        rows = json.loads(
+            self.agentctl("resource", "status", "--json", session="peer").stdout
+        )["resources"]
+        forced = next(row for row in rows if row["id"] == "resource-deadholderdeadho")
+        self.assertEqual(forced["status"], "released")
+        self.assertEqual(forced["release_mode"], "force-stale")
+        self.assertFalse(lock_dir.exists())
+
+        self.agentctl(
+            "resource", "release", live_id, "--reason", "owner done",
+            session="owner",
+        )
+
+    def test_doctor_reports_leases_stuck_without_live_holders(self):
+        from tools import agentctl as workflow
+
+        stale_ns = time.time_ns() - 10 * 3600 * 1_000_000_000
+        self.write_session_record("session-stale1", heartbeat_ns=stale_ns)
+        workflow._update_runtime_leases(
+            self.root,
+            lambda data: data.setdefault("leases", []).extend([
+                {"id": "resource-stuckstuckstucks", "kind": "resource",
+                 "status": "active", "created_at": workflow._now(),
+                 "resources": ["host:doc:gpu:0"],
+                 "holder": {"type": "conversation", "id": "session-stale1"},
+                 "provider": {}},
+                {"id": "resource-failedfailedfail", "kind": "resource",
+                 "status": "release_failed", "release_error": "rmdir denied",
+                 "resources": ["host:doc:gpu:1"],
+                 "holder": {"type": "conversation", "id": "session-stale1"},
+                 "provider": {}},
+            ]),
+        )
+
+        findings = workflow._resource_interlock_findings(self.root)
+
+        text = "\n".join(findings)
+        self.assertIn("resource-stuckstuckstucks", text)
+        self.assertIn("session-stale1 is stale", text)
+        self.assertIn("--force-stale", text)
+        self.assertIn("resource-failedfailedfail", text)
+        self.assertIn("rmdir denied", text)
 
     def test_terminal_run_state_prunes_after_retention_window(self):
         from tools import agentctl as workflow
