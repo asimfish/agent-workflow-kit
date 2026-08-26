@@ -124,6 +124,17 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-reviewer-019": {
+      "role": "independent review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

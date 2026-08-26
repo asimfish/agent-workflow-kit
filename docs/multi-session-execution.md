@@ -238,11 +238,18 @@ along three lines, ordered from automatic to manual:
    demonstrably not live, the message includes the exact recovery command.
 3. **Operator escape hatch.** `agentctl resource release <lease-id>
    --force-stale --reason <why>` releases a lease whose holder is stale,
-   released, terminal, or missing. Live holders are always refused, so the flag
-   cannot steal a resource that is genuinely in use; the release records who
-   forced it and why. `agentctl doctor` reports every lease stuck without a
-   live holder — including worktree leases whose task is already done and
-   `release_failed` external locks — with the command that resolves each one.
+   released, terminal, or missing. Live holders are always refused, and a
+   missing holder is honored only after the same registration grace windows the
+   orphan sweep uses (10 minutes for run holders, 1 hour for conversation
+   holders), so the flag cannot steal a resource whose holder is genuinely in
+   use or still registering; the release records who forced it and why. The
+   liveness check and the release are not atomic — a stale session could
+   heartbeat back in the milliseconds between them — which is accepted because
+   the flag is an explicit operator action against a holder already silent for
+   at least 30 minutes, and the audit trail names who forced it. `agentctl
+   doctor` reports every lease stuck without a live holder — including worktree
+   leases whose task is already done and `release_failed` external locks — with
+   the command that resolves each one.
 
 ## Upgrade Barrier
 

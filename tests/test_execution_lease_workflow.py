@@ -1062,6 +1062,23 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             self.assertIn(held["id"], error)
             self.assertIn("--force-stale", error)
 
+            # A missing holder still inside the registration grace window
+            # may be a run whose lease registration is in flight: neither
+            # the self-heal sweep nor the rejection hint may treat it as
+            # dead.
+            pending, error = workflow._resource_acquire_one(
+                self.root, "T-936", "host:heal:gpu:2",
+                "run", "run-notyet0000000000",
+            )
+            self.assertIsNone(error)
+            refused, error = workflow._resource_acquire_one(
+                self.root, "T-937", "host:heal:gpu:2",
+                "conversation", "session-other1",
+            )
+            self.assertIsNone(refused)
+            self.assertIn(pending["id"], error)
+            self.assertNotIn("--force-stale", error)
+
     def test_sessions_release_frees_resources_held_by_the_session(self):
         self.start("one", "T-941", "outputs/T-941/")
         acquired = self.agentctl(
@@ -1098,8 +1115,9 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertIn("still live", refused.stderr)
 
-        # A lease held by a run that no longer exists is exactly the
-        # interlock the flag exists for.
+        # A missing holder inside the registration grace window may be a
+        # run that acquired its resources but has not registered its
+        # lease yet: force-stale must refuse it.
         lock_dir = self.root / ".resource-locks-dead"
         lock_dir.mkdir()
         (lock_dir / "owner.json").write_text("{}", encoding="utf-8")
@@ -1113,6 +1131,25 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
                 "provider": {"provider": "local-mkdir", "path": str(lock_dir)},
             }),
         )
+        too_young = self.agentctl(
+            "resource", "release", "resource-deadholderdeadho",
+            "--reason", "dead run cleanup", "--force-stale", session="peer",
+            expect=1,
+        )
+        self.assertIn("registration grace window", too_young.stderr)
+
+        # Past the grace window the same lease is exactly the interlock
+        # the flag exists for.
+        aged = (
+            workflow._dt.datetime.now() - workflow._dt.timedelta(hours=2)
+        ).strftime("%Y-%m-%d %H:%M:%S")
+
+        def age_lease(data):
+            for row in data.get("leases") or []:
+                if isinstance(row, dict) and row.get("id") == "resource-deadholderdeadho":
+                    row["created_at"] = aged
+
+        workflow._update_runtime_leases(self.root, age_lease)
         self.agentctl(
             "resource", "release", "resource-deadholderdeadho",
             "--reason", "dead run cleanup", "--force-stale", session="peer",
