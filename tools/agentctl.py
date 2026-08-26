@@ -6372,10 +6372,7 @@ def _acquire_rejection_detail(root: Path, resource: str, base_error: str) -> str
         f"(task {holding.get('task') or '-'}, since "
         f"{holding.get('created_at') or '-'}); {detail}"
     )
-    provably_dead = state in {"terminal", "released", "stale"} or (
-        state == "missing" and _missing_holder_grace_expired(holding)
-    )
-    if provably_dead:
+    if state in {"terminal", "released", "stale", "missing"}:
         message += (
             f"; the holder is not live, so any session may run "
             f"'agentctl resource release {holding.get('id')} --force-stale "
@@ -6548,15 +6545,6 @@ def _resource_release_stale(root: Path, lease_id: str, reason: str,
             f"resource lease {lease_id} holder is still live ({detail}); "
             f"forced release only applies to stale, released, terminal, or "
             f"missing holders"
-        )
-    if state == "missing" and not _missing_holder_grace_expired(lease):
-        # run start registers the run lease after acquiring resources, so
-        # a young missing holder may be a registration in flight rather
-        # than a dead one.
-        return False, (
-            f"resource lease {lease_id} holder is missing but the lease is "
-            f"still inside the registration grace window ({detail}); retry "
-            f"after the window passes if the holder never registers"
         )
     release_error = _external_resource_release(lease.get("provider") or {})
 
@@ -6827,24 +6815,6 @@ def _resource_holder_liveness(lease: dict, runs: dict[str, dict],
             return "released", f"session {holder_id} was released"
         return "stale", f"session {holder_id} is {observed}"
     return "unknown", f"unrecognized holder type {holder_type or '<unset>'}"
-
-
-def _missing_holder_grace_expired(lease: dict) -> bool:
-    """Whether a missing holder is old enough to prove the holder is gone.
-
-    Run leases are registered after their resources are acquired and
-    session records outlive their sessions, so a freshly created
-    resource lease with a missing holder may simply not be registered
-    yet. Mirrors the orphan-sweep grace windows: 10 minutes for run
-    holders, 1 hour for conversation holders. Missing or unparseable
-    created_at stays conservative and reports the grace as not expired.
-    """
-    created = _parse_workflow_timestamp(lease.get("created_at"))
-    if created is None:
-        return False
-    holder_type = str((lease.get("holder") or {}).get("type") or "")
-    window = _dt.timedelta(minutes=10) if holder_type == "run" else _dt.timedelta(hours=1)
-    return created < _dt.datetime.now() - window
 
 
 def _session_liveness_index(root: Path) -> dict[str, str]:
