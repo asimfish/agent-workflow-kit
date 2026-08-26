@@ -6319,6 +6319,68 @@ def _external_resource_release(provider: dict) -> str | None:
     return None
 
 
+def _acquire_rejection_detail(root: Path, resource: str, base_error: str) -> str:
+    """Explain who holds a contested resource and how to recover.
+
+    A bare lease id in the rejection forced operators to dig through the
+    registry by hand before they could tell a live holder from a dead
+    one. The detail names the holder, its liveness, and the exact
+    recovery command when the holder is demonstrably gone.
+    """
+    leases = [
+        item for item in _load_runtime_leases(root).get("leases") or []
+        if isinstance(item, dict)
+    ]
+    runs = {
+        str(item.get("id")): item
+        for item in leases
+        if item.get("kind") == "run" and item.get("id")
+    }
+    holding = next(
+        (item for item in leases
+         if item.get("kind") == "resource"
+         and item.get("status") not in {"released"}
+         and resource in (item.get("resources") or [])),
+        None,
+    )
+    if holding is None:
+        # The external lock exists but no local lease claims it: another
+        # checkout or host owns it. The lock's owner.json is the only
+        # evidence available.
+        try:
+            location = _resource_lock_location(resource)
+        except ValueError:
+            return base_error
+        if location.get("provider") == "local-mkdir":
+            owner = _load_json(Path(location["path"]) / "owner.json", {})
+            if owner:
+                return (
+                    f"{base_error}; the lock belongs to "
+                    f"{owner.get('holder_type') or 'unknown'}:"
+                    f"{owner.get('holder_id') or 'unknown'} "
+                    f"(task {owner.get('task') or '-'}, host {owner.get('host') or '-'}, "
+                    f"since {owner.get('created_at') or '-'}) recorded outside this "
+                    f"checkout's lease registry"
+                )
+        return base_error
+    holder = holding.get("holder") or {}
+    sessions = _session_liveness_index(root)
+    state, detail = _resource_holder_liveness(holding, runs, sessions)
+    message = (
+        f"{base_error}; lease {holding.get('id')} is held by "
+        f"{holder.get('type') or 'unknown'}:{holder.get('id') or 'unknown'} "
+        f"(task {holding.get('task') or '-'}, since "
+        f"{holding.get('created_at') or '-'}); {detail}"
+    )
+    if state in {"terminal", "released", "stale", "missing"}:
+        message += (
+            f"; the holder is not live, so any session may run "
+            f"'agentctl resource release {holding.get('id')} --force-stale "
+            f"--reason <why>' to break the interlock"
+        )
+    return message
+
+
 def _resource_acquire_one(root: Path, task: str, resource: str,
                           holder_type: str, holder_id: str) -> tuple[dict | None, str | None]:
     resource = resource.strip()
@@ -6339,7 +6401,14 @@ def _resource_acquire_one(root: Path, task: str, resource: str,
     }
     provider, error = _external_resource_acquire(resource, owner)
     if error:
-        return None, error
+        # The contested lock may be held by a dead run or a released
+        # session; releasing demonstrably orphaned leases and retrying
+        # once turns the historical "nobody uses the GPU but nobody can
+        # claim it" interlock into a self-healing conflict.
+        _release_orphaned_resources(root)
+        provider, error = _external_resource_acquire(resource, owner)
+    if error:
+        return None, _acquire_rejection_detail(root, resource, error)
     lease = {
         "id": lease_id,
         "kind": "resource",
@@ -6395,6 +6464,106 @@ def _resource_release_by_id(
 
     _update_runtime_leases(root, update)
     return release_error is None, release_error or "released"
+
+
+def _release_session_resources(root: Path, session_key: str,
+                               reason: str) -> tuple[list[str], list[str]]:
+    """Release every active resource lease held by a session.
+
+    Called when the session itself is released: holder binding is
+    fail-closed, so without this sweep the resources of a released
+    session could only be freed by the orphan grace path an hour later,
+    or by hand. Returns (released ids, failure descriptions).
+    """
+    held = [
+        dict(item) for item in _load_runtime_leases(root).get("leases") or []
+        if isinstance(item, dict)
+        and item.get("kind") == "resource"
+        and item.get("status") not in {"released", "release_failed"}
+        and (item.get("holder") or {}).get("type") == "conversation"
+        and str((item.get("holder") or {}).get("id") or "") == session_key
+    ]
+    released: list[str] = []
+    failures: list[str] = []
+    for item in held:
+        lease_id = str(item.get("id") or "")
+        error = _external_resource_release(item.get("provider") or {})
+
+        def update(data: dict, lease_id=lease_id, error=error) -> None:
+            for row in data.get("leases") or []:
+                if not isinstance(row, dict) or row.get("id") != lease_id:
+                    continue
+                if row.get("status") in {"released", "release_failed"}:
+                    continue
+                row["status"] = "release_failed" if error else "released"
+                row["released_at"] = _now()
+                row["release_reason"] = reason
+                row["release_error"] = error
+                row["heartbeat_at"] = _now()
+                break
+
+        try:
+            _update_runtime_leases(root, update)
+        except TimeoutError:
+            failures.append(f"{lease_id}: lease registry lock timed out")
+            continue
+        if error:
+            failures.append(f"{lease_id}: {error}")
+        else:
+            released.append(lease_id)
+    return released, failures
+
+
+def _resource_release_stale(root: Path, lease_id: str, reason: str,
+                            forced_by: str) -> tuple[bool, str]:
+    """Release a resource lease whose holder is demonstrably not live.
+
+    The escape hatch for interlocks the automatic sweeps will not touch
+    (stale sessions keep their resources because the conversation may
+    still be working). Live holders are always refused, so this cannot
+    steal a resource that is genuinely in use.
+    """
+    lease = _runtime_lease(root, lease_id)
+    if not lease or lease.get("kind") != "resource":
+        return False, f"resource lease not found: {lease_id}"
+    if lease.get("status") == "released":
+        return True, "already released"
+    leases = [
+        item for item in _load_runtime_leases(root).get("leases") or []
+        if isinstance(item, dict)
+    ]
+    runs = {
+        str(item.get("id")): item
+        for item in leases
+        if item.get("kind") == "run" and item.get("id")
+    }
+    state, detail = _resource_holder_liveness(
+        lease, runs, _session_liveness_index(root),
+    )
+    if state in {"live", "unknown"}:
+        return False, (
+            f"resource lease {lease_id} holder is still live ({detail}); "
+            f"forced release only applies to stale, released, terminal, or "
+            f"missing holders"
+        )
+    release_error = _external_resource_release(lease.get("provider") or {})
+
+    def update(data: dict) -> None:
+        for item in data.get("leases") or []:
+            if isinstance(item, dict) and item.get("id") == lease_id:
+                item["status"] = "release_failed" if release_error else "released"
+                item["released_at"] = _now()
+                item["release_reason"] = reason
+                item["release_error"] = release_error
+                item["release_mode"] = "force-stale"
+                item["released_by"] = forced_by
+                item["heartbeat_at"] = _now()
+                break
+
+    _update_runtime_leases(root, update)
+    if release_error:
+        return False, release_error
+    return True, f"released ({detail})"
 
 
 def _run_process_cwd(pid: int) -> Path | None:
@@ -6614,15 +6783,79 @@ def _parse_workflow_timestamp(value) -> _dt.datetime | None:
         return None
 
 
-def _release_orphaned_run_resources(root: Path) -> None:
-    """Release resource leases whose holding run already finished.
+def _resource_holder_liveness(lease: dict, runs: dict[str, dict],
+                              sessions: dict[str, str]) -> tuple[str, str]:
+    """Classify how alive the holder of a resource lease still is.
 
-    The supervisor releases its resources when a run resolves, but a
-    registry lock stall at exactly that moment used to strand the lease
-    forever: holder binding is fail-closed, so no conversation could
-    release a run-held resource afterwards. The holding run's terminal
-    (or already pruned) lease in the same registry is the release
-    evidence; conversation-held and live-run resources are never touched.
+    Returns (state, detail) where state is one of "live", "terminal"
+    (run finished), "released" (session released), "stale" (session lost
+    its heartbeat), "missing" (no holder record at all), or "unknown"
+    (unrecognized holder type; always treated as live). Anything but
+    hard evidence of death stays "live" so automation never touches a
+    resource a working holder might still need.
+    """
+    holder = lease.get("holder") or {}
+    holder_type = str(holder.get("type") or "")
+    holder_id = str(holder.get("id") or "")
+    if holder_type == "run":
+        run = runs.get(holder_id)
+        if run is None:
+            return "missing", f"run {holder_id or '<unknown>'} is not in the lease registry"
+        status = str(run.get("status") or "")
+        if status in {"succeeded", "failed", "cancelled"}:
+            return "terminal", f"run {holder_id} finished with status {status}"
+        return "live", f"run {holder_id} status {status or '<unset>'}"
+    if holder_type == "conversation":
+        observed = sessions.get(holder_id)
+        if observed is None:
+            return "missing", f"session {holder_id or '<unknown>'} has no record"
+        if observed in {"active", "review", "approved", "done"}:
+            return "live", f"session {holder_id} is {observed}"
+        if observed == "released":
+            return "released", f"session {holder_id} was released"
+        return "stale", f"session {holder_id} is {observed}"
+    return "unknown", f"unrecognized holder type {holder_type or '<unset>'}"
+
+
+def _session_liveness_index(root: Path) -> dict[str, str]:
+    """Map each session key to its most-alive observed status.
+
+    A session key can appear once per checkout; resource holder binding
+    only records the key, so any live record keeps the holder live.
+    """
+    rank = {"active": 5, "review": 4, "approved": 4, "done": 4,
+            "released": 2, "stale": 1, "orphaned": 1}
+    index: dict[str, str] = {}
+    for row in _session_rows_unlocked(root):
+        key = str(row.get("workflow_session_key") or "")
+        observed = str(row.get("observed_status") or "stale")
+        if not key:
+            continue
+        if rank.get(observed, 0) > rank.get(index.get(key, ""), 0):
+            index[key] = observed
+    return index
+
+
+def _release_orphaned_resources(root: Path) -> None:
+    """Release resource leases whose holder demonstrably no longer needs them.
+
+    Holder binding is fail-closed, so a resource stranded by a dead
+    holder can never be released through the normal path and blocks
+    every later acquisition of the same resource - the interlock where
+    nobody uses a GPU but nobody can claim it either. Release evidence
+    stays conservative:
+
+    - run holders: the run lease is terminal, or missing after the
+      registration grace window (run start acquires resources before it
+      registers the run lease);
+    - conversation holders: the session record says released, or the
+      record is gone entirely and the resource lease is over an hour old
+      (records outlive sessions, so a missing record means it was
+      cleaned up long after the session ended).
+
+    Stale sessions (lost heartbeat) are never auto-released because the
+    conversation may still be working; those go through the operator
+    path (`resource release --force-stale`).
     """
     leases = [
         item for item in _load_runtime_leases(root).get("leases") or []
@@ -6633,38 +6866,49 @@ def _release_orphaned_run_resources(root: Path) -> None:
         for item in leases
         if item.get("kind") == "run" and item.get("id")
     }
-    orphaned = []
+    sessions: dict[str, str] | None = None
+    orphaned: dict[str, str] = {}
+    now = _dt.datetime.now()
     for item in leases:
         if item.get("kind") != "resource":
             continue
         if item.get("status") in {"released", "release_failed"}:
             continue
-        holder = item.get("holder") or {}
-        if str(holder.get("type") or "") != "run":
-            continue
-        holder_run = runs.get(str(holder.get("id") or ""))
-        if holder_run is None:
-            # run start acquires resources before it registers the run
-            # lease, so a concurrent hygiene pass can observe a brand-new
-            # resource whose holder is not registered yet. A missing holder
-            # only proves a pruned (terminal) run once the resource lease
-            # has aged past the grace window; unparseable timestamps stay
-            # conservative and keep the lease.
-            created = _parse_workflow_timestamp(item.get("created_at"))
-            if created is None or created >= _dt.datetime.now() - _dt.timedelta(
-                minutes=10,
-            ):
+        holder_type = str((item.get("holder") or {}).get("type") or "")
+        if holder_type == "conversation" and sessions is None:
+            sessions = _session_liveness_index(root)
+        state, _detail = _resource_holder_liveness(item, runs, sessions or {})
+        created = _parse_workflow_timestamp(item.get("created_at"))
+        if holder_type == "run":
+            if state == "terminal":
+                reason = "holding run finished without releasing"
+            elif state == "missing":
+                # A missing holder only proves a pruned (terminal) run once
+                # the resource lease has aged past the grace window;
+                # unparseable timestamps stay conservative and keep the lease.
+                if created is None or created >= now - _dt.timedelta(minutes=10):
+                    continue
+                reason = "holding run finished without releasing"
+            else:
                 continue
-        elif str(holder_run.get("status") or "") not in {
-            "succeeded", "failed", "cancelled",
-        }:
+        elif holder_type == "conversation":
+            if state == "released":
+                reason = "holding session released without freeing the resource"
+            elif state == "missing":
+                if created is None or created >= now - _dt.timedelta(hours=1):
+                    continue
+                reason = "holding session record no longer exists"
+            else:
+                continue
+        else:
             continue
-        orphaned.append(dict(item))
+        orphaned[str(item.get("id") or "")] = reason
     if not orphaned:
         return
     release_errors = {
         str(item.get("id") or ""): _external_resource_release(item.get("provider") or {})
-        for item in orphaned
+        for item in leases
+        if str(item.get("id") or "") in orphaned
     }
 
     def update(data: dict) -> None:
@@ -6679,7 +6923,7 @@ def _release_orphaned_run_resources(root: Path) -> None:
             error = release_errors[lease_id]
             item["status"] = "release_failed" if error else "released"
             item["released_at"] = _now()
-            item["release_reason"] = "holding run finished without releasing"
+            item["release_reason"] = orphaned[lease_id]
             item["release_error"] = error
             item["heartbeat_at"] = _now()
 
@@ -6698,11 +6942,11 @@ def _prune_terminal_run_state(root: Path) -> None:
     long ago. Live, non-terminal, and recent state is never touched, and
     release_failed resource leases are kept because they flag manual
     attention. Retention is `run_artifact_retention_days` in the runtime
-    policy (default 14; 0 disables pruning). Releasing resources orphaned
+    policy (default 14; 0 disables pruning).     Releasing resources orphaned
     by finished runs is correctness rather than hygiene, so it always runs
     regardless of the retention setting.
     """
-    _release_orphaned_run_resources(root)
+    _release_orphaned_resources(root)
     configured = _runtime_policy(root).get("run_artifact_retention_days", 14)
     try:
         retention_days = float(configured)
@@ -7686,10 +7930,15 @@ def cmd_resource(args: argparse.Namespace) -> int:
         print(f"agentctl: resource lease {lease['id']} acquired for {args.resource}")
         return 0
     if args.resource_action == "release":
-        ok, detail = _resource_release_by_id(
-            root, args.lease, args.reason,
-            holder_type="conversation", holder_id=_workflow_session_key(),
-        )
+        if getattr(args, "force_stale", False):
+            ok, detail = _resource_release_stale(
+                root, args.lease, args.reason, _workflow_session_key(),
+            )
+        else:
+            ok, detail = _resource_release_by_id(
+                root, args.lease, args.reason,
+                holder_type="conversation", holder_id=_workflow_session_key(),
+            )
         if not ok:
             print(f"agentctl: {detail}", file=sys.stderr)
             return 1
@@ -11474,6 +11723,81 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def _resource_interlock_findings(root: Path) -> list[str]:
+    """Report resource and worktree leases stuck without a live holder.
+
+    These are exactly the interlocks where progress and hardware stay
+    blocked although nobody is working: a dead holder keeps the lease,
+    and fail-closed binding stops everyone else from releasing it. Each
+    finding names the evidence and the command that resolves it.
+    """
+    findings: list[str] = []
+    leases = [
+        item for item in _load_runtime_leases(root).get("leases") or []
+        if isinstance(item, dict)
+    ]
+    runs = {
+        str(item.get("id")): item
+        for item in leases
+        if item.get("kind") == "run" and item.get("id")
+    }
+    sessions: dict[str, str] | None = None
+    for item in leases:
+        if item.get("kind") != "resource":
+            continue
+        if item.get("status") in {"released"}:
+            continue
+        if item.get("status") == "release_failed":
+            findings.append(
+                f"resource lease {item.get('id')} failed to release its external "
+                f"lock ({item.get('release_error') or 'unknown error'}); remove the "
+                f"lock by hand and re-run 'agentctl resource release "
+                f"{item.get('id')} --force-stale --reason cleanup'"
+            )
+            continue
+        if sessions is None:
+            sessions = _session_liveness_index(root)
+        state, detail = _resource_holder_liveness(item, runs, sessions)
+        if state in {"live", "unknown"}:
+            continue
+        resources = ",".join(item.get("resources") or []) or "-"
+        findings.append(
+            f"resource lease {item.get('id')} ({resources}) has no live holder: "
+            f"{detail}; automatic sweeps release terminal-run and "
+            f"released-session holders, or run 'agentctl resource release "
+            f"{item.get('id')} --force-stale --reason <why>'"
+        )
+    board_tasks = _load_board(root).get("tasks") or {}
+    try:
+        worktree_rows = _worktree_rows(root)
+    except RuntimeError as exc:
+        # Doctor's dedicated worktree check reports the enumeration
+        # failure as a problem; here it only means the worktree half of
+        # the interlock scan could not run.
+        findings.append(f"worktree interlock check skipped: {exc}")
+        return findings
+    for row in worktree_rows:
+        status = str(row.get("status") or "")
+        if status == "released":
+            continue
+        task = str(row.get("task") or "")
+        entry = board_tasks.get(task) if isinstance(board_tasks, dict) else None
+        task_status = str((entry or {}).get("status") or "")
+        if status == "active" and task_status == "done":
+            findings.append(
+                f"worktree lease {row.get('id')} is active but its task {task} "
+                f"is done; run 'agentctl worktree release {row.get('id')}' to "
+                f"free the checkout"
+            )
+        elif status == "failed":
+            findings.append(
+                f"worktree lease {row.get('id')} failed "
+                f"({row.get('last_error') or 'creation interrupted'}); run "
+                f"'agentctl worktree release {row.get('id')}' to clear it"
+            )
+    return findings
+
+
 def _doctor_report(root: Path) -> dict:
     problems: list[str] = []
     warnings: list[str] = []
@@ -11539,6 +11863,17 @@ def _doctor_report(root: Path) -> dict:
         "name": "manual check",
         "status": "ok" if not manual_problems else "fail",
         "detail": "agentctl check --mode manual equivalent",
+    })
+
+    interlocks = _resource_interlock_findings(root)
+    warnings.extend(interlocks)
+    checks.append({
+        "name": "resource interlocks",
+        "status": "ok" if not interlocks else "warn",
+        "detail": (
+            "no leases stuck without a live holder" if not interlocks
+            else f"{len(interlocks)} lease(s) stuck without a live holder"
+        ),
     })
 
     open_follow_ups = _loop_follow_up_packets(root)
@@ -11999,6 +12334,20 @@ def _sessions_release(root: Path, args: argparse.Namespace) -> int:
         _render_sessions_view(root)
     finally:
         _release_lock_file(lock, fd)
+    # Free the resources this session held; the holder binding is
+    # fail-closed, so nothing else can release them once the session is
+    # gone. Runs after the coordination lock is dropped because the lease
+    # registry uses its own lock.
+    released, failures = _release_session_resources(
+        root, target, "holding session released",
+    )
+    if released:
+        print(
+            f"agentctl: released {len(released)} resource lease(s) held by "
+            f"session {target}: {', '.join(released)}"
+        )
+    for failure in failures:
+        print(f"agentctl: warning: resource release failed: {failure}", file=sys.stderr)
     print(f"agentctl: released session {target}; task state was preserved for handoff")
     return 0
 
@@ -12423,9 +12772,16 @@ def build_parser() -> argparse.ArgumentParser:
     racquire.add_argument("resource")
     rstatus = rsub.add_parser("status")
     rstatus.add_argument("--json", action="store_true")
-    rrelease = rsub.add_parser("release")
+    # allow_abbrev=False keeps a bare `--force` an error instead of a
+    # silent abbreviation of --force-stale.
+    rrelease = rsub.add_parser("release", allow_abbrev=False)
     rrelease.add_argument("lease")
     rrelease.add_argument("--reason", required=True)
+    rrelease.add_argument(
+        "--force-stale", dest="force_stale", action="store_true",
+        help="Release a lease whose holder is demonstrably not live "
+             "(stale, released, terminal, or missing); live holders are refused",
+    )
     sp.set_defaults(func=cmd_resource)
 
     sp = sub.add_parser("_run-supervise", help=argparse.SUPPRESS)
