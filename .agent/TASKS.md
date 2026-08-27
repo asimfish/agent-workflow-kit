@@ -134,3 +134,8 @@
 | TR848898A27705AD09-001 | done | independent-reviewer-019 | `.agent/` | [.agent/tasks/TR848898A27705AD09-001.md](tasks/TR848898A27705AD09-001.md) | independently review TA08B0CC413F151F5-019 grace-window fix |
 | TA08B0CC413F151F5-020 | done | supervisor | `.agent/` | [.agent/tasks/TA08B0CC413F151F5-020.md](tasks/TA08B0CC413F151F5-020.md) | board hygiene: close decided reviews and archive aged done tasks |
 | TRA08B0CC413F151F5-001 | done | supervisor | `.agent/` | [.agent/tasks/TRA08B0CC413F151F5-001.md](tasks/TRA08B0CC413F151F5-001.md) | board hygiene: close decided reviews |
+| TA08B0CC413F151F5-021 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-021.md](tasks/TA08B0CC413F151F5-021.md) | refuse task-document overwrites and widen auto task-id derivation |
+| T65757D037BF480DD-001 | done | independent-reviewer-021 | `.agent/` | [.agent/tasks/T65757D037BF480DD-001.md](tasks/T65757D037BF480DD-001.md) | independent review of TA08B0CC413F151F5-021 |
+| TA08B0CC413F151F5-022 | todo | - | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-022.md](tasks/TA08B0CC413F151F5-022.md) | follow-ups from -021 review: force forwarding, guard branch tests, exemption hardening |
+| TA08B0CC413F151F5-023 | todo | - | `tools/, docs/, tests/` | [.agent/tasks/TA08B0CC413F151F5-023.md](tasks/TA08B0CC413F151F5-023.md) | pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) |
+| TA08B0CC413F151F5-024 | in_progress | cursor | `README.md, README_CN.md, docs/, CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-024.md](tasks/TA08B0CC413F151F5-024.md) | refresh README for real-world use and document the worktree merge-back path |
