@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] REVIEW-021-GUARD - review TA08B0CC413F151F5-021 overwrite guard (owner: independent-reviewer-021)
 - [ ] TA08B0CC413F151F5-021 - refuse task-document overwrites and widen auto task-id derivation (owner: cursor)
 - [x] TRA08B0CC413F151F5-001 - board hygiene: close decided reviews (owner: supervisor)
 - [x] TA08B0CC413F151F5-020 - board hygiene: close decided reviews and archive aged done tasks (owner: supervisor)
