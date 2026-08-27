@@ -135,6 +135,15 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-reviewer-021": {
+      "role": "independent review",
+      "backend": "cursor-subagent transcript 65f43434-0011-4358-83fe-5c74ecf7b8aa",
+      "write_scope": [],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

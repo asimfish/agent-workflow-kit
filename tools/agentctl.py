@@ -1832,8 +1832,71 @@ def _task_id_namespace_key(root: Path) -> bytes:
     return key
 
 
+def _claimed_task_ids(root: Path) -> set[str]:
+    """Every task id this checkout can prove is already taken.
+
+    The board alone can lag behind reality: a task claimed by a live session
+    or leased to an unmerged worktree may not be on this checkout's board
+    yet, and task documents (including archived ones) keep owning their
+    identifiers after board entries move on. Deriving fresh ids from the
+    board alone is how one task can silently collide with -- and later
+    overwrite -- another, so collect ids from every durable source.
+    """
+    claimed: set[str] = set(_load_board(root).get("tasks", {}))
+    for base in (
+        root / WORKFLOW_DIR / TASKS_DIR,
+        root / WORKFLOW_DIR / "archive",
+    ):
+        if base.is_dir():
+            claimed.update(doc.stem for doc in base.rglob("*.md"))
+    for row in _session_rows_unlocked(root):
+        task = str(row.get("task") or "")
+        if task:
+            claimed.add(task)
+    # Read the lease registry without taking its lock: task creation can run
+    # inside a bootstrap subprocess while the parent already holds the lock,
+    # and an unreconciled (possibly stale) claim only makes this set a safe
+    # superset of the truly taken ids.
+    for lease in _load_worktree_leases(root).get("leases") or []:
+        if not isinstance(lease, dict) or lease.get("status") == "released":
+            continue
+        task = str(lease.get("task") or "")
+        if task:
+            claimed.add(task)
+    return claimed
+
+
+def _foreign_task_claim(root: Path, task: str) -> str | None:
+    """Describe who else already claims this task id, if anyone.
+
+    Claims made by this very session or by this checkout's own worktree
+    lease are not foreign: worktree bootstrap legitimately creates the task
+    record inside the freshly leased checkout, and a session may recreate a
+    record it already owns.
+    """
+    session_key = _workflow_session_key()
+    for row in _session_rows_unlocked(root):
+        if str(row.get("task") or "") != task:
+            continue
+        if str(row.get("workflow_session_key") or "") == session_key:
+            continue
+        return f"live session {row.get('workflow_session_key')}"
+    archive_base = root / WORKFLOW_DIR / "archive"
+    if archive_base.is_dir() and any(archive_base.rglob(f"{task}.md")):
+        return "an archived task document"
+    current = str(root.resolve())
+    for lease in _load_worktree_leases(root).get("leases") or []:
+        if not isinstance(lease, dict) or lease.get("status") == "released":
+            continue
+        if str(lease.get("task") or "") != task:
+            continue
+        if str(Path(lease.get("path") or "").resolve()) == current:
+            continue
+        return f"worktree lease {lease.get('id')}"
+    return None
+
+
 def _next_task_id(root: Path, prefix: str = "T") -> str:
-    board = _load_board(root)
     session_key = _workflow_session_key()
     shard = hashlib.sha256(
         _task_id_namespace_key(root) + b"\0" + session_key.encode("utf-8")
@@ -1841,7 +1904,7 @@ def _next_task_id(root: Path, prefix: str = "T") -> str:
     namespaced_prefix = f"{prefix}{shard}"
     max_num = 0
     pattern = re.compile(rf"^{re.escape(namespaced_prefix)}-(\d+)$")
-    for tid in board.get("tasks", {}):
+    for tid in _claimed_task_ids(root):
         m = pattern.match(tid)
         if m:
             max_num = max(max_num, int(m.group(1)))
@@ -3535,14 +3598,35 @@ def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
         return 2
     now = _now()
     board = _load_board(root)
+    doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
     if task in board.get("tasks", {}) and not args.force:
         print(f"agentctl: task {task} already exists (use --force)", file=sys.stderr)
         return 1
+    if task not in board.get("tasks", {}) and not args.force:
+        # A task document (live or archived) or an active claim proves the id
+        # is taken even when this checkout's board has not caught up. Refuse
+        # instead of silently re-registering someone else's task.
+        if doc.is_file():
+            print(
+                f"agentctl: task document .agent/tasks/{task}.md already exists "
+                f"but {task} is not on this checkout's board; the board is "
+                "likely out of date. Sync the checkout or pick another id "
+                "(--force re-registers the board entry and keeps the document)",
+                file=sys.stderr,
+            )
+            return 1
+        foreign = _foreign_task_claim(root, task)
+        if foreign:
+            print(
+                f"agentctl: task id {task} is already claimed by {foreign}; "
+                "pick another id (--force overrides)",
+                file=sys.stderr,
+            )
+            return 1
     board.setdefault("tasks", {})[task] = {"title": title, "type": task_type, "status": "todo",
                                            "owner": owner or None, "scope": scope, "deps": deps,
                                            "created_at": now, "updated_at": now}
     _save_board(root, board)
-    doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
     if not doc.is_file():
         tmpl = _read(root / WORKFLOW_DIR / TASKS_DIR / "_template.md")
         if tmpl:
