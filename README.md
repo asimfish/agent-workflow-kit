@@ -97,11 +97,33 @@ hooks are coordination guardrails, and untrusted code still needs a real
 sandbox. Jobs started outside `agentctl run` (raw ssh, systemd) are
 reported but not managed.
 
+## Status and known limitations
+
+The controller, the lease model, GPU supervision, and the review gate are
+covered by 208 regression tests, CI on Linux and Windows, and a
+seven-scenario acceptance run against a fresh clone. The acceptance run
+was adversarial where it matters: forged lease timestamps, deleted session
+records, orphaned resources, replayed creation requests, and a same-runtime
+approval attempt were all refused or healed as designed.
+
+Three rough edges are known and tracked on the board:
+
+- **Worktree merge-back is manual.** Finishing a task inside a worktree
+  leaves its completion record on the feature branch, and nothing walks it
+  to an approved merge for you. The working path is documented in
+  `docs/worktree-merge-back.md`; tooling is tracked as task
+  `TA08B0CC413F151F5-023`.
+- `work --auto-create --request-id` silently resumes the session's active
+  task even when the request describes different work (low; same task).
+- A few refusal messages suggest a next step that does not actually
+  resolve the refusal (low; same task).
+
 ## Documentation
 
 - `docs/install-and-upgrade.md` -- install, upgrade, migration
 - `docs/workflow.md` -- the task lifecycle, review gates, worktrees
 - `docs/multi-session-execution.md` -- coordination rules and GPU supervision
+- `docs/worktree-merge-back.md` -- walking a finished worktree task to an approved merge
 - `docs/loop-engineering.md` -- checkpoint loops
 - `docs/harness-evaluation.md` -- evaluating changes to the kit itself
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`

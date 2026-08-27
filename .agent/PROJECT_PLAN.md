@@ -213,3 +213,5 @@ Format: `- YYYY-MM-DD HH:MM:SS - <agent-or-human> - <change and reason>.`
 - 2026-07-10 13:43:00 - codex - completed the bounded dispatch implementation and cleared stale worker allocation; M2 remains in progress pending real-session dogfood.
 - 2026-07-10 22:18:00 - codex - started M3 with resumable cycle state and explicit stop/recovery semantics before adding scheduler or worktree automation.
 - 2026-07-20 14:55:15 - codex - integrated concurrent task histories; main IDs remain canonical and feature collisions are recorded in `.agent/decisions/20260720-concurrent-task-id-collisions.md`.
+
+- [ ] TA08B0CC413F151F5-024 refresh README for real-world use and document the worktree merge-back path

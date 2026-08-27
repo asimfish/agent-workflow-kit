@@ -30,3 +30,21 @@ and resources orphaned by finished runs release themselves (#37).
 Two test-suite fixes (#31, #32), a rewritten README with an architecture
 diagram (#38), and open-source packaging: license, contributing guide,
 citation file, issue templates, bilingual README (#39).
+
+Later in the cycle: aged done tasks archive off the live board via
+`reconcile archive` (#42), self-references follow the repository rename to
+agent-workflow-kit (#43), creation commands accept a `--request-id` token
+that makes `work --auto-create` and `run start` idempotent under retries,
+and worktree bootstrap survives `git worktree add` hangs (#44). Resource
+interlocks -- leases held by dead runs or vanished conversations -- now
+self-heal on the next acquisition attempt, `resource release --force-stale`
+breaks provably dead locks, and `doctor` reports interlocked leases with
+the exact recovery command (#45, registration grace windows honored in
+#46). A board hygiene sweep closed 22 legacy review-status tasks (#47).
+
+Task ids are no longer derived from the board alone: creation collects
+claims from task documents, archives, live sessions, and worktree leases,
+and refuses to overwrite a task id that belongs to someone else (#48).
+Found by a seven-scenario acceptance run against a fresh clone, which the
+fixed revision then passed end to end -- including adversarial state
+surgery against the interlock, idempotency, and review-gate guards.
