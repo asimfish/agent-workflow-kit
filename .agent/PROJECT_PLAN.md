@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] TR024-REVIEW-001 - independent review of the readme refresh (TA08B0CC413F151F5-024) (owner: independent-reviewer-024)
 - [x] TA08B0CC413F151F5-021 - refuse task-document overwrites and widen auto task-id derivation (owner: cursor)
 - [x] TRA08B0CC413F151F5-001 - board hygiene: close decided reviews (owner: supervisor)
 - [x] TA08B0CC413F151F5-020 - board hygiene: close decided reviews and archive aged done tasks (owner: supervisor)
@@ -214,4 +215,5 @@ Format: `- YYYY-MM-DD HH:MM:SS - <agent-or-human> - <change and reason>.`
 - 2026-07-10 22:18:00 - codex - started M3 with resumable cycle state and explicit stop/recovery semantics before adding scheduler or worktree automation.
 - 2026-07-20 14:55:15 - codex - integrated concurrent task histories; main IDs remain canonical and feature collisions are recorded in `.agent/decisions/20260720-concurrent-task-id-collisions.md`.
 
-- [ ] TA08B0CC413F151F5-024 refresh README for real-world use and document the worktree merge-back path
+- [ ] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)
+- [x] TA08B0CC413F151F5-024 refresh README for real-world use and document the worktree merge-back path

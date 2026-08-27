@@ -135,4 +135,6 @@
 | TA08B0CC413F151F5-020 | done | supervisor | `.agent/` | [.agent/tasks/TA08B0CC413F151F5-020.md](tasks/TA08B0CC413F151F5-020.md) | board hygiene: close decided reviews and archive aged done tasks |
 | TRA08B0CC413F151F5-001 | done | supervisor | `.agent/` | [.agent/tasks/TRA08B0CC413F151F5-001.md](tasks/TRA08B0CC413F151F5-001.md) | board hygiene: close decided reviews |
 | TA08B0CC413F151F5-021 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-021.md](tasks/TA08B0CC413F151F5-021.md) | refuse task-document overwrites and widen auto task-id derivation |
-| TA08B0CC413F151F5-024 | review | cursor | `README.md, README_CN.md, docs/, CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-024.md](tasks/TA08B0CC413F151F5-024.md) | refresh README for real-world use and document the worktree merge-back path |
+| TA08B0CC413F151F5-023 | todo | - | `tools/, docs/, tests/` | [.agent/tasks/TA08B0CC413F151F5-023.md](tasks/TA08B0CC413F151F5-023.md) | pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) |
+| TA08B0CC413F151F5-024 | done | cursor | `README.md, README_CN.md, docs/, CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-024.md](tasks/TA08B0CC413F151F5-024.md) | refresh README for real-world use and document the worktree merge-back path |
+| TR024-REVIEW-001 | done | independent-reviewer-024 | `.agent/` | [.agent/tasks/TR024-REVIEW-001.md](tasks/TR024-REVIEW-001.md) | independent review of the readme refresh (TA08B0CC413F151F5-024) |

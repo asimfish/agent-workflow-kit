@@ -78,9 +78,12 @@ implementation. In practice:
 
 ```bash
 # register the reviewer once (planning checkout)
-agentctl agents register --name <reviewer> --role review
+agentctl agents add --id <reviewer> --role "independent review"
 
-# the reviewer needs an active review task before the gate will listen
+# the reviewer needs an active review task before the gate will listen;
+# create one (type review, owner <reviewer>) if it does not exist yet
+agentctl task create --id <REVIEW-TASK-ID> --title "review of <TASK-ID>" \
+    --type review --scope ".agent/" --owner <reviewer>
 AGENT_WORKFLOW_SESSION_ID=<reviewer-session> agentctl work \
     --agent <reviewer> --task <REVIEW-TASK-ID>
 
