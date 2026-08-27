@@ -1900,7 +1900,7 @@
     "TA08B0CC413F151F5-024": {
       "title": "refresh README for real-world use and document the worktree merge-back path",
       "type": "docs",
-      "status": "in_progress",
+      "status": "done",
       "owner": "cursor",
       "scope": [
         "README.md",
@@ -1910,7 +1910,19 @@
       ],
       "deps": [],
       "created_at": "2026-08-28 03:13:46",
-      "updated_at": "2026-08-28 03:13:46"
+      "updated_at": "2026-08-28 04:05:22"
+    },
+    "TR024-REVIEW-001": {
+      "title": "independent review of the readme refresh (TA08B0CC413F151F5-024)",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-024",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-28 03:49:09",
+      "updated_at": "2026-08-28 04:06:52"
     }
   }
 }

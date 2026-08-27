@@ -1,10 +1,10 @@
-# TA08B0CC413F151F5-024 - refresh README for real-world use and document the worktree merge-back path
+# TR024-REVIEW-001 - independent review of the readme refresh (TA08B0CC413F151F5-024)
 
 Status: done
-Owner: cursor
-Agent: cursor
-Created: 2026-08-28 03:13:46
-Updated: 2026-08-28 03:13:46
+Owner: independent-reviewer-024
+Agent: independent-reviewer-024
+Created: 2026-08-28 03:49:09
+Updated: 2026-08-28 03:49:09
 
 ## Format Rules
 
@@ -32,7 +32,7 @@ Updated: 2026-08-28 03:13:46
 
 ## Work Scope
 
-- Allowed write scope: `README.md, README_CN.md, docs/, CHANGELOG.md`
+- Allowed write scope: `.agent/`
 - Files likely to touch:
 - Files explicitly out of scope:
 
@@ -58,8 +58,8 @@ Format: `- YYYY-MM-DD HH:MM:SS <short factual update>`.
   - Workflow checks pass and task-specific acceptance criteria are met.
 
 ## Completion Record
-- Summary: README/README_CN gained a status-and-known-limitations section reflecting the S1-S7 acceptance run; docs/worktree-merge-back.md documents the manual finish-to-gate path with conflict rules and failure-message table; CHANGELOG caught up on #42-#48
-- Tests: docs-only change; utf-8 integrity check on all four files passed; 208-test suite green on this revision in CI (main a0a4a93)
-- Worker-runtimes: host-runtime:9b2d3c21837d49890a509a12e90e4a79
-- Completed-at: 2026-08-28 03:47:39
-- Completed-at-ns: 1787860059504325000
+- Summary: Round-2 independent review of TA08B0CC413F151F5-024: verified both round-1 blockers fixed (agents add --id command real, task create flags match CLI; TA08B0CC413F151F5-023 ledger carried onto branch byte-identical with board/TASKS/PROJECT_PLAN entries), regression checks clean (tools/ untouched, UTF-8 valid, 208 tests, board 024 in review), gate approved with non-blocking nits noted in .agent/gates/TA08B0CC413F151F5-024.md
+- Tests: read-only review: agentctl agents/task/gate/worktree/reconcile -h cross-checks, pytest --collect-only (208 tests), UTF-8 reads on all four docs, git diff a0a4a93..HEAD --stat -- tools/ empty
+- Worker-runtimes: host-runtime:d452a4d4b4d3ffbe4941ed58c43026a8
+- Completed-at: 2026-08-28 04:06:52
+- Completed-at-ns: 1787861212251947000

@@ -138,4 +138,5 @@
 | T65757D037BF480DD-001 | done | independent-reviewer-021 | `.agent/` | [.agent/tasks/T65757D037BF480DD-001.md](tasks/T65757D037BF480DD-001.md) | independent review of TA08B0CC413F151F5-021 |
 | TA08B0CC413F151F5-022 | todo | - | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-022.md](tasks/TA08B0CC413F151F5-022.md) | follow-ups from -021 review: force forwarding, guard branch tests, exemption hardening |
 | TA08B0CC413F151F5-023 | todo | - | `tools/, docs/, tests/` | [.agent/tasks/TA08B0CC413F151F5-023.md](tasks/TA08B0CC413F151F5-023.md) | pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) |
-| TA08B0CC413F151F5-024 | in_progress | cursor | `README.md, README_CN.md, docs/, CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-024.md](tasks/TA08B0CC413F151F5-024.md) | refresh README for real-world use and document the worktree merge-back path |
+| TA08B0CC413F151F5-024 | done | cursor | `README.md, README_CN.md, docs/, CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-024.md](tasks/TA08B0CC413F151F5-024.md) | refresh README for real-world use and document the worktree merge-back path |
+| TR024-REVIEW-001 | done | independent-reviewer-024 | `.agent/` | [.agent/tasks/TR024-REVIEW-001.md](tasks/TR024-REVIEW-001.md) | independent review of the readme refresh (TA08B0CC413F151F5-024) |

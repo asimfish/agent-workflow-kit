@@ -36,7 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] TA08B0CC413F151F5-024 - refresh README for real-world use and document the worktree merge-back path (owner: cursor)
+- [x] TR024-REVIEW-001 - independent review of the readme refresh (TA08B0CC413F151F5-024) (owner: independent-reviewer-024)
+- [x] TA08B0CC413F151F5-024 - refresh README for real-world use and document the worktree merge-back path (owner: cursor)
 - [ ] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)
 - [ ] TA08B0CC413F151F5-022 - follow-ups from -021 review: force forwarding, guard branch tests, exemption hardening
 - [x] T65757D037BF480DD-001 - independent review of TA08B0CC413F151F5-021 (owner: independent-reviewer-021)
