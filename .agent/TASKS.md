@@ -134,3 +134,4 @@
 | TR848898A27705AD09-001 | done | independent-reviewer-019 | `.agent/` | [.agent/tasks/TR848898A27705AD09-001.md](tasks/TR848898A27705AD09-001.md) | independently review TA08B0CC413F151F5-019 grace-window fix |
 | TA08B0CC413F151F5-020 | done | supervisor | `.agent/` | [.agent/tasks/TA08B0CC413F151F5-020.md](tasks/TA08B0CC413F151F5-020.md) | board hygiene: close decided reviews and archive aged done tasks |
 | TRA08B0CC413F151F5-001 | done | supervisor | `.agent/` | [.agent/tasks/TRA08B0CC413F151F5-001.md](tasks/TRA08B0CC413F151F5-001.md) | board hygiene: close decided reviews |
+| TA08B0CC413F151F5-021 | in_progress | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-021.md](tasks/TA08B0CC413F151F5-021.md) | refuse task-document overwrites and widen auto task-id derivation |
