@@ -135,4 +135,3 @@
 | TA08B0CC413F151F5-020 | done | supervisor | `.agent/` | [.agent/tasks/TA08B0CC413F151F5-020.md](tasks/TA08B0CC413F151F5-020.md) | board hygiene: close decided reviews and archive aged done tasks |
 | TRA08B0CC413F151F5-001 | done | supervisor | `.agent/` | [.agent/tasks/TRA08B0CC413F151F5-001.md](tasks/TRA08B0CC413F151F5-001.md) | board hygiene: close decided reviews |
 | TA08B0CC413F151F5-021 | review | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-021.md](tasks/TA08B0CC413F151F5-021.md) | refuse task-document overwrites and widen auto task-id derivation |
-| REVIEW-021-GUARD | todo | independent-reviewer-021 | `.agent/` | [.agent/tasks/REVIEW-021-GUARD.md](tasks/REVIEW-021-GUARD.md) | review TA08B0CC413F151F5-021 overwrite guard |
