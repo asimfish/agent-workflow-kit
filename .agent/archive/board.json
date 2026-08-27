@@ -594,7 +594,1872 @@
       "deps": [],
       "created_at": "2026-07-15 21:18:07",
       "updated_at": "2026-07-16 19:40:22"
+    },
+    "T-033": {
+      "title": "reconcile merged GitHub reviews",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-16 19:36:15",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-034": {
+      "title": "harden GitHub reconciliation trust boundary",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-16 19:47:06",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-035": {
+      "title": "paginate GitHub reconciliation file evidence",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-16 19:57:07",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-036": {
+      "title": "bind GitHub reconciliation authority and compatibility",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-16 20:03:54",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-037": {
+      "title": "remove GitHub reconciliation pagination caps",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-16 20:16:02",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-038": {
+      "title": "coordinate concurrent sessions in one project",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/",
+        "README.md",
+        "templates/project/",
+        ".agent/",
+        "integrations/",
+        ".codex/",
+        ".claude/",
+        ".cursor/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-17 23:59:01",
+      "updated_at": "2026-07-18 01:43:03"
+    },
+    "T-039": {
+      "title": "independent review T-038 multi-session coordination",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 01:07:29",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-040": {
+      "title": "close T-038 multi-session review follow-ups",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 01:45:40",
+      "updated_at": "2026-07-18 02:03:28"
+    },
+    "T-041": {
+      "title": "independent review T-040 multi-session follow-up fixes",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 01:56:17",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-042": {
+      "title": "package approved multi-session release",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "README.md",
+        "tools/",
+        "tests/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:05:38",
+      "updated_at": "2026-07-18 03:30:29"
+    },
+    "T-043": {
+      "title": "fix Windows guidance receipt integrity CI",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:16:07",
+      "updated_at": "2026-07-18 02:44:52"
+    },
+    "T-044": {
+      "title": "Review T-043 signing-key binary write",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:33:00",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-045": {
+      "title": "accept recorded reviewer runtime identities",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:46:26",
+      "updated_at": "2026-07-18 02:59:55"
+    },
+    "T-046": {
+      "title": "T-046 independent review T-045 recorded runtime identities",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 02:53:42",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-047": {
+      "title": "fix Windows binary signing regression mock",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 03:05:19",
+      "updated_at": "2026-07-18 03:18:12"
+    },
+    "T-048": {
+      "title": "review T-047 binary signing mock fix",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 03:14:25",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-049": {
+      "title": "reconcile merged multi-session release",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 03:26:21",
+      "updated_at": "2026-07-18 03:31:21"
+    },
+    "T-050": {
+      "title": "independent supervisor reconcile T-049 PR #7 evidence",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 03:29:00",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-051": {
+      "title": "isolate forked conversation sessions",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "integrations/",
+        "templates/project/",
+        "docs/",
+        "README.md",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 08:59:08",
+      "updated_at": "2026-07-18 11:19:44"
+    },
+    "T-052": {
+      "title": "independently review forked-session isolation",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 09:45:45",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-053": {
+      "title": "close fork isolation review findings",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/tools/",
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 10:08:41",
+      "updated_at": "2026-07-18 11:20:03"
+    },
+    "T-054": {
+      "title": "independently re-review fork isolation fixes",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 10:30:02",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-055": {
+      "title": "prevent fork fallback to parent controller session",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/tools/",
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 10:41:39",
+      "updated_at": "2026-07-18 11:20:08"
+    },
+    "T-056": {
+      "title": "independently verify controller fork fail closed",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 11:04:40",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-057": {
+      "title": "migrate legacy workflow sessions",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-18 23:56:09",
+      "updated_at": "2026-07-19 02:46:00"
+    },
+    "T-058": {
+      "title": "independently review T-057 legacy session migration",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [
+        "T-057"
+      ],
+      "created_at": "2026-07-19 01:15:41",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-059": {
+      "title": "close T-058 terminal mutation identity gap",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 01:27:31",
+      "updated_at": "2026-07-19 02:46:23"
+    },
+    "T-060": {
+      "title": "independent gate review for T-057 and T-059",
+      "status": "done",
+      "owner": "independent-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 01:52:33",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-061": {
+      "title": "close T-060 identity policy review findings",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 02:11:37",
+      "updated_at": "2026-07-19 02:46:33"
+    },
+    "T-062": {
+      "title": "second independent gate re-review for T-057 T-059 and T-061",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 02:22:44",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-063": {
+      "title": "package approved multi-session migration release",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 02:51:22",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-064": {
+      "title": "enforce document ownership and scope-aware receipts",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 03:25:22",
+      "updated_at": "2026-07-19 03:53:17"
+    },
+    "T-065": {
+      "title": "independently review T-064 document ownership and receipts",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 03:49:46",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-066": {
+      "title": "extend controller-owned files to registry, bus, handoffs, and eval runs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 03:55:33",
+      "updated_at": "2026-07-19 04:39:44"
+    },
+    "T-067": {
+      "title": "independently review T-066 ownership inventory extension",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 04:43:49",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-068": {
+      "title": "reject start on unknown task ids",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 04:46:50",
+      "updated_at": "2026-07-19 04:59:22"
+    },
+    "T-069": {
+      "title": "independently review T-065 T-067 T-068",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 04:55:50",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-070": {
+      "title": "package document ownership release",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 05:01:32",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "T-071": {
+      "title": "deflake loop inflight reconciliation regression",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tests/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 05:07:44",
+      "updated_at": "2026-07-19 05:21:41"
+    },
+    "T-072": {
+      "title": "independently review T-071 loop test deflake",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 05:21:08",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-073": {
+      "title": "close interpreter write escapes and explicit auto-create claim",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 12:23:19",
+      "updated_at": "2026-07-19 21:30:58"
+    },
+    "T-074": {
+      "title": "independently review T-073 write escape closure",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 21:28:40",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-075": {
+      "title": "exclusive opaque writes and default-deny unknown executables",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 22:00:24",
+      "updated_at": "2026-07-19 23:14:38"
+    },
+    "T-076": {
+      "title": "independently review T-075 opaque write isolation",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 23:13:01",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-077": {
+      "title": "default-deny git subcommands and shell metacharacters",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 23:31:50",
+      "updated_at": "2026-07-19 23:48:14"
+    },
+    "T-078": {
+      "title": "independently review T-077 git and shell metacharacter hardening",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-19 23:46:22",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-079": {
+      "title": "verify read-only allowlist strictly and fix git read misclassifications",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 00:37:31",
+      "updated_at": "2026-07-20 01:09:19"
+    },
+    "T-080": {
+      "title": "independently review T-079 argument-verified allowlist",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 01:04:21",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-081": {
+      "title": "close newline, redirect, mv-source, and shared-ref gaps",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 02:52:46",
+      "updated_at": "2026-07-20 06:42:26"
+    },
+    "T-082": {
+      "title": "independently review T-081 shell parse and shared-ref fixes",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 06:24:53",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-088": {
+      "title": "block ancestor and glob paths that exceed task scope",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 07:01:51",
+      "updated_at": "2026-07-20 12:06:14"
+    },
+    "T-089": {
+      "title": "independently review T-088 scope containment",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:04:26",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-090": {
+      "title": "block symlink and hardlink creation aliasing peer scopes",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:22:24",
+      "updated_at": "2026-07-20 12:35:34"
+    },
+    "T-091": {
+      "title": "independently review T-090 symlink guard and efficiency",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:31:14",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-092": {
+      "title": "skip contamination scan when no peers to avoid over-block and cost",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:40:16",
+      "updated_at": "2026-07-20 13:01:12"
+    },
+    "T-093": {
+      "title": "independently review T-092 solo scan skip",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:00:04",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-094": {
+      "title": "halve read-only hook latency by removing redundant status spawn",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:08:03",
+      "updated_at": "2026-07-20 13:25:25"
+    },
+    "T-095": {
+      "title": "independently review T-094 read-only hook latency",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:24:36",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-096": {
+      "title": "make worktree escape hatch guidance actionable end to end",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:33:07",
+      "updated_at": "2026-07-20 13:52:34"
+    },
+    "T-097": {
+      "title": "independently review T-096 worktree escape hatch",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:51:26",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-098": {
+      "title": "enforce scope on loop check commands",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:10:39",
+      "updated_at": "2026-07-20 14:43:57"
+    },
+    "T-099": {
+      "title": "independently review T-098 loop command scope guard",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:41:30",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-100": {
+      "title": "refuse eval run against a checkout with a live peer session",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:49:01",
+      "updated_at": "2026-07-20 15:03:59"
+    },
+    "T-101": {
+      "title": "independently review T-100 eval target isolation",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:03:27",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-102": {
+      "title": "warn instead of silently overriding existing git hooks on init",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:11:48",
+      "updated_at": "2026-07-20 15:28:52"
+    },
+    "T-103": {
+      "title": "independently review T-102 hook override warnings",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:27:47",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T-104": {
+      "title": "make checkpoint debounce change-aware per its documented contract",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 16:25:49",
+      "updated_at": "2026-07-20 17:06:51"
+    },
+    "T-105": {
+      "title": "independently review T-104 change-aware debounce",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 17:06:12",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "TB0621800D60E51C4-001": {
+      "title": "implement unified multi-session execution architecture",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "tests/",
+        "templates/project/",
+        "integrations/",
+        "docs/",
+        "README.md",
+        ".github/",
+        ".githooks/",
+        "hooks/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-23 17:38:48",
+      "updated_at": "2026-08-11 22:09:18"
+    },
+    "T-083": {
+      "title": "close independent review isolation gaps",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 02:57:49",
+      "updated_at": "2026-07-20 02:57:49",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T-084": {
+      "title": "independently review T-082 review record and T-083 isolation fixes (PR #17)",
+      "status": "done",
+      "owner": "independent-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:06:45",
+      "updated_at": "2026-08-12 02:26:18",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T-085": {
+      "title": "review T-081 resubmission and T-083/T-084 evidence",
+      "status": "done",
+      "owner": "independent-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:36:31",
+      "updated_at": "2026-08-27 15:53:05",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T-086": {
+      "title": "integrate independent T-081 review evidence",
+      "status": "done",
+      "owner": "codex-integrator",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:47:14",
+      "updated_at": "2026-08-27 15:53:05",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T-087": {
+      "title": "close residual shared-checkout isolation boundaries",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "README.md",
+        "docs/",
+        ".codex/",
+        ".claude/",
+        ".cursor/",
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 04:50:30",
+      "updated_at": "2026-08-27 15:53:05",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T17F063E6115138DE-001": {
+      "title": "close residual repo-wide Git guard gaps",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agent_workflow_hook.py",
+        "templates/project/tools/agent_workflow_hook.py",
+        "tests/test_multi_session_workflow.py"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:56:06",
+      "updated_at": "2026-07-20 12:56:06",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:29"
+      }
+    },
+    "T17F063E6115138DE-002": {
+      "title": "package and publish approved concurrent isolation release",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:44:50",
+      "updated_at": "2026-08-27 15:53:05",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:32"
+      }
+    },
+    "T17F063E6115138DE-003": {
+      "title": "ignore already-published commits in pre-push scan",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".githooks/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:47:32",
+      "updated_at": "2026-07-20 13:47:32",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-004": {
+      "title": "exclude already-published commits from pre-push validation",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "hooks/",
+        ".githooks/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:51:04",
+      "updated_at": "2026-07-20 13:51:04",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-005": {
+      "title": "release pre-push published-commit fix",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "hooks/",
+        ".githooks/",
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:44:18",
+      "updated_at": "2026-08-27 15:53:05",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-006": {
+      "title": "integrate concurrent main advances without history loss",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".claude/",
+        ".codex/",
+        ".cursor/",
+        "hooks/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:55:14",
+      "updated_at": "2026-07-20 14:55:14",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-007": {
+      "title": "release approved concurrent main integration",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".claude/",
+        ".codex/",
+        ".cursor/",
+        "hooks/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:59:21",
+      "updated_at": "2026-08-27 15:53:05",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T17F063E6115138DE-008": {
+      "title": "integrate final main advances for concurrent release",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md",
+        ".githooks/",
+        ".claude/",
+        ".codex/",
+        ".cursor/",
+        "hooks/",
+        "integrations/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 16:04:13",
+      "updated_at": "2026-07-20 16:04:13",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T3B43382C2174B290-001": {
+      "title": "review final main advance integration",
+      "status": "done",
+      "owner": "codex-gpt55-final-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 16:30:27",
+      "updated_at": "2026-08-12 02:26:18",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:33"
+      }
+    },
+    "T622DE1DE69A1D0F8-001": {
+      "title": "independently review T-098 concurrent isolation recovery",
+      "status": "done",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/",
+        "docs/",
+        "README.md"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 12:26:27",
+      "updated_at": "2026-08-27 15:53:05",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:35"
+      }
+    },
+    "TA74E81A93FF7EB9D-001": {
+      "title": "review concurrent main integration and collision migration",
+      "status": "done",
+      "owner": "claude-sonnet-merge-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 15:24:11",
+      "updated_at": "2026-08-12 02:26:18",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:35"
+      }
+    },
+    "TA80D9103F5316278-001": {
+      "title": "independently review residual repo-wide Git guard closure",
+      "status": "done",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/",
+        "tools/",
+        "templates/project/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 13:26:45",
+      "updated_at": "2026-08-27 15:53:05",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:37"
+      }
+    },
+    "TD851EF749F675DC5-001": {
+      "title": "review pre-push published-commit filter",
+      "status": "done",
+      "owner": "claude-sonnet-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-20 14:17:11",
+      "updated_at": "2026-08-12 02:26:18",
+      "migration": {
+        "source": "legacy-task-views",
+        "migrated_at": "2026-07-23 18:18:37"
+      }
+    },
+    "TB0621800D60E51C4-002": {
+      "title": "independent review of unified multi-session architecture",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-07-23 21:30:01",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "T3D6917C0AC71CAAE-001": {
+      "title": "isolate stale session admission and supervise idle GPU runs",
+      "type": "code",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/",
+        "templates/project/tools/",
+        "tests/",
+        "docs/",
+        "README.md"
+      ],
+      "deps": [],
+      "created_at": "2026-08-11 16:52:41",
+      "updated_at": "2026-08-11 22:09:42"
+    },
+    "TA08B0CC413F151F5-001": {
+      "title": "make upgrade barrier legacy fixture hermetic",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-11 22:32:46",
+      "updated_at": "2026-08-11 22:43:01"
+    },
+    "T8BA964DFB191095A-001": {
+      "title": "independent review of upgrade fixture deflake",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-11 22:42:30",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "TA08B0CC413F151F5-002": {
+      "title": "widen gpu watchdog phase-exempt test timing margins",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 00:12:05",
+      "updated_at": "2026-08-12 00:26:24"
+    },
+    "T62E2091C45F77EE5-001": {
+      "title": "independent review of gpu watchdog test deflake",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 00:25:35",
+      "updated_at": "2026-08-12 02:26:18"
+    },
+    "TA08B0CC413F151F5-003": {
+      "title": "close decided review tasks on finish and reconcile backlog",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 01:51:50",
+      "updated_at": "2026-08-12 02:24:40"
+    },
+    "T258C28F1DAE958F4-001": {
+      "title": "independent review of decided-review closure",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 02:24:07",
+      "updated_at": "2026-08-12 02:24:53"
+    },
+    "TA08B0CC413F151F5-004": {
+      "title": "persist supervised run terminal state through lock contention",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 03:25:58",
+      "updated_at": "2026-08-12 04:18:04"
+    },
+    "TF96DBC8BC409FA2D-001": {
+      "title": "independent review of supervisor persistence hardening",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 04:17:23",
+      "updated_at": "2026-08-12 04:18:14"
+    },
+    "TA08B0CC413F151F5-005": {
+      "title": "verify windows run stop tree at runtime in ci",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        ".github/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 04:42:05",
+      "updated_at": "2026-08-12 04:48:30"
+    },
+    "TA4590F0D1CAC6C44-001": {
+      "title": "independent review of windows run stop ci coverage",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 04:47:58",
+      "updated_at": "2026-08-12 04:48:41"
+    },
+    "TA08B0CC413F151F5-006": {
+      "title": "portable kill signal for windows run termination",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 05:01:39",
+      "updated_at": "2026-08-12 05:10:06"
+    },
+    "TCA99BA4AB445E207-001": {
+      "title": "independent review of portable windows kill signal",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 05:09:35",
+      "updated_at": "2026-08-12 05:10:21"
+    },
+    "T4116DD2E51AFDABA-001": {
+      "title": "independent review of portable windows kill signal",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 05:12:34",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "TA08B0CC413F151F5-007": {
+      "title": "retention pruning for terminal run leases and artifacts",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:05:52",
+      "updated_at": "2026-08-12 06:14:13"
+    },
+    "TBFEA0B292CCCB26E-001": {
+      "title": "independent review of run state retention pruning",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:13:43",
+      "updated_at": "2026-08-12 06:14:27"
+    },
+    "TA08B0CC413F151F5-008": {
+      "title": "release resources orphaned by finished runs",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:38:06",
+      "updated_at": "2026-08-12 06:48:46"
+    },
+    "T4C7B83C03F3DE7D5-001": {
+      "title": "independent review of orphaned resource self-heal",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:48:15",
+      "updated_at": "2026-08-12 06:48:59"
+    },
+    "TA08B0CC413F151F5-009": {
+      "title": "grace window for missing-holder resource release",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:50:34",
+      "updated_at": "2026-08-12 06:56:47"
+    },
+    "T5CCA8C280CC6FDD5-001": {
+      "title": "independent review of missing-holder grace window",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 06:56:19",
+      "updated_at": "2026-08-12 06:57:00"
+    },
+    "TA08B0CC413F151F5-010": {
+      "title": "restructure readme into a concise entry page",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 21:42:43",
+      "updated_at": "2026-08-12 22:03:48"
+    },
+    "T76B9194109FD03F0-001": {
+      "title": "independent review of readme restructure",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 21:55:55",
+      "updated_at": "2026-08-12 21:57:23"
+    },
+    "TE475DD513ACDF9CA-001": {
+      "title": "re-review of readme restructure fixes",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-12 22:03:15",
+      "updated_at": "2026-08-12 22:04:06"
+    },
+    "TA08B0CC413F151F5-011": {
+      "title": "open source packaging: license, contributing, architecture diagram, bilingual readme",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "LICENSE",
+        "CONTRIBUTING.md",
+        "CHANGELOG.md",
+        "CITATION.cff",
+        ".github/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 01:41:12",
+      "updated_at": "2026-08-13 01:56:00"
+    },
+    "TE228821572B5963B-001": {
+      "title": "independent review of oss packaging",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 01:55:09",
+      "updated_at": "2026-08-13 01:56:32"
+    },
+    "TA08B0CC413F151F5-012": {
+      "title": "rewrite readmes in plain human prose",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 04:34:34",
+      "updated_at": "2026-08-13 04:45:02"
+    },
+    "TB764E661F72A7FD7-001": {
+      "title": "independent review of plain prose rewrite",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 04:44:13",
+      "updated_at": "2026-08-13 04:45:18"
+    },
+    "TA08B0CC413F151F5-013": {
+      "title": "repair invalid utf-8 bytes in changelog",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 04:47:47",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "TA08B0CC413F151F5-014": {
+      "title": "surface supervisor logs in test failures",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tests/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 05:09:16",
+      "updated_at": "2026-08-13 05:17:20"
+    },
+    "T13F0C74DBED8E114-001": {
+      "title": "independent review of supervisor log diagnostics",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-2",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-13 05:16:51",
+      "updated_at": "2026-08-13 05:17:37"
+    },
+    "TA08B0CC413F151F5-015": {
+      "title": "archive aged done tasks out of the live board",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 04:28:43",
+      "updated_at": "2026-08-14 05:07:54"
+    },
+    "T126754FDB1001EB1-001": {
+      "title": "review TA08B0CC413F151F5-015 archive feature",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 05:03:32",
+      "updated_at": "2026-08-14 05:08:04"
+    },
+    "TA08B0CC413F151F5-016": {
+      "title": "point self-references at the renamed agent-workflow-kit repo",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "docs/",
+        "CITATION.cff"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 05:20:32",
+      "updated_at": "2026-08-14 05:41:20"
+    },
+    "T126754FDB1001EB1-002": {
+      "title": "review TA08B0CC413F151F5-016 rename references",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-14 05:41:08",
+      "updated_at": "2026-08-14 05:41:28"
+    },
+    "T126754FDB1001EB1-003": {
+      "title": "archive aged board history",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-16 01:08:00",
+      "updated_at": "2026-08-27 15:53:05"
+    },
+    "TA08B0CC413F151F5-017": {
+      "title": "idempotent submission boundary with request ids for auto-create and run start",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-25 02:12:20",
+      "updated_at": "2026-08-25 04:57:17"
+    },
+    "T126754FDB1001EB1-004": {
+      "title": "review TA08B0CC413F151F5-017 idempotent requests",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-25 04:35:12",
+      "updated_at": "2026-08-25 04:42:47"
+    },
+    "T126754FDB1001EB1-005": {
+      "title": "re-review TA08B0CC413F151F5-017 archive-state fix",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-25 04:57:01",
+      "updated_at": "2026-08-25 04:57:28"
+    },
+    "TA08B0CC413F151F5-018": {
+      "title": "resource and worktree lease deadlock self-healing and diagnostics",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-25 06:11:12",
+      "updated_at": "2026-08-26 20:50:52"
+    },
+    "TR334F227892EF8BEA-001": {
+      "title": "independently review TA08B0CC413F151F5-018 interlock self-healing",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-018",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-26 20:32:26",
+      "updated_at": "2026-08-26 20:51:26"
+    },
+    "TA08B0CC413F151F5-019": {
+      "title": "mirror registration grace windows in force-stale release and rejection hints",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-26 21:36:32",
+      "updated_at": "2026-08-26 22:30:24"
+    },
+    "TR848898A27705AD09-001": {
+      "title": "independently review TA08B0CC413F151F5-019 grace-window fix",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-019",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-26 22:26:58",
+      "updated_at": "2026-08-26 22:30:41"
+    },
+    "TA08B0CC413F151F5-020": {
+      "title": "board hygiene: close decided reviews and archive aged done tasks",
+      "type": "maintenance",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-27 15:51:21",
+      "updated_at": "2026-08-27 15:53:30"
+    },
+    "TRA08B0CC413F151F5-001": {
+      "title": "board hygiene: close decided reviews",
+      "type": "review",
+      "status": "done",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-27 15:51:40",
+      "updated_at": "2026-08-27 15:55:03"
+    },
+    "TA08B0CC413F151F5-021": {
+      "title": "refuse task-document overwrites and widen auto task-id derivation",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "tests/",
+        "docs/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-27 18:58:54",
+      "updated_at": "2026-08-27 23:17:18"
+    },
+    "TR024-REVIEW-001": {
+      "title": "independent review of the readme refresh (TA08B0CC413F151F5-024)",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-024",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-08-28 03:49:09",
+      "updated_at": "2026-08-28 04:06:52"
     }
   },
-  "updated_at": "2026-08-16 01:10:04"
+  "updated_at": "2026-08-28 04:17:42"
 }

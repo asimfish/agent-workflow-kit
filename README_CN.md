@@ -82,11 +82,28 @@ agentctl doctor                         工作流是否健康
 分支，也不做沙箱——hooks 是协调护栏，不受信任的代码仍然需要真正的沙箱。
 绕过 `agentctl run` 启动的任务（裸 ssh、systemd）只会被报告，不会被接管。
 
+## 现状与已知限制
+
+控制器、租约模型、GPU 监管和评审门禁有 208 个回归测试、Linux 与 Windows
+双平台 CI，以及一轮对全新克隆做的七场景端到端验收。验收在关键处是对抗式
+的：伪造租约时间戳、删除会话记录、制造孤儿资源、重放创建请求、同运行时
+自批——全部按设计被拒绝或自愈。
+
+三个已知的粗糙点，都已登记在任务板上：
+
+- **worktree 的合并回收是手工的。** 在 worktree 里完成任务后，完成记录留在
+  feature 分支上，没有工具替你把它走到一次被批准的合并。当前可用的路径写在
+  `docs/worktree-merge-back.md`；工具化在任务 `TA08B0CC413F151F5-023` 追踪。
+- `work --auto-create --request-id` 在会话已有活跃任务时会静默续用旧任务，
+  即使请求描述的是另一件事（低危；同一任务追踪）。
+- 少数拒绝提示给出的下一步并不能真正解除拒绝（低危；同一任务追踪）。
+
 ## 文档
 
 - `docs/install-and-upgrade.md` —— 安装、升级、迁移
 - `docs/workflow.md` —— 任务生命周期、评审门禁、worktree
 - `docs/multi-session-execution.md` —— 协调规则与 GPU 监管
+- `docs/worktree-merge-back.md` —— 把完成的 worktree 任务走到被批准的合并
 - `docs/loop-engineering.md` —— 检查点循环
 - `docs/harness-evaluation.md` —— 如何评估对套件本身的修改
 - `CHANGELOG.md`、`CONTRIBUTING.md`、`LICENSE`
