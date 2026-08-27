@@ -2,11 +2,11 @@
 
 | ID | Status | Owner | Scope | Task Doc | Title |
 |---|---|---|---|---|---|
-| T-033 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-033.md](tasks/T-033.md) | reconcile merged GitHub reviews |
-| T-034 | review | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-034.md](tasks/T-034.md) | harden GitHub reconciliation trust boundary |
-| T-035 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-035.md](tasks/T-035.md) | paginate GitHub reconciliation file evidence |
-| T-036 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-036.md](tasks/T-036.md) | bind GitHub reconciliation authority and compatibility |
-| T-037 | review | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-037.md](tasks/T-037.md) | remove GitHub reconciliation pagination caps |
+| T-033 | done | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-033.md](tasks/T-033.md) | reconcile merged GitHub reviews |
+| T-034 | done | supervisor | `tools/, tests/, README.md, docs/, templates/project/, .agent/` | [.agent/tasks/T-034.md](tasks/T-034.md) | harden GitHub reconciliation trust boundary |
+| T-035 | done | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-035.md](tasks/T-035.md) | paginate GitHub reconciliation file evidence |
+| T-036 | done | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-036.md](tasks/T-036.md) | bind GitHub reconciliation authority and compatibility |
+| T-037 | done | supervisor | `tools/, tests/, docs/, .agent/` | [.agent/tasks/T-037.md](tasks/T-037.md) | remove GitHub reconciliation pagination caps |
 | T-038 | done | codex | `tools/, tests/, docs/, README.md, templates/project/, .agent/, integrations/, .codex/, .claude/, .cursor/` | [.agent/tasks/T-038.md](tasks/T-038.md) | coordinate concurrent sessions in one project |
 | T-039 | done | supervisor | `.agent/` | [.agent/tasks/T-039.md](tasks/T-039.md) | independent review T-038 multi-session coordination |
 | T-040 | done | codex | `tools/, tests/, templates/project/, .agent/` | [.agent/tasks/T-040.md](tasks/T-040.md) | close T-038 multi-session review follow-ups |
@@ -21,25 +21,25 @@
 | T-049 | done | codex | `.agent/` | [.agent/tasks/T-049.md](tasks/T-049.md) | reconcile merged multi-session release |
 | T-050 | done | supervisor | `.agent/` | [.agent/tasks/T-050.md](tasks/T-050.md) | independent supervisor reconcile T-049 PR #7 evidence |
 | T-051 | done | codex | `tools/, tests/, integrations/, templates/project/, docs/, README.md, .agent/` | [.agent/tasks/T-051.md](tasks/T-051.md) | isolate forked conversation sessions |
-| T-052 | review | supervisor | `.agent/` | [.agent/tasks/T-052.md](tasks/T-052.md) | independently review forked-session isolation |
+| T-052 | done | supervisor | `.agent/` | [.agent/tasks/T-052.md](tasks/T-052.md) | independently review forked-session isolation |
 | T-053 | done | codex | `tools/, templates/project/tools/, tests/, .agent/` | [.agent/tasks/T-053.md](tasks/T-053.md) | close fork isolation review findings |
-| T-054 | review | supervisor | `.agent/` | [.agent/tasks/T-054.md](tasks/T-054.md) | independently re-review fork isolation fixes |
+| T-054 | done | supervisor | `.agent/` | [.agent/tasks/T-054.md](tasks/T-054.md) | independently re-review fork isolation fixes |
 | T-055 | done | codex | `tools/, templates/project/tools/, tests/, .agent/` | [.agent/tasks/T-055.md](tasks/T-055.md) | prevent fork fallback to parent controller session |
 | T-056 | done | supervisor | `.agent/` | [.agent/tasks/T-056.md](tasks/T-056.md) | independently verify controller fork fail closed |
 | T-057 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-057.md](tasks/T-057.md) | migrate legacy workflow sessions |
-| T-058 | review | supervisor | `.agent/` | [.agent/tasks/T-058.md](tasks/T-058.md) | independently review T-057 legacy session migration |
+| T-058 | done | supervisor | `.agent/` | [.agent/tasks/T-058.md](tasks/T-058.md) | independently review T-057 legacy session migration |
 | T-059 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-059.md](tasks/T-059.md) | close T-058 terminal mutation identity gap |
-| T-060 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-060.md](tasks/T-060.md) | independent gate review for T-057 and T-059 |
+| T-060 | done | independent-reviewer | `.agent/` | [.agent/tasks/T-060.md](tasks/T-060.md) | independent gate review for T-057 and T-059 |
 | T-061 | done | codex | `tools/, templates/project/tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-061.md](tasks/T-061.md) | close T-060 identity policy review findings |
 | T-062 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T-062.md](tasks/T-062.md) | second independent gate re-review for T-057 T-059 and T-061 |
-| T-063 | review | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-063.md](tasks/T-063.md) | package approved multi-session migration release |
+| T-063 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-063.md](tasks/T-063.md) | package approved multi-session migration release |
 | T-064 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-064.md](tasks/T-064.md) | enforce document ownership and scope-aware receipts |
 | T-065 | done | supervisor | `.agent/` | [.agent/tasks/T-065.md](tasks/T-065.md) | independently review T-064 document ownership and receipts |
 | T-066 | done | cursor | `tools/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-066.md](tasks/T-066.md) | extend controller-owned files to registry, bus, handoffs, and eval runs |
 | T-067 | done | supervisor | `.agent/` | [.agent/tasks/T-067.md](tasks/T-067.md) | independently review T-066 ownership inventory extension |
 | T-068 | done | cursor | `tools/, tests/` | [.agent/tasks/T-068.md](tasks/T-068.md) | reject start on unknown task ids |
 | T-069 | done | supervisor | `.agent/` | [.agent/tasks/T-069.md](tasks/T-069.md) | independently review T-065 T-067 T-068 |
-| T-070 | review | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-070.md](tasks/T-070.md) | package document ownership release |
+| T-070 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-070.md](tasks/T-070.md) | package document ownership release |
 | T-071 | done | cursor | `tests/, .agent/` | [.agent/tasks/T-071.md](tasks/T-071.md) | deflake loop inflight reconciliation regression |
 | T-072 | done | supervisor | `.agent/` | [.agent/tasks/T-072.md](tasks/T-072.md) | independently review T-071 loop test deflake |
 | T-073 | done | cursor | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-073.md](tasks/T-073.md) | close interpreter write escapes and explicit auto-create claim |
@@ -73,21 +73,21 @@
 | TB0621800D60E51C4-001 | done | codex | `tools/, tests/, templates/project/, integrations/, docs/, README.md, .github/, .githooks/, hooks/` | [.agent/tasks/TB0621800D60E51C4-001.md](tasks/TB0621800D60E51C4-001.md) | implement unified multi-session execution architecture |
 | T-083 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .agent/` | [.agent/tasks/T-083.md](tasks/T-083.md) | close independent review isolation gaps |
 | T-084 | done | independent-reviewer | `.agent/` | [.agent/tasks/T-084.md](tasks/T-084.md) | independently review T-082 review record and T-083 isolation fixes (PR #17) |
-| T-085 | review | independent-reviewer | `.agent/` | [.agent/tasks/T-085.md](tasks/T-085.md) | review T-081 resubmission and T-083/T-084 evidence |
-| T-086 | review | codex-integrator | `.agent/` | [.agent/tasks/T-086.md](tasks/T-086.md) | integrate independent T-081 review evidence |
-| T-087 | review | codex | `tools/, templates/project/, tests/, README.md, docs/, .codex/, .claude/, .cursor/, .agent/` | [.agent/tasks/T-087.md](tasks/T-087.md) | close residual shared-checkout isolation boundaries |
+| T-085 | done | independent-reviewer | `.agent/` | [.agent/tasks/T-085.md](tasks/T-085.md) | review T-081 resubmission and T-083/T-084 evidence |
+| T-086 | done | codex-integrator | `.agent/` | [.agent/tasks/T-086.md](tasks/T-086.md) | integrate independent T-081 review evidence |
+| T-087 | done | codex | `tools/, templates/project/, tests/, README.md, docs/, .codex/, .claude/, .cursor/, .agent/` | [.agent/tasks/T-087.md](tasks/T-087.md) | close residual shared-checkout isolation boundaries |
 | T17F063E6115138DE-001 | done | codex | `tools/agent_workflow_hook.py, templates/project/tools/agent_workflow_hook.py, tests/test_multi_session_workflow.py` | [.agent/tasks/T17F063E6115138DE-001.md](tasks/T17F063E6115138DE-001.md) | close residual repo-wide Git guard gaps |
-| T17F063E6115138DE-002 | review | codex | `.agent/, tools/, templates/project/, tests/` | [.agent/tasks/T17F063E6115138DE-002.md](tasks/T17F063E6115138DE-002.md) | package and publish approved concurrent isolation release |
+| T17F063E6115138DE-002 | done | codex | `.agent/, tools/, templates/project/, tests/` | [.agent/tasks/T17F063E6115138DE-002.md](tasks/T17F063E6115138DE-002.md) | package and publish approved concurrent isolation release |
 | T17F063E6115138DE-003 | done | codex | `.githooks/, tools/, templates/project/, tests/` | [.agent/tasks/T17F063E6115138DE-003.md](tasks/T17F063E6115138DE-003.md) | ignore already-published commits in pre-push scan |
 | T17F063E6115138DE-004 | done | codex | `.agent/, hooks/, .githooks/, tools/, templates/project/, tests/` | [.agent/tasks/T17F063E6115138DE-004.md](tasks/T17F063E6115138DE-004.md) | exclude already-published commits from pre-push validation |
-| T17F063E6115138DE-005 | review | codex | `.agent/, hooks/, .githooks/, tools/, tests/` | [.agent/tasks/T17F063E6115138DE-005.md](tasks/T17F063E6115138DE-005.md) | release pre-push published-commit fix |
+| T17F063E6115138DE-005 | done | codex | `.agent/, hooks/, .githooks/, tools/, tests/` | [.agent/tasks/T17F063E6115138DE-005.md](tasks/T17F063E6115138DE-005.md) | release pre-push published-commit fix |
 | T17F063E6115138DE-006 | done | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-006.md](tasks/T17F063E6115138DE-006.md) | integrate concurrent main advances without history loss |
-| T17F063E6115138DE-007 | review | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-007.md](tasks/T17F063E6115138DE-007.md) | release approved concurrent main integration |
+| T17F063E6115138DE-007 | done | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/` | [.agent/tasks/T17F063E6115138DE-007.md](tasks/T17F063E6115138DE-007.md) | release approved concurrent main integration |
 | T17F063E6115138DE-008 | done | codex | `.agent/, tools/, templates/project/, tests/, docs/, README.md, .githooks/, .claude/, .codex/, .cursor/, hooks/, integrations/` | [.agent/tasks/T17F063E6115138DE-008.md](tasks/T17F063E6115138DE-008.md) | integrate final main advances for concurrent release |
 | T3B43382C2174B290-001 | done | codex-gpt55-final-reviewer | `.agent/` | [.agent/tasks/T3B43382C2174B290-001.md](tasks/T3B43382C2174B290-001.md) | review final main advance integration |
-| T622DE1DE69A1D0F8-001 | review | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/, docs/, README.md` | [.agent/tasks/T622DE1DE69A1D0F8-001.md](tasks/T622DE1DE69A1D0F8-001.md) | independently review T-098 concurrent isolation recovery |
+| T622DE1DE69A1D0F8-001 | done | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/, docs/, README.md` | [.agent/tasks/T622DE1DE69A1D0F8-001.md](tasks/T622DE1DE69A1D0F8-001.md) | independently review T-098 concurrent isolation recovery |
 | TA74E81A93FF7EB9D-001 | done | claude-sonnet-merge-reviewer | `.agent/` | [.agent/tasks/TA74E81A93FF7EB9D-001.md](tasks/TA74E81A93FF7EB9D-001.md) | review concurrent main integration and collision migration |
-| TA80D9103F5316278-001 | review | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/` | [.agent/tasks/TA80D9103F5316278-001.md](tasks/TA80D9103F5316278-001.md) | independently review residual repo-wide Git guard closure |
+| TA80D9103F5316278-001 | done | claude-sonnet-reviewer | `.agent/, tools/, templates/project/, tests/` | [.agent/tasks/TA80D9103F5316278-001.md](tasks/TA80D9103F5316278-001.md) | independently review residual repo-wide Git guard closure |
 | TD851EF749F675DC5-001 | done | claude-sonnet-reviewer | `.agent/` | [.agent/tasks/TD851EF749F675DC5-001.md](tasks/TD851EF749F675DC5-001.md) | review pre-push published-commit filter |
 | TB0621800D60E51C4-002 | done | independent-reviewer | `.agent/` | [.agent/tasks/TB0621800D60E51C4-002.md](tasks/TB0621800D60E51C4-002.md) | independent review of unified multi-session architecture |
 | T3D6917C0AC71CAAE-001 | done | codex | `tools/, templates/project/tools/, tests/, docs/, README.md` | [.agent/tasks/T3D6917C0AC71CAAE-001.md](tasks/T3D6917C0AC71CAAE-001.md) | isolate stale session admission and supervise idle GPU runs |
@@ -103,7 +103,7 @@
 | TA4590F0D1CAC6C44-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TA4590F0D1CAC6C44-001.md](tasks/TA4590F0D1CAC6C44-001.md) | independent review of windows run stop ci coverage |
 | TA08B0CC413F151F5-006 | done | cursor | `tools/, tests/` | [.agent/tasks/TA08B0CC413F151F5-006.md](tasks/TA08B0CC413F151F5-006.md) | portable kill signal for windows run termination |
 | TCA99BA4AB445E207-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TCA99BA4AB445E207-001.md](tasks/TCA99BA4AB445E207-001.md) | independent review of portable windows kill signal |
-| T4116DD2E51AFDABA-001 | review | independent-reviewer-2 | `.agent/` | [.agent/tasks/T4116DD2E51AFDABA-001.md](tasks/T4116DD2E51AFDABA-001.md) | independent review of portable windows kill signal |
+| T4116DD2E51AFDABA-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T4116DD2E51AFDABA-001.md](tasks/T4116DD2E51AFDABA-001.md) | independent review of portable windows kill signal |
 | TA08B0CC413F151F5-007 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-007.md](tasks/TA08B0CC413F151F5-007.md) | retention pruning for terminal run leases and artifacts |
 | TBFEA0B292CCCB26E-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TBFEA0B292CCCB26E-001.md](tasks/TBFEA0B292CCCB26E-001.md) | independent review of run state retention pruning |
 | TA08B0CC413F151F5-008 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-008.md](tasks/TA08B0CC413F151F5-008.md) | release resources orphaned by finished runs |
@@ -117,16 +117,20 @@
 | TE228821572B5963B-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TE228821572B5963B-001.md](tasks/TE228821572B5963B-001.md) | independent review of oss packaging |
 | TA08B0CC413F151F5-012 | done | cursor | `README.md, README_CN.md, CHANGELOG.md, CONTRIBUTING.md` | [.agent/tasks/TA08B0CC413F151F5-012.md](tasks/TA08B0CC413F151F5-012.md) | rewrite readmes in plain human prose |
 | TB764E661F72A7FD7-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/TB764E661F72A7FD7-001.md](tasks/TB764E661F72A7FD7-001.md) | independent review of plain prose rewrite |
-| TA08B0CC413F151F5-013 | review | cursor | `CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-013.md](tasks/TA08B0CC413F151F5-013.md) | repair invalid utf-8 bytes in changelog |
+| TA08B0CC413F151F5-013 | done | cursor | `CHANGELOG.md` | [.agent/tasks/TA08B0CC413F151F5-013.md](tasks/TA08B0CC413F151F5-013.md) | repair invalid utf-8 bytes in changelog |
 | TA08B0CC413F151F5-014 | done | cursor | `tests/` | [.agent/tasks/TA08B0CC413F151F5-014.md](tasks/TA08B0CC413F151F5-014.md) | surface supervisor logs in test failures |
 | T13F0C74DBED8E114-001 | done | independent-reviewer-2 | `.agent/` | [.agent/tasks/T13F0C74DBED8E114-001.md](tasks/T13F0C74DBED8E114-001.md) | independent review of supervisor log diagnostics |
 | TA08B0CC413F151F5-015 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-015.md](tasks/TA08B0CC413F151F5-015.md) | archive aged done tasks out of the live board |
 | T126754FDB1001EB1-001 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-001.md](tasks/T126754FDB1001EB1-001.md) | review TA08B0CC413F151F5-015 archive feature |
 | TA08B0CC413F151F5-016 | done | cursor | `README.md, README_CN.md, docs/, CITATION.cff` | [.agent/tasks/TA08B0CC413F151F5-016.md](tasks/TA08B0CC413F151F5-016.md) | point self-references at the renamed agent-workflow-kit repo |
 | T126754FDB1001EB1-002 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-002.md](tasks/T126754FDB1001EB1-002.md) | review TA08B0CC413F151F5-016 rename references |
-| T126754FDB1001EB1-003 | review | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-003.md](tasks/T126754FDB1001EB1-003.md) | archive aged board history |
+| T126754FDB1001EB1-003 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-003.md](tasks/T126754FDB1001EB1-003.md) | archive aged board history |
 | TA08B0CC413F151F5-017 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-017.md](tasks/TA08B0CC413F151F5-017.md) | idempotent submission boundary with request ids for auto-create and run start |
 | T126754FDB1001EB1-004 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-004.md](tasks/T126754FDB1001EB1-004.md) | review TA08B0CC413F151F5-017 idempotent requests |
 | T126754FDB1001EB1-005 | done | supervisor | `.agent/` | [.agent/tasks/T126754FDB1001EB1-005.md](tasks/T126754FDB1001EB1-005.md) | re-review TA08B0CC413F151F5-017 archive-state fix |
 | TA08B0CC413F151F5-018 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-018.md](tasks/TA08B0CC413F151F5-018.md) | resource and worktree lease deadlock self-healing and diagnostics |
 | TR334F227892EF8BEA-001 | done | independent-reviewer-018 | `.agent/` | [.agent/tasks/TR334F227892EF8BEA-001.md](tasks/TR334F227892EF8BEA-001.md) | independently review TA08B0CC413F151F5-018 interlock self-healing |
+| TA08B0CC413F151F5-019 | done | cursor | `tools/, tests/, docs/` | [.agent/tasks/TA08B0CC413F151F5-019.md](tasks/TA08B0CC413F151F5-019.md) | mirror registration grace windows in force-stale release and rejection hints |
+| TR848898A27705AD09-001 | done | independent-reviewer-019 | `.agent/` | [.agent/tasks/TR848898A27705AD09-001.md](tasks/TR848898A27705AD09-001.md) | independently review TA08B0CC413F151F5-019 grace-window fix |
+| TA08B0CC413F151F5-020 | done | supervisor | `.agent/` | [.agent/tasks/TA08B0CC413F151F5-020.md](tasks/TA08B0CC413F151F5-020.md) | board hygiene: close decided reviews and archive aged done tasks |
+| TRA08B0CC413F151F5-001 | review | supervisor | `.agent/` | [.agent/tasks/TRA08B0CC413F151F5-001.md](tasks/TRA08B0CC413F151F5-001.md) | board hygiene: close decided reviews |
