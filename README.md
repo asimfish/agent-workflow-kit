@@ -43,6 +43,74 @@ running it again is harmless. Afterwards the only prompt a human needs is:
 
 Details, upgrades, and migration: `docs/install-and-upgrade.md`.
 
+## Your first task, end to end
+
+What actually happens on day one, so you know what to expect. The human
+does step 1 and step 5; agents do the rest by following
+`.agent/WORKFLOW_ENTRY.md` on their own.
+
+**1. Point a session at the project.** Say `按 .agent 规范开始工作。` (or
+"work by the .agent rules") to any agent session. It claims a task before
+touching files:
+
+```bash
+agentctl work --agent codex                 # picks up an existing task
+agentctl work --agent codex --auto-create \
+    --title "fix the data loader" --scope "src/data/"   # or creates one
+```
+
+The claim records a write scope. A second session asking for the same task
+or an overlapping scope is refused, which is the point.
+
+**2. The agent works and leaves a trail.**
+
+```bash
+agentctl note "root cause: off-by-one in shard split"
+```
+
+**3. Long jobs outlive the conversation.** Anything that runs for hours
+goes through `run start`, not a bare shell, so it keeps running when the
+chat dies and shows up on the board:
+
+```bash
+agentctl run start --task T-001 --output outputs/T-001/ \
+    --resource gpu:0 --gpu-watchdog -- python train.py
+agentctl run list                            # status, PIDs, logs
+```
+
+With `--gpu-watchdog`, a process squatting on VRAM at zero utilization
+past the grace period gets reclaimed; compilation phases can declare
+exemptions.
+
+**4. The agent hands the task to review.**
+
+```bash
+agentctl finish --summary "..." --tests "pytest -x: 42 passed"
+```
+
+The task enters `review` and git hooks now block pushes of unreviewed
+work. A *different* session — one whose runtime never touched the
+implementation — claims a review task and decides:
+
+```bash
+agentctl gate approve --task T-001 --by reviewer-name --note "..."
+```
+
+Self-approval fails: the controller compares runtime fingerprints, not
+good intentions. Code tasks run in their own worktree; after the gate,
+walk the result back to the main branch with
+`docs/worktree-merge-back.md`.
+
+**5. You check in whenever you like.**
+
+```bash
+agentctl board      # who is doing what, which runs are live
+agentctl doctor     # stale sessions, orphaned leases, interlocked GPUs
+```
+
+`doctor` names the recovery command for anything it flags; nothing is
+reclaimed behind your back.
+
 ## How it works
 
 ```mermaid

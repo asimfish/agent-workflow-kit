@@ -37,6 +37,67 @@ cd agent-workflow-kit
 
 细节、升级、迁移见 `docs/install-and-upgrade.md`。
 
+## 第一个任务的完整走法
+
+第一天用起来是什么样，提前心里有数。人只做第 1 步和第 5 步，
+其余由智能体按 `.agent/WORKFLOW_ENTRY.md` 自己完成。
+
+**1. 把会话指向项目。** 对任意智能体会话说「按 .agent 规范开始工作。」
+它在碰任何文件之前先领任务：
+
+```bash
+agentctl work --agent codex                 # 领取已有任务
+agentctl work --agent codex --auto-create \
+    --title "fix the data loader" --scope "src/data/"   # 或新建一个
+```
+
+领取会登记写入范围。第二个会话想领同一任务、或申请重叠范围，都会被
+拒绝——这正是设计目的。
+
+**2. 智能体干活并留痕。**
+
+```bash
+agentctl note "root cause: off-by-one in shard split"
+```
+
+**3. 长任务不随对话消亡。** 跑几个小时的东西走 `run start` 而不是裸
+shell，对话死了任务照跑，还能在板上看到：
+
+```bash
+agentctl run start --task T-001 --output outputs/T-001/ \
+    --resource gpu:0 --gpu-watchdog -- python train.py
+agentctl run list                            # 状态、PID、日志
+```
+
+带 `--gpu-watchdog` 时，占着显存零利用率超过宽限期的进程会被回收；
+编译阶段可以声明豁免。
+
+**4. 智能体把任务交给评审。**
+
+```bash
+agentctl finish --summary "..." --tests "pytest -x: 42 passed"
+```
+
+任务进入 `review`，git hooks 从此挡住未评审工作的推送。由*另一个*
+会话——运行时从未碰过实现的那种——领取评审任务并裁决：
+
+```bash
+agentctl gate approve --task T-001 --by reviewer-name --note "..."
+```
+
+自批会失败：控制器比对的是运行时指纹，不是自觉。代码任务在独立
+worktree 里进行；过门之后按 `docs/worktree-merge-back.md` 把结果走回
+主分支。
+
+**5. 你随时来看一眼。**
+
+```bash
+agentctl board      # 谁在干什么、哪些任务在跑
+agentctl doctor     # 过期会话、孤儿租约、互锁的 GPU
+```
+
+`doctor` 对每个问题给出恢复命令；不会背着你回收任何东西。
+
 ## 工作原理
 
 ```mermaid
