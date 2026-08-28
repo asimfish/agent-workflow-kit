@@ -2394,6 +2394,34 @@ def cmd_work(args: argparse.Namespace) -> int:
     st = _load_session(root)
     active = st.get("task")
     if active and _task_status(root, active) == "in_progress" and not args.force:
+        if args.auto_create and (args.new_id or args.title):
+            # An explicit creation request names new work; resuming the
+            # session's existing task instead would silently discard that
+            # intent (B-1). Refuse unless the request describes the task the
+            # session already owns.
+            entry = (_load_board(root).get("tasks") or {}).get(active) or {}
+            requested_id = str(args.new_id or "").strip()
+            requested_title = str(args.title or "").strip()
+            active_title = str(entry.get("title") or "").strip()
+            if (requested_id and requested_id != active) or (
+                not requested_id
+                and requested_title
+                and requested_title != active_title
+            ):
+                wanted = requested_id or f"'{requested_title}'"
+                print(
+                    f"agentctl: this session already owns in_progress task "
+                    f"{active} ('{active_title}'); refusing to silently "
+                    f"resume it for a different creation request ({wanted})",
+                    file=sys.stderr,
+                )
+                print(
+                    f"  finish or release {active} first, or resume it "
+                    f"explicitly with 'agentctl work --agent {agent} "
+                    f"--task {active}'",
+                    file=sys.stderr,
+                )
+                return 1
         try:
             coordination_fd = _acquire_lock_file(_session_coordination_lock_path(root))
         except TimeoutError as exc:
@@ -2792,9 +2820,11 @@ def cmd_start(
         elif required_isolation in {"worktree", "exclusive"}:
             print(
                 f"agentctl: task {task} type={entry.get('type') or 'generic'} "
-                f"requires {required_isolation} isolation; run 'agentctl work "
-                f"--agent {agent}' from the planning checkout so it can allocate "
-                "the task worktree",
+                f"requires {required_isolation} isolation; from the planning "
+                f"checkout run 'agentctl work --agent {agent}' WITHOUT --task "
+                "so the controller can auto-select it and allocate the task "
+                "worktree (commit the task document at HEAD first so the "
+                "worktree checkout can see it)",
                 file=sys.stderr,
             )
             return 1
@@ -3420,6 +3450,13 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
     t = board.get("tasks", {}).get(task)
     if not t:
         print(f"agentctl: task {task} not found on board", file=sys.stderr)
+        print(
+            "  if the task finished in a task worktree, its ledger lives on "
+            "that branch; sync it into this checkout first: "
+            "'agentctl reconcile merge-back --from-ref <branch>' "
+            "(see docs/worktree-merge-back.md)",
+            file=sys.stderr,
+        )
         return 2
     if args.action == "reconcile-github":
         return _gate_reconcile_github(root, args, board, task, t)
@@ -3462,7 +3499,12 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
     elif reviewer_runtime not in session_runtimes:
         review_problems.append("active reviewer session is not bound to the current host runtime")
     if not worker_runtimes:
-        review_problems.append("worker completion has no host runtime evidence; finish it with the current kit")
+        review_problems.append(
+            "worker completion has no host runtime evidence; if the task "
+            "finished in a worktree, sync its ledger into this checkout "
+            "first ('agentctl reconcile merge-back --from-ref <branch>'), "
+            "otherwise finish it again with the current kit"
+        )
     elif reviewer_runtime in worker_runtimes:
         review_problems.append("reviewer host runtime participated in the worker task and is not independent")
     if not any(label in reviewer_role for label in ("supervisor", "planning", "review")):
@@ -9013,8 +9055,11 @@ def _scope_from_index_cell(value: str) -> list[str]:
 
 def _plan_task_rows(text: str) -> dict:
     rows = {}
+    # The id group must accept every TASK_RECORD_ID_RE-shaped id, including
+    # ids with more than one hyphen (e.g. TR024-REVIEW-001); a narrower
+    # pattern here makes CI report a rendered row as missing.
     pattern = re.compile(
-        r"^- \[([ xX])\]\s+([A-Za-z][A-Za-z0-9]*-[\w.]+)\s+-\s+"
+        r"^- \[([ xX])\]\s+([A-Za-z][A-Za-z0-9]*-[\w.-]+)\s+-\s+"
         r"(.*?)(?:\s+\(owner:\s*([^)]+)\))?\s*$"
     )
     for line in text.splitlines():
@@ -9208,6 +9253,176 @@ def _legacy_task_record(root: Path, task: str, row: dict, plan_row: dict) -> dic
     }
 
 
+def _reconcile_merge_back(root: Path, args: argparse.Namespace) -> int:
+    """Import per-task ledger records from another git ref into this checkout.
+
+    This is the tooled version of the manual worktree merge-back documented
+    in docs/worktree-merge-back.md: after a task finishes on its worktree
+    branch, its board entry, task document, and gate record need to reach the
+    planning checkout before the review gate (or a later `git merge`) can see
+    them. Only task-scoped records move; sessions, leases, and loop state
+    stay untouched.
+    """
+    st = _load_session(root)
+    if not str(st.get("agent") or ""):
+        print(
+            "agentctl: merge-back requires an active session so the import "
+            "is attributable (run 'agentctl work --agent <name>' first)",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        if _managed_worktree_lease(root):
+            print(
+                "agentctl: merge-back must run from the planning checkout, "
+                "not from inside a managed task worktree",
+                file=sys.stderr,
+            )
+            return 1
+    except RuntimeError as exc:
+        print(f"agentctl: {exc}", file=sys.stderr)
+        return 2
+    ref = str(getattr(args, "from_ref", "") or "").strip()
+    if not ref:
+        print("agentctl: --from-ref is required", file=sys.stderr)
+        return 2
+    resolved = _git(root, "rev-parse", "--verify", f"{ref}^{{commit}}")
+    if not resolved:
+        print(f"agentctl: cannot resolve git ref '{ref}'", file=sys.stderr)
+        return 2
+    shown = _git_process(root, "show", f"{resolved}:{WORKFLOW_DIR}/board.json")
+    if shown.returncode:
+        print(
+            f"agentctl: {ref} has no {WORKFLOW_DIR}/board.json",
+            file=sys.stderr,
+        )
+        return 2
+    try:
+        source_board = json.loads(shown.stdout)
+    except json.JSONDecodeError as exc:
+        print(
+            f"agentctl: board.json on {ref} is not valid JSON: {exc}",
+            file=sys.stderr,
+        )
+        return 2
+    source_tasks = (
+        source_board.get("tasks") if isinstance(source_board, dict) else {}
+    ) or {}
+    requested = [
+        t.strip() for t in (getattr(args, "task", None) or []) if t.strip()
+    ]
+    unknown = [t for t in requested if t not in source_tasks]
+    if unknown:
+        print(
+            f"agentctl: not on the {ref} board: {', '.join(sorted(unknown))}",
+            file=sys.stderr,
+        )
+        return 2
+    order = {"todo": 0, "in_progress": 1, "review": 2, "approved": 3, "done": 4}
+    auto_eligible = {"review", "approved", "done"}
+    lock = _session_coordination_lock_path(root)
+    fd = _acquire_lock_file(lock)
+    try:
+        board = _load_board(root)
+        local_tasks = board.setdefault("tasks", {})
+        plan: list[tuple[str, str]] = []
+        skipped: list[tuple[str, str]] = []
+        for tid in (requested or sorted(source_tasks)):
+            # The id becomes a filename below, so an id of an unexpected
+            # shape (path separators, dot-dot) from a foreign board must
+            # never reach the filesystem.
+            if not TASK_RECORD_ID_RE.fullmatch(str(tid)):
+                skipped.append((tid, "id is not a valid task record id"))
+                continue
+            entry = source_tasks.get(tid)
+            if not isinstance(entry, dict):
+                skipped.append((tid, "malformed source entry"))
+                continue
+            src_status = str(entry.get("status") or "")
+            local = local_tasks.get(tid)
+            if not requested and src_status not in auto_eligible:
+                # Auto-discovery only imports work that already cleared
+                # finish/review; anything earlier is still someone's live
+                # claim and moves only when named explicitly.
+                continue
+            if src_status not in order:
+                skipped.append(
+                    (tid, f"source status '{src_status or '<missing>'}' "
+                          "must be resolved manually")
+                )
+                continue
+            if not isinstance(local, dict):
+                plan.append((tid, f"import as {src_status}"))
+                continue
+            loc_status = str(local.get("status") or "")
+            if local == entry:
+                if requested:
+                    skipped.append((tid, "already in sync"))
+                continue
+            if loc_status not in order:
+                skipped.append(
+                    (tid, f"local status '{loc_status or '<missing>'}' "
+                          "must be resolved manually")
+                )
+                continue
+            if order[loc_status] > order[src_status]:
+                skipped.append(
+                    (tid, f"local status '{loc_status}' is ahead of source "
+                          f"'{src_status}'")
+                )
+                continue
+            if loc_status == src_status and not requested:
+                # Same rank but different content: contents may legitimately
+                # differ (timestamps, notes); overwrite only when named.
+                continue
+            plan.append((tid, f"{loc_status} -> {src_status}"))
+        if getattr(args, "dry_run", False):
+            for tid, action in plan:
+                print(f"agentctl: would merge back {tid} ({action})")
+            for tid, why in skipped:
+                print(f"agentctl: would skip {tid}: {why}")
+            if not plan and not skipped:
+                print("agentctl: nothing to merge back")
+            return 0
+        if not plan:
+            print("agentctl: nothing to merge back")
+            for tid, why in skipped:
+                print(f"  - skipped {tid}: {why}")
+            return 1 if (requested and skipped) else 0
+        missing_docs: list[str] = []
+        for tid, action in plan:
+            local_tasks[tid] = source_tasks[tid]
+            doc_found = False
+            for subdir in (TASKS_DIR, GATES_DIR):
+                rel = f"{WORKFLOW_DIR}/{subdir}/{tid}.md"
+                blob = _git_process(root, "show", f"{resolved}:{rel}")
+                if blob.returncode == 0:
+                    _write(root / rel, blob.stdout)
+                    if subdir == TASKS_DIR:
+                        doc_found = True
+            if not doc_found:
+                missing_docs.append(tid)
+        _save_board(root, board)
+        _render_task_views(root, board)
+    finally:
+        _release_lock_file(lock, fd)
+    for tid, action in plan:
+        print(f"agentctl: merged back {tid} ({action})")
+    for tid, why in skipped:
+        print(f"agentctl: skipped {tid}: {why}")
+    for tid in missing_docs:
+        print(
+            f"agentctl: warning: {ref} has no task document for {tid}; "
+            "CI will flag it if the task is done",
+            file=sys.stderr,
+        )
+    print(
+        "agentctl: review the diff, then commit the ledger "
+        "(git add .agent && git commit)"
+    )
+    return 0
+
+
 def cmd_reconcile(args: argparse.Namespace) -> int:
     root = _repo_root()
     if args.reconcile_action == "check":
@@ -9357,6 +9572,8 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
             f"into {archive_root}"
         )
         return 0
+    if args.reconcile_action == "merge-back":
+        return _reconcile_merge_back(root, args)
     if args.reconcile_action == "close-decided-reviews":
         st = _load_session(root)
         recorder = str(st.get("agent") or "")
@@ -11396,10 +11613,29 @@ def _check_prepush(
         if not ids:
             p.append(f"commit missing task ID: '{subject.strip()}'")
         seen.update(ids)
+    archived_tasks: dict | None = None
     for tid in sorted(seen):
         t = tasks.get(tid)
         if not t:
-            p.append(f"task {tid} referenced in commits but not on board")
+            # reconcile archive moves done tasks off the live board, and the
+            # commit that does so necessarily references their ids; resolve
+            # against the archive before refusing.
+            if archived_tasks is None:
+                archived = _load_json(
+                    root / WORKFLOW_DIR / "archive" / "board.json", {},
+                )
+                archived_tasks = (
+                    archived.get("tasks") if isinstance(archived, dict) else {}
+                ) or {}
+            archived_entry = archived_tasks.get(tid)
+            if isinstance(archived_entry, dict) and archived_entry.get(
+                "status"
+            ) in PUSHABLE_STATUSES:
+                continue
+            p.append(
+                f"task {tid} referenced in commits but not on the live board "
+                "or in .agent/archive/board.json"
+            )
             continue
         if t.get("status") not in PUSHABLE_STATUSES:
             p.append(f"task {tid} is '{t.get('status')}', must be review/approved/done before push")
@@ -12771,6 +13007,10 @@ def build_parser() -> argparse.ArgumentParser:
     rsub.add_parser("close-decided-reviews")
     ra = rsub.add_parser("archive")
     ra.add_argument("--days", type=float, default=30.0)
+    rm = rsub.add_parser("merge-back")
+    rm.add_argument("--from-ref", dest="from_ref", required=True)
+    rm.add_argument("--task", action="append", default=[])
+    rm.add_argument("--dry-run", action="store_true")
     sp.set_defaults(func=cmd_reconcile)
 
     sp = sub.add_parser("agents")

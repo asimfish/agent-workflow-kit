@@ -3,10 +3,9 @@
 Code and experiment tasks run in isolated worktrees on their own feature
 branches. That isolation is the point -- but it also means the task's
 completion record is born on the feature branch, while the review gate and
-the shared board live in your planning checkout. Nothing merges those two
-views for you yet. This page documents the manual path that works today,
-verified end to end on this repository. Tooling to automate it is tracked
-as task `TA08B0CC413F151F5-023`.
+the shared board live in your planning checkout. `agentctl reconcile
+merge-back` moves the ledger records between the two; this page documents
+the full path, verified end to end on this repository.
 
 If you skip this page, the failure you will hit first is a gate approval
 that fails with an error about runtime evidence or an unknown task, even
@@ -43,33 +42,33 @@ synced, reviewed, or recovered if the worktree is deleted.
 ### 2. Sync the ledger into the planning checkout
 
 Do **not** `git merge` the feature branch into the planning branch just to
-move ledger state -- board files conflict on every parallel task. Copy the
-specific records instead. From the planning checkout:
+move ledger state -- board files conflict on every parallel task. From the
+planning checkout, let the controller move the per-task records:
 
 ```bash
-# the task document travels as a whole file
-git show <feature-branch>:.agent/tasks/<TASK-ID>.md > .agent/tasks/<TASK-ID>.md
+# preview what would move
+agentctl reconcile merge-back --from-ref <feature-branch> --dry-run
+
+# import the finished task's board entry, task document, and gate record,
+# then re-render TASKS.md and PROJECT_PLAN.md
+agentctl reconcile merge-back --from-ref <feature-branch>
+
+git add .agent && git commit   # commit the imported ledger
 ```
 
-For `board.json`, merge the one entry rather than the whole file:
+By default merge-back auto-discovers every task on the source branch that
+already reached `review`, `approved`, or `done` and is missing or behind in
+this checkout. Name tasks explicitly with `--task <TASK-ID>` (repeatable)
+to import earlier states or to refresh an entry whose status already
+matches. It never regresses a local status that is ahead of the source, it
+runs only from the planning checkout, and it leaves sessions, leases, and
+loop state untouched.
 
-```bash
-python3 - <<'EOF'
-import json, subprocess
-from pathlib import Path
-branch, task = "<feature-branch>", "<TASK-ID>"
-theirs = json.loads(subprocess.run(
-    ["git", "show", f"{branch}:.agent/board.json"],
-    capture_output=True, text=True).stdout)
-board = json.loads(Path(".agent/board.json").read_text())
-board["tasks"][task] = theirs["tasks"][task]
-Path(".agent/board.json").write_text(json.dumps(board, indent=2) + "\n")
-EOF
-```
-
-Update the task's row in `.agent/TASKS.md` and its checkbox in
-`.agent/PROJECT_PLAN.md` the same way: edit the one line, leave the rest of
-the file alone.
+If you need to move a record by hand (for example from a repository that
+predates the subcommand), the equivalent manual steps are: copy the task
+document with `git show <branch>:.agent/tasks/<TASK-ID>.md`, merge the one
+`board.json` entry (never the whole file), and re-render the views with
+`agentctl reconcile render`.
 
 ### 3. Independent review in the planning checkout
 

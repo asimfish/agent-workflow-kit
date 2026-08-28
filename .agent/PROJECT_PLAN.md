@@ -36,10 +36,11 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T023R-001 - independent review of TA08B0CC413F151F5-023 (owner: independent-reviewer-023)
 - [x] T025R-001 - independent review of the day-one walkthrough (owner: independent-reviewer-024)
 - [x] TA08B0CC413F151F5-025 - add a day-one quick start walkthrough to both READMEs (owner: cursor)
 - [x] TA08B0CC413F151F5-024 - refresh README for real-world use and document the worktree merge-back path (owner: cursor)
-- [ ] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)
+- [x] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) (owner: cursor)
 
 ## Agent Allocation
 
@@ -85,5 +86,4 @@ Format: `- YYYY-MM-DD HH:MM:SS - <agent-or-human> - <change and reason>.`
 - 2026-07-10 22:18:00 - codex - started M3 with resumable cycle state and explicit stop/recovery semantics before adding scheduler or worktree automation.
 - 2026-07-20 14:55:15 - codex - integrated concurrent task histories; main IDs remain canonical and feature collisions are recorded in `.agent/decisions/20260720-concurrent-task-id-collisions.md`.
 
-- [ ] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)
 - [x] TA08B0CC413F151F5-024 refresh README for real-world use and document the worktree merge-back path

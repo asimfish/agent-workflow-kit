@@ -48,3 +48,12 @@ and refuses to overwrite a task id that belongs to someone else (#48).
 Found by a seven-scenario acceptance run against a fresh clone, which the
 fixed revision then passed end to end -- including adversarial state
 surgery against the interlock, idempotency, and review-gate guards.
+
+The finish-to-gate path for worktree tasks is now tooled: `reconcile
+merge-back` imports a task's board entry, task document, and gate record
+from its feature branch into the planning checkout, re-renders the views,
+and refuses foreign ids, worktree checkouts, and status regressions. The
+same change fixed the acceptance-run rough edges: explicit `--auto-create`
+requests refuse to silently resume unrelated work, worktree and gate
+refusals name the step that resolves them, plan rows accept multi-hyphen
+task ids, and pre-push resolves commit references against the archive.

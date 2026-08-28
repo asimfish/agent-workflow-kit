@@ -174,17 +174,12 @@ was adversarial where it matters: forged lease timestamps, deleted session
 records, orphaned resources, replayed creation requests, and a same-runtime
 approval attempt were all refused or healed as designed.
 
-Three rough edges are known and tracked on the board:
-
-- **Worktree merge-back is manual.** Finishing a task inside a worktree
-  leaves its completion record on the feature branch, and nothing walks it
-  to an approved merge for you. The working path is documented in
-  `docs/worktree-merge-back.md`; tooling is tracked as task
-  `TA08B0CC413F151F5-023`.
-- `work --auto-create --request-id` silently resumes the session's active
-  task even when the request describes different work (low; same task).
-- A few refusal messages suggest a next step that does not actually
-  resolve the refusal (low; same task).
+The rough edges found there have since been fixed: `agentctl reconcile
+merge-back` now moves a finished worktree task's ledger into the planning
+checkout (see `docs/worktree-merge-back.md`), an explicit `--auto-create`
+request refuses to silently resume unrelated work, and the refusal
+messages around worktree isolation and gate approval now name the step
+that actually resolves them.
 
 ## Documentation
 

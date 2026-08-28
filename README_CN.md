@@ -150,14 +150,10 @@ agentctl doctor                         工作流是否健康
 的：伪造租约时间戳、删除会话记录、制造孤儿资源、重放创建请求、同运行时
 自批——全部按设计被拒绝或自愈。
 
-三个已知的粗糙点，都已登记在任务板上：
-
-- **worktree 的合并回收是手工的。** 在 worktree 里完成任务后，完成记录留在
-  feature 分支上，没有工具替你把它走到一次被批准的合并。当前可用的路径写在
-  `docs/worktree-merge-back.md`；工具化在任务 `TA08B0CC413F151F5-023` 追踪。
-- `work --auto-create --request-id` 在会话已有活跃任务时会静默续用旧任务，
-  即使请求描述的是另一件事（低危；同一任务追踪）。
-- 少数拒绝提示给出的下一步并不能真正解除拒绝（低危；同一任务追踪）。
+验收发现的粗糙点已经修复：`agentctl reconcile merge-back` 会把 worktree
+里完成的任务账本搬回 planning 检出（见 `docs/worktree-merge-back.md`）；
+显式的 `--auto-create` 请求不会再静默续用无关的旧任务；worktree 隔离与
+评审门禁的拒绝提示现在会指向真正能解除拒绝的那一步。
 
 ## 文档
 
