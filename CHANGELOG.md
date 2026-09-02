@@ -85,3 +85,19 @@ argv attaches values with `=`. The GPU watchdog regression tests, whose
 0.05s idle windows and 2--5s budgets assumed a fast machine, were resized
 for loaded runners (reproduced locally at 3x CPU oversubscription) and now
 dump the supervisor log when they fail.
+
+The same day-one replay left a machine-wide `gpu:0` lock behind when its
+project directory was deleted, and a second project on the host could not
+get past it: its `doctor` saw a clean registry, `resource release
+--force-stale` could not find a lease it did not own, and the acquire
+refusal offered no way out. Resource locks are host-wide while ledgers are
+per checkout, so the lock's owner record now names the holder's checkout
+and that checkout's registry is the evidence. The next `resource acquire`
+from any project releases holders their own registry proves dead
+(released, finished, or missing past the registration grace); stale
+sessions, deleted checkouts, and legacy locks are refused with the holder's
+state and the new `resource release --lock <resource> --force-stale
+--reason` command, which is recorded as an audit row in the releasing
+checkout; live holders cannot be forced; and `doctor` in any checkout lists
+machine-wide locks without a live holder. Nine two-checkout regression
+tests cover the evidence rules.

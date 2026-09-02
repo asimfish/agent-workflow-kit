@@ -6168,6 +6168,19 @@ def _validate_run_outputs(root: Path, task: str, scope: list[str],
     return sorted(set(outputs)), problems
 
 
+def _resource_lock_base_dir() -> Path:
+    """Machine-wide directory of local resource locks (one subdir per resource).
+
+    A GPU is a GPU whichever checkout claims it, so these locks are shared
+    by every project on the host; the per-checkout lease registry only
+    mirrors the ones this checkout holds.
+    """
+    return Path(
+        os.environ.get(RESOURCE_LOCK_ENV)
+        or (Path.home() / ".agent-workflow" / "resource-locks")
+    ).expanduser()
+
+
 def _resource_lock_location(resource: str) -> dict:
     digest = hashlib.sha256(resource.encode("utf-8")).hexdigest()
     if resource.startswith(RESOURCE_REMOTE_PREFIX):
@@ -6179,11 +6192,10 @@ def _resource_lock_location(resource: str) -> dict:
             "host": parsed.netloc,
             "path": f"/tmp/agent-workflow-resource-{digest}",
         }
-    base = Path(
-        os.environ.get(RESOURCE_LOCK_ENV)
-        or (Path.home() / ".agent-workflow" / "resource-locks")
-    ).expanduser()
-    return {"provider": "local-mkdir", "path": str((base / digest).resolve())}
+    return {
+        "provider": "local-mkdir",
+        "path": str((_resource_lock_base_dir() / digest).resolve()),
+    }
 
 
 class _ResourceTelemetryProbe(Protocol):
@@ -6491,6 +6503,158 @@ def _external_resource_release(provider: dict) -> str | None:
     return None
 
 
+# Foreign-lock holder states that the holder's own registry proves dead, so
+# the next acquisition may release the lock itself (mirrors the in-checkout
+# orphan sweep: released sessions, finished runs, holders missing past the
+# registration grace). Stale sessions and vanished checkouts stay with the
+# operator because a conversation or a run may still be working there.
+FOREIGN_LOCK_AUTO_RELEASE_STATES = frozenset({"released", "terminal", "missing"})
+FOREIGN_LOCK_FORCE_RELEASE_STATES = FOREIGN_LOCK_AUTO_RELEASE_STATES | frozenset(
+    {"stale", "checkout_gone", "unknown"}
+)
+
+
+def _foreign_lock_owner(root: Path, resource: str) -> dict | None:
+    """owner.json of a local machine-wide lock that no lease in `root` holds.
+
+    Returns None when the resource is remote, unlocked, or held by a
+    live lease of this checkout (the in-checkout paths handle those).
+    """
+    try:
+        location = _resource_lock_location(resource)
+    except ValueError:
+        return None
+    if location.get("provider") != "local-mkdir":
+        return None
+    owner = _load_json(Path(location["path"]) / "owner.json", {})
+    if not isinstance(owner, dict) or not owner:
+        return None
+    for item in _load_runtime_leases(root).get("leases") or []:
+        if (
+            isinstance(item, dict)
+            and item.get("kind") == "resource"
+            and item.get("status") not in {"released", "release_failed"}
+            and resource in (item.get("resources") or [])
+        ):
+            return None
+    return owner
+
+
+def _foreign_lock_liveness(owner: dict) -> tuple[str, str]:
+    """Classify the holder of a machine-wide lock recorded by another checkout.
+
+    The lock's owner.json names the holder's checkout; that checkout's
+    lease registry and session records are the evidence. States:
+    "live", "stale", "released", "terminal", "missing", "registering"
+    (lease not registered yet, inside the grace window), "checkout_gone",
+    "remote" (recorded on another host), "unknown" (no checkout recorded,
+    or its registry is unreadable). Anything short of hard evidence of
+    death is reported, never acted on automatically.
+    """
+    host = str(owner.get("host") or "")
+    if host and host != platform.node():
+        return "remote", f"lock was recorded on host {host}; this host cannot verify its holder"
+    checkout = str(owner.get("checkout") or "")
+    lease_id = str(owner.get("lease_id") or "")
+    if not checkout:
+        return "unknown", (
+            "lock predates holder-checkout recording, so its holder cannot be "
+            "verified from another checkout"
+        )
+    path = Path(checkout)
+    if not path.exists() or not (path / ".git").exists():
+        return "checkout_gone", f"holder checkout {checkout} no longer exists"
+    try:
+        leases = [
+            item for item in _load_runtime_leases(path).get("leases") or []
+            if isinstance(item, dict)
+        ]
+    except Exception as exc:  # registry unreadable: report, never guess
+        return "unknown", f"holder checkout {checkout} has an unreadable lease registry: {exc}"
+    lease = next(
+        (item for item in leases
+         if item.get("id") == lease_id and item.get("kind") == "resource"),
+        None,
+    )
+    where = f"checkout {checkout}, task {owner.get('task') or '-'}"
+    if lease is None:
+        created = _parse_workflow_timestamp(owner.get("created_at"))
+        holder_type = str(owner.get("holder_type") or "")
+        window = _dt.timedelta(minutes=10) if holder_type == "run" else _dt.timedelta(hours=1)
+        if created is None or created >= _dt.datetime.now() - window:
+            return "registering", (
+                f"lease {lease_id} is not registered in {where} yet (inside the "
+                f"registration grace window)"
+            )
+        return "missing", f"lease {lease_id} is not in the registry of {where}"
+    if lease.get("status") in {"released", "release_failed"}:
+        return "released", f"lease {lease_id} is {lease.get('status')} in {where}"
+    runs = {
+        str(item.get("id")): item
+        for item in leases
+        if item.get("kind") == "run" and item.get("id")
+    }
+    try:
+        sessions = _session_liveness_index(path)
+    except Exception:
+        sessions = {}
+    state, detail = _resource_holder_liveness(lease, runs, sessions)
+    detail = f"{detail} ({where})"
+    if state == "missing":
+        return ("missing" if _missing_holder_grace_expired(lease) else "registering"), detail
+    if state == "unknown":
+        return "live", detail
+    return state, detail
+
+
+def _foreign_lock_recovery_hint(resource: str, state: str) -> str:
+    if state == "live":
+        return "the holder is live; wait for it or coordinate with that conversation"
+    if state == "registering":
+        return "retry after the registration grace window if the holder never registers"
+    if state == "remote":
+        return "release it on the host that recorded it"
+    if state in FOREIGN_LOCK_AUTO_RELEASE_STATES:
+        return (
+            f"the next 'agentctl resource acquire {resource}' releases it, or run "
+            f"'agentctl resource release --lock {resource} --force-stale --reason <why>'"
+        )
+    if state == "unknown":
+        return (
+            f"after confirming nothing on this host still uses it, run "
+            f"'agentctl resource release --lock {resource} --force-stale --reason <why>'"
+        )
+    return (
+        f"after inspecting that checkout, run 'agentctl resource release --lock "
+        f"{resource} --force-stale --reason <why>' to break the interlock"
+    )
+
+
+def _release_orphaned_foreign_lock(root: Path, resource: str) -> bool:
+    """Drop a machine-wide lock whose foreign holder is proven dead.
+
+    Same evidence rule as `_release_orphaned_resources`, applied to the
+    lock of a resource that another checkout on this host recorded and
+    never freed (for example a project whose conversation was released
+    but whose lease registry the sweep never ran on again).
+    """
+    owner = _foreign_lock_owner(root, resource)
+    if owner is None:
+        return False
+    state, detail = _foreign_lock_liveness(owner)
+    if state not in FOREIGN_LOCK_AUTO_RELEASE_STATES:
+        return False
+    error = _external_resource_release(_resource_lock_location(resource))
+    if error:
+        return False
+    print(
+        f"agentctl: released orphaned machine-wide lock for {resource} "
+        f"({owner.get('lease_id') or 'unknown lease'}): {detail}",
+        file=sys.stderr,
+    )
+    return True
+
+
 def _acquire_rejection_detail(root: Path, resource: str, base_error: str) -> str:
     """Explain who holds a contested resource and how to recover.
 
@@ -6517,23 +6681,20 @@ def _acquire_rejection_detail(root: Path, resource: str, base_error: str) -> str
     )
     if holding is None:
         # The external lock exists but no local lease claims it: another
-        # checkout or host owns it. The lock's owner.json is the only
-        # evidence available.
-        try:
-            location = _resource_lock_location(resource)
-        except ValueError:
-            return base_error
-        if location.get("provider") == "local-mkdir":
-            owner = _load_json(Path(location["path"]) / "owner.json", {})
-            if owner:
-                return (
-                    f"{base_error}; the lock belongs to "
-                    f"{owner.get('holder_type') or 'unknown'}:"
-                    f"{owner.get('holder_id') or 'unknown'} "
-                    f"(task {owner.get('task') or '-'}, host {owner.get('host') or '-'}, "
-                    f"since {owner.get('created_at') or '-'}) recorded outside this "
-                    f"checkout's lease registry"
-                )
+        # checkout or host owns it. Its owner.json names that checkout,
+        # whose registry is the evidence for whether the holder is alive.
+        owner = _foreign_lock_owner(root, resource)
+        if owner:
+            state, detail = _foreign_lock_liveness(owner)
+            return (
+                f"{base_error}; the lock belongs to "
+                f"{owner.get('holder_type') or 'unknown'}:"
+                f"{owner.get('holder_id') or 'unknown'} "
+                f"(task {owner.get('task') or '-'}, host {owner.get('host') or '-'}, "
+                f"since {owner.get('created_at') or '-'}) in another checkout; "
+                f"holder is {state}: {detail}; "
+                f"{_foreign_lock_recovery_hint(resource, state)}"
+            )
         return base_error
     holder = holding.get("holder") or {}
     sessions = _session_liveness_index(root)
@@ -6572,6 +6733,10 @@ def _resource_acquire_one(root: Path, task: str, resource: str,
         "holder_id": holder_id,
         "host": platform.node(),
         "pid": os.getpid(),
+        # The checkout is what lets another project on this host verify
+        # whether the holder is still alive (its lease registry and
+        # session records live under that checkout's Git common dir).
+        "checkout": str(root.resolve()),
         "created_at": _now(),
     }
     provider, error = _external_resource_acquire(resource, owner)
@@ -6581,6 +6746,8 @@ def _resource_acquire_one(root: Path, task: str, resource: str,
         # once turns the historical "nobody uses the GPU but nobody can
         # claim it" interlock into a self-healing conflict.
         _release_orphaned_resources(root)
+        provider, error = _external_resource_acquire(resource, owner)
+    if error and _release_orphaned_foreign_lock(root, resource):
         provider, error = _external_resource_acquire(resource, owner)
     if error:
         return None, _acquire_rejection_detail(root, resource, error)
@@ -6748,6 +6915,88 @@ def _resource_release_stale(root: Path, lease_id: str, reason: str,
     if release_error:
         return False, release_error
     return True, f"released ({detail})"
+
+
+def _resource_release_foreign_lock(root: Path, resource: str, reason: str,
+                                   forced_by: str) -> tuple[bool, str]:
+    """Break a machine-wide lock that another checkout recorded and never freed.
+
+    Addressed by resource name because the lease id lives in the holder's
+    registry, not this one. Live holders are refused; holders the
+    holder's own registry proves dead, stale sessions, vanished
+    checkouts, and unverifiable legacy locks may be released with a
+    recorded reason. The release is written into this checkout's
+    registry as an audit row so `resource status` shows who broke what.
+    """
+    try:
+        location = _resource_lock_location(resource)
+    except ValueError as exc:
+        return False, str(exc)
+    if location.get("provider") != "local-mkdir":
+        return False, f"--lock only addresses local machine-wide locks; release {resource} on its own host"
+    for item in _load_runtime_leases(root).get("leases") or []:
+        if (
+            isinstance(item, dict)
+            and item.get("kind") == "resource"
+            and item.get("status") not in {"released", "release_failed"}
+            and resource in (item.get("resources") or [])
+        ):
+            return False, (
+                f"resource {resource} is held by lease {item.get('id')} of this checkout; "
+                f"release that lease instead ('agentctl resource release {item.get('id')} "
+                f"--reason <why>', with --force-stale if its holder is not live)"
+            )
+    lock_dir = Path(location["path"])
+    owner = _load_json(lock_dir / "owner.json", {})
+    owner = owner if isinstance(owner, dict) else {}
+    if not owner:
+        if not lock_dir.exists():
+            return False, f"no machine-wide lock exists for {resource}"
+        state, detail = "unknown", "lock directory has no readable owner record"
+    else:
+        state, detail = _foreign_lock_liveness(owner)
+    if state not in FOREIGN_LOCK_FORCE_RELEASE_STATES:
+        return False, (
+            f"machine-wide lock for {resource} was not released: holder is {state} "
+            f"({detail}); {_foreign_lock_recovery_hint(resource, state)}"
+        )
+    error = _external_resource_release(location)
+    if error:
+        return False, f"machine-wide lock for {resource} could not be removed: {error}"
+    audit = {
+        "id": "resource-" + hashlib.sha256(
+            f"{resource}:foreign-release:{forced_by}:{time.time_ns()}".encode("utf-8")
+        ).hexdigest()[:16],
+        "kind": "resource",
+        "task": str(owner.get("task") or "-"),
+        "holder": {
+            "type": str(owner.get("holder_type") or "unknown"),
+            "id": str(owner.get("holder_id") or "unknown"),
+        },
+        "mode": "local-mkdir",
+        "checkout": str(owner.get("checkout") or ""),
+        "scope": [],
+        "resources": [resource],
+        "processes": [],
+        "provider": location,
+        "created_at": str(owner.get("created_at") or _now()),
+        "heartbeat_at": _now(),
+        "status": "released",
+        "released_at": _now(),
+        "release_reason": reason,
+        "release_mode": "force-stale-foreign",
+        "released_by": forced_by,
+        "foreign_holder_state": state,
+    }
+    try:
+        _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(audit))
+    except TimeoutError:
+        pass
+    caveat = (
+        "; liveness could not be verified, released on operator judgment"
+        if state == "unknown" else ""
+    )
+    return True, f"released machine-wide lock for {resource} ({detail}){caveat}"
 
 
 def _run_process_cwd(pid: int) -> Path | None:
@@ -8155,6 +8404,29 @@ def cmd_resource(args: argparse.Namespace) -> int:
         print(f"agentctl: resource lease {lease['id']} acquired for {args.resource}")
         return 0
     if args.resource_action == "release":
+        lock_resource = getattr(args, "lock_resource", None)
+        if lock_resource and args.lease:
+            print("agentctl: pass either a lease id or --lock <resource>, not both", file=sys.stderr)
+            return 2
+        if not lock_resource and not args.lease:
+            print("agentctl: resource release needs a lease id or --lock <resource>", file=sys.stderr)
+            return 2
+        if lock_resource:
+            if not getattr(args, "force_stale", False):
+                print(
+                    "agentctl: releasing a machine-wide lock by resource name breaks "
+                    "another checkout's claim; it requires --force-stale and a --reason",
+                    file=sys.stderr,
+                )
+                return 1
+            ok, detail = _resource_release_foreign_lock(
+                root, lock_resource, args.reason, _workflow_session_key(),
+            )
+            if not ok:
+                print(f"agentctl: {detail}", file=sys.stderr)
+                return 1
+            print(f"agentctl: {detail}")
+            return 0
         if getattr(args, "force_stale", False):
             ok, detail = _resource_release_stale(
                 root, args.lease, args.reason, _workflow_session_key(),
@@ -12142,6 +12414,46 @@ def cmd_migrate(args: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def _machine_wide_lock_findings(root: Path, local_leases: list[dict]) -> list[str]:
+    """Report machine-wide locks other checkouts recorded and never freed.
+
+    The per-checkout scan above cannot see them: a project whose
+    conversation died with `gpu:0` still blocks every other project on
+    the host, while each project's own registry looks clean. Locks held
+    by a live lease of this checkout are covered by the local scan.
+    """
+    findings: list[str] = []
+    base = _resource_lock_base_dir()
+    if not base.is_dir():
+        return findings
+    local_resources = {
+        str(resource)
+        for item in local_leases
+        if item.get("kind") == "resource"
+        and item.get("status") not in {"released", "release_failed"}
+        for resource in (item.get("resources") or [])
+    }
+    for owner_path in sorted(base.glob("*/owner.json")):
+        owner = _load_json(owner_path, {})
+        if not isinstance(owner, dict) or not owner:
+            findings.append(
+                f"machine-wide lock directory {owner_path.parent} has no readable "
+                f"owner record; remove it by hand once nothing on this host uses it"
+            )
+            continue
+        resource = str(owner.get("resource") or "")
+        if not resource or resource in local_resources:
+            continue
+        state, detail = _foreign_lock_liveness(owner)
+        if state in {"live", "registering", "remote"}:
+            continue
+        findings.append(
+            f"machine-wide lock for {resource} ({owner.get('lease_id') or 'unknown lease'}) "
+            f"has no live holder: {detail}; {_foreign_lock_recovery_hint(resource, state)}"
+        )
+    return findings
+
+
 def _resource_interlock_findings(root: Path) -> list[str]:
     """Report resource and worktree leases stuck without a live holder.
 
@@ -12186,6 +12498,7 @@ def _resource_interlock_findings(root: Path) -> list[str]:
             f"released-session holders, or run 'agentctl resource release "
             f"{item.get('id')} --force-stale --reason <why>'"
         )
+    findings.extend(_machine_wide_lock_findings(root, leases))
     board_tasks = _load_board(root).get("tasks") or {}
     try:
         worktree_rows = _worktree_rows(root)
@@ -13198,7 +13511,12 @@ def build_parser() -> argparse.ArgumentParser:
     # allow_abbrev=False keeps a bare `--force` an error instead of a
     # silent abbreviation of --force-stale.
     rrelease = rsub.add_parser("release", allow_abbrev=False)
-    rrelease.add_argument("lease")
+    rrelease.add_argument("lease", nargs="?")
+    rrelease.add_argument(
+        "--lock", dest="lock_resource", metavar="RESOURCE",
+        help="Address a machine-wide lock by resource name (for example gpu:0) "
+             "when another checkout on this host recorded it; requires --force-stale",
+    )
     rrelease.add_argument("--reason", required=True)
     rrelease.add_argument(
         "--force-stale", dest="force_stale", action="store_true",

@@ -250,7 +250,40 @@ along three lines, ordered from automatic to manual:
    doctor` reports every lease stuck without a live holder — including worktree
    leases whose task is already done and `release_failed` external locks — with
    the command that resolves each one.
+4. **Locks held by another checkout on the same host.** A local resource lock
+   is machine-wide (one directory per resource under
+   `~/.agent-workflow/resource-locks/`, or `AGENT_WORKFLOW_RESOURCE_LOCK_DIR`),
+   while lease registries and session records are per checkout. A project
+   whose conversation died holding `gpu:0` therefore blocks every other
+   project on the machine, and nothing in the newcomer's own registry says so.
+   The lock's owner record names the holder's checkout, and that checkout's
+   registry is the evidence: a holder its own registry proves dead
+   (`released`, finished run, or missing past the registration grace) is
+   released by the next `resource acquire` in any checkout; a stale session,
+   a checkout that no longer exists, or a legacy lock without a recorded
+   checkout is refused with the holder's state and the exact command,
+   `agentctl resource release --lock <resource> --force-stale --reason <why>`,
+   which addresses the lock by resource name because the lease id lives in
+   the other registry. Live holders are refused and cannot be forced. The
+   forced release is written into the releasing checkout's registry as an
+   audit row (`release_mode: force-stale-foreign`), and `agentctl doctor` in
+   any checkout lists machine-wide locks whose holder is not live, so the
+   interlock is visible from the project that is actually blocked.
 
+### Locks held by another project on the same host
+
+A local resource lock (`gpu:0`) is machine-wide: one directory per resource
+under `~/.agent-workflow/resource-locks/` (or `AGENT_WORKFLOW_RESOURCE_LOCK_DIR`),
+shared by every checkout on the host. Lease registries and session records,
+however, are per checkout. So when project A's conversation dies holding
+`gpu:0`, project B's registry looks clean while B can never claim the card.
+
+The lock's `owner.json` therefore records the holder's checkout, and the same
+evidence rules apply across checkouts by reading that checkout's registry:
+
+- A holder that its own registry proves dead (lease released, run finished,
+  or lease missing past the registration grace) is released by B's next
+  `res
 ## Upgrade Barrier
 
 The install manifest records schema, kit version, source commit, and protocol

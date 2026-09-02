@@ -181,7 +181,7 @@ reported but not managed.
 ## Status and known limitations
 
 The controller, the lease model, GPU supervision, and the review gate are
-covered by 222 regression tests, CI on Linux and Windows, and a
+covered by 233 regression tests, CI on Linux and Windows, and a
 seven-scenario acceptance run against a fresh clone. The acceptance run
 was adversarial where it matters: forged lease timestamps, deleted session
 records, orphaned resources, replayed creation requests, and a same-runtime
@@ -197,7 +197,13 @@ request refuses to silently resume unrelated work, the refusal messages
 around worktree isolation, gate approval, and reviewer registration name
 the step that actually resolves them, `doctor` runs from a plain terminal
 without an agent session, and the default artifact root is gitignored on
-install.
+install. GPU locks are machine-wide while ledgers are per project, so a
+project whose conversation died holding `gpu:0` used to block every other
+project on the host invisibly; the lock now records its holder's checkout,
+the next acquire from any project releases holders that checkout's own
+registry proves dead, `resource release --lock gpu:0 --force-stale` handles
+stale sessions and deleted checkouts, and `doctor` lists such locks from
+the project that is actually blocked.
 
 ## Documentation
 
