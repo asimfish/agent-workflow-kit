@@ -15,7 +15,11 @@
 9. Git hooks verify active task context, doc updates, and commit format.
 
 Worker tasks stay in `review` until an independent reviewer runs `agentctl
-gate approve|reject`. A `review`-type task whose session already issued a
+gate approve|reject`. The reviewer must be a different conversation whose
+host runtime never touched the implementation, must be registered with a
+`review`, `planning`, or `supervisor` role (`agentctl agents add --id
+<reviewer> --role review`, once per project), and must hold its own active
+`review`-type task when it decides. A `review`-type task whose session already issued a
 recorded gate decision closes as `done` on its own `finish`: its deliverable
 is the decision in `.agent/gates/`, and demanding another gate on the review
 task itself only recurses. The closure stays fail-closed — the task must be

@@ -43,11 +43,17 @@ running it again is harmless. Afterwards the only prompt a human needs is:
 
 Details, upgrades, and migration: `docs/install-and-upgrade.md`.
 
+Nothing is added to your `PATH`. Every `agentctl` below is shorthand for
+`python3 tools/agentctl.py`, run from the project root; add
+`alias agentctl='python3 tools/agentctl.py'` if you type it often. Agents
+already use the long form because `.agent/WORKFLOW_ENTRY.md` tells them to.
+
 ## Your first task, end to end
 
 What actually happens on day one, so you know what to expect. The human
 does step 1 and step 5; agents do the rest by following
-`.agent/WORKFLOW_ENTRY.md` on their own.
+`.agent/WORKFLOW_ENTRY.md` on their own. Every command here was run
+verbatim against a fresh install before this was written.
 
 **1. Point a session at the project.** Say `按 .agent 规范开始工作。` (or
 "work by the .agent rules") to any agent session. It claims a task before
@@ -73,14 +79,16 @@ goes through `run start`, not a bare shell, so it keeps running when the
 chat dies and shows up on the board:
 
 ```bash
-agentctl run start --task T-001 --output outputs/T-001/ \
+agentctl run start --task T-001 --output .agent-artifacts/T-001/ \
     --resource gpu:0 --gpu-watchdog -- python train.py
 agentctl run list                            # status, PIDs, logs
 ```
 
-With `--gpu-watchdog`, a process squatting on VRAM at zero utilization
-past the grace period gets reclaimed; compilation phases can declare
-exemptions.
+Declared outputs must sit inside the task's write scope or under
+`.agent-artifacts/<task>/`, which the install gitignores so checkpoints
+never get staged by accident. With `--gpu-watchdog`, a process squatting
+on VRAM at zero utilization past the grace period gets reclaimed;
+compilation phases can declare exemptions.
 
 **4. The agent hands the task to review.**
 
@@ -90,16 +98,20 @@ agentctl finish --summary "..." --tests "pytest -x: 42 passed"
 
 The task enters `review` and git hooks now block pushes of unreviewed
 work. A *different* session — one whose runtime never touched the
-implementation — claims a review task and decides:
+implementation — registers itself as a reviewer once, claims a review
+task, and decides:
 
 ```bash
+agentctl agents add --id reviewer-name --role review      # once per project
+agentctl work --agent reviewer-name --auto-create --type review \
+    --title "review T-001" --scope ".agent/"
 agentctl gate approve --task T-001 --by reviewer-name --note "..."
 ```
 
 Self-approval fails: the controller compares runtime fingerprints, not
 good intentions. Code tasks run in their own worktree; after the gate,
-walk the result back to the main branch with
-`docs/worktree-merge-back.md`.
+bring the result back with `agentctl reconcile merge-back --from-ref
+<branch>` (see `docs/worktree-merge-back.md`).
 
 **5. You check in whenever you like.**
 
@@ -108,8 +120,9 @@ agentctl board      # who is doing what, which runs are live
 agentctl doctor     # stale sessions, orphaned leases, interlocked GPUs
 ```
 
-`doctor` names the recovery command for anything it flags; nothing is
-reclaimed behind your back.
+Both work from any plain terminal; they need no agent session. `doctor`
+names the recovery command for anything it flags; nothing is reclaimed
+behind your back.
 
 ## How it works
 
@@ -168,18 +181,23 @@ reported but not managed.
 ## Status and known limitations
 
 The controller, the lease model, GPU supervision, and the review gate are
-covered by 208 regression tests, CI on Linux and Windows, and a
+covered by 222 regression tests, CI on Linux and Windows, and a
 seven-scenario acceptance run against a fresh clone. The acceptance run
 was adversarial where it matters: forged lease timestamps, deleted session
 records, orphaned resources, replayed creation requests, and a same-runtime
-approval attempt were all refused or healed as designed.
+approval attempt were all refused or healed as designed. A second pass
+replayed the walkthrough above, command by command, on a blank project
+with three concurrent conversations, a dead GPU holder, and an
+independent reviewer.
 
 The rough edges found there have since been fixed: `agentctl reconcile
 merge-back` now moves a finished worktree task's ledger into the planning
 checkout (see `docs/worktree-merge-back.md`), an explicit `--auto-create`
-request refuses to silently resume unrelated work, and the refusal
-messages around worktree isolation and gate approval now name the step
-that actually resolves them.
+request refuses to silently resume unrelated work, the refusal messages
+around worktree isolation, gate approval, and reviewer registration name
+the step that actually resolves them, `doctor` runs from a plain terminal
+without an agent session, and the default artifact root is gitignored on
+install.
 
 ## Documentation
 

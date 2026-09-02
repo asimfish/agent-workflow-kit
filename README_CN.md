@@ -37,10 +37,16 @@ cd agent-workflow-kit
 
 细节、升级、迁移见 `docs/install-and-upgrade.md`。
 
+安装不会往 `PATH` 里加任何东西。下文所有 `agentctl` 都是在项目根目录执行
+`python3 tools/agentctl.py` 的简写；常敲的话可以加一条
+`alias agentctl='python3 tools/agentctl.py'`。智能体用的本来就是完整写法，
+因为 `.agent/WORKFLOW_ENTRY.md` 里就是这么写的。
+
 ## 第一个任务的完整走法
 
 第一天用起来是什么样，提前心里有数。人只做第 1 步和第 5 步，
-其余由智能体按 `.agent/WORKFLOW_ENTRY.md` 自己完成。
+其余由智能体按 `.agent/WORKFLOW_ENTRY.md` 自己完成。下面每条命令都在一个
+全新安装的空项目上原样跑过一遍。
 
 **1. 把会话指向项目。** 对任意智能体会话说「按 .agent 规范开始工作。」
 它在碰任何文件之前先领任务：
@@ -64,13 +70,14 @@ agentctl note "root cause: off-by-one in shard split"
 shell，对话死了任务照跑，还能在板上看到：
 
 ```bash
-agentctl run start --task T-001 --output outputs/T-001/ \
+agentctl run start --task T-001 --output .agent-artifacts/T-001/ \
     --resource gpu:0 --gpu-watchdog -- python train.py
 agentctl run list                            # 状态、PID、日志
 ```
 
-带 `--gpu-watchdog` 时，占着显存零利用率超过宽限期的进程会被回收；
-编译阶段可以声明豁免。
+声明的输出必须位于任务写范围内，或放在 `.agent-artifacts/<task>/` 下——
+安装时已把它加进 `.gitignore`，checkpoint 不会被误暂存。带 `--gpu-watchdog`
+时，占着显存零利用率超过宽限期的进程会被回收；编译阶段可以声明豁免。
 
 **4. 智能体把任务交给评审。**
 
@@ -79,15 +86,19 @@ agentctl finish --summary "..." --tests "pytest -x: 42 passed"
 ```
 
 任务进入 `review`，git hooks 从此挡住未评审工作的推送。由*另一个*
-会话——运行时从未碰过实现的那种——领取评审任务并裁决：
+会话——运行时从未碰过实现的那种——先把自己注册为评审者（每个项目一次），
+再领取评审任务并裁决：
 
 ```bash
+agentctl agents add --id reviewer-name --role review      # 每个项目做一次
+agentctl work --agent reviewer-name --auto-create --type review \
+    --title "review T-001" --scope ".agent/"
 agentctl gate approve --task T-001 --by reviewer-name --note "..."
 ```
 
 自批会失败：控制器比对的是运行时指纹，不是自觉。代码任务在独立
-worktree 里进行；过门之后按 `docs/worktree-merge-back.md` 把结果走回
-主分支。
+worktree 里进行；过门之后用 `agentctl reconcile merge-back --from-ref
+<branch>` 把结果走回主分支（见 `docs/worktree-merge-back.md`）。
 
 **5. 你随时来看一眼。**
 
@@ -96,7 +107,8 @@ agentctl board      # 谁在干什么、哪些任务在跑
 agentctl doctor     # 过期会话、孤儿租约、互锁的 GPU
 ```
 
-`doctor` 对每个问题给出恢复命令；不会背着你回收任何东西。
+这两条在任何普通终端里都能跑，不需要智能体会话。`doctor` 对每个问题给出
+恢复命令；不会背着你回收任何东西。
 
 ## 工作原理
 
@@ -145,15 +157,17 @@ agentctl doctor                         工作流是否健康
 
 ## 现状与已知限制
 
-控制器、租约模型、GPU 监管和评审门禁有 208 个回归测试、Linux 与 Windows
+控制器、租约模型、GPU 监管和评审门禁有 222 个回归测试、Linux 与 Windows
 双平台 CI，以及一轮对全新克隆做的七场景端到端验收。验收在关键处是对抗式
 的：伪造租约时间戳、删除会话记录、制造孤儿资源、重放创建请求、同运行时
-自批——全部按设计被拒绝或自愈。
+自批——全部按设计被拒绝或自愈。第二轮验收把上面的走法逐条在一个空项目上
+重放：三个并发会话、一个死掉的显卡持有者、一个独立评审者。
 
 验收发现的粗糙点已经修复：`agentctl reconcile merge-back` 会把 worktree
 里完成的任务账本搬回 planning 检出（见 `docs/worktree-merge-back.md`）；
-显式的 `--auto-create` 请求不会再静默续用无关的旧任务；worktree 隔离与
-评审门禁的拒绝提示现在会指向真正能解除拒绝的那一步。
+显式的 `--auto-create` 请求不会再静默续用无关的旧任务；worktree 隔离、
+评审门禁与评审者注册的拒绝提示会指向真正能解除拒绝的那一步；`doctor`
+在普通终端里无需智能体会话即可运行；默认产物目录在安装时即被 gitignore。
 
 ## 文档
 

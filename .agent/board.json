@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-08-29 02:32:26",
+  "updated_at": "2026-09-02 21:29:54",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -70,6 +70,24 @@
       "deps": [],
       "created_at": "2026-08-29 01:01:11",
       "updated_at": "2026-08-29 02:32:26"
+    },
+    "TA08B0CC413F151F5-026": {
+      "title": "day-one acceptance fixes: doctor without identity, artifact gitignore, reviewer hints, README accuracy",
+      "type": "code",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/tools/",
+        "tests/",
+        "README.md",
+        "README_CN.md",
+        "CHANGELOG.md",
+        "docs/workflow.md"
+      ],
+      "deps": [],
+      "created_at": "2026-09-02 08:19:51",
+      "updated_at": "2026-09-02 21:29:54"
     }
   }
 }

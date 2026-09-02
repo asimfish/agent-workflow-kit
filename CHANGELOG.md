@@ -57,3 +57,14 @@ same change fixed the acceptance-run rough edges: explicit `--auto-create`
 requests refuse to silently resume unrelated work, worktree and gate
 refusals name the step that resolves them, plan rows accept multi-hyphen
 task ids, and pre-push resolves commit references against the archive.
+
+A day-one replay of the README walkthrough on a blank project, with three
+concurrent conversations, a dead GPU holder, and an independent reviewer,
+confirmed the coordination guarantees and found four gaps between the
+prose and the tool: `doctor` is now identity-free so a human in a plain
+terminal can run it, `init` gitignores the default artifact root
+`.agent-artifacts/` and re-runs append only the missing entries, the
+`finish` hint and gate refusals name the reviewer registration command,
+and both READMEs now use the artifact root in the `run start` example,
+show the reviewer registration step, and say that `agentctl` is shorthand
+for `python3 tools/agentctl.py`.
