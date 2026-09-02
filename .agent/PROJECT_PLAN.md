@@ -36,8 +36,9 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] TA53E0FCAD2073DF3-001 - re-review of TA08B0CC413F151F5-028 after rejection (owner: independent-reviewer-028c)
 - [x] T66D7BA7B09475618-001 - independent review of TA08B0CC413F151F5-028 (owner: independent-reviewer-028b)
-- [ ] TA08B0CC413F151F5-028 - cross-checkout orphan GPU locks: record holder checkout, verify liveness across checkouts, self-heal or name the recovery, doctor scans machine-wide locks (owner: cursor)
+- [x] TA08B0CC413F151F5-028 - cross-checkout orphan GPU locks: record holder checkout, verify liveness across checkouts, self-heal or name the recovery, doctor scans machine-wide locks (owner: cursor)
 - [x] T9AB65133FAF94ED2-001 - independent review of TA08B0CC413F151F5-027 (owner: independent-reviewer-027)
 - [x] TA08B0CC413F151F5-027 - harden GPU watchdog regression tests against slow runners; probe supervisor startup race (owner: cursor)
 - [x] T36DC21235DACCCFF-001 - independent review of TA08B0CC413F151F5-026 (owner: independent-reviewer-026)
