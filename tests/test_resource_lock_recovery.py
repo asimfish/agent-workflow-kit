@@ -259,6 +259,47 @@ class TwoCheckoutLockTest(unittest.TestCase):
         )
         self.acquire(self.b, "conv-b")
 
+    @unittest.skipIf(os.name == "nt", "POSIX permission bits")
+    @unittest.skipIf(hasattr(os, "geteuid") and os.geteuid() == 0, "root ignores mode bits")
+    def test_unreadable_holder_checkout_is_unknown_never_missing(self):
+        # Shared GPU host: another user's checkout exists but cannot be
+        # read. _git swallows the error and glob skips the directory, so
+        # without an explicit readability probe the registry looks empty,
+        # the holder looks "missing", and an aged lock would auto-release
+        # while the card is still in use.
+        self.acquire(self.a, "conv-a")
+        owner_path = self.owner_path("gpu:0")
+        owner = json.loads(owner_path.read_text(encoding="utf-8"))
+        owner["created_at"] = "2020-01-01 00:00:00"   # well past every grace window
+        owner_path.write_text(json.dumps(owner), encoding="utf-8")
+
+        # The whole .git is unreadable: `git rev-parse` fails silently, so
+        # without the probe the registry path is None and the lease looks
+        # missing rather than unreadable.
+        git_dir = self.a / ".git"
+        mode = git_dir.stat().st_mode
+        git_dir.chmod(0)
+        self.addCleanup(lambda: git_dir.chmod(mode))
+
+        refused = self.acquire(self.b, "conv-b", expect=1)
+        self.assertIn("holder is unknown", refused.stderr)
+        self.assertIn("cannot be read from here", refused.stderr)
+        self.assertNotIn("holder is missing", refused.stderr)
+        self.assertTrue(owner_path.exists(), "an unreadable holder must never be auto-released")
+
+        report = json.loads(self.agentctl(self.b, "conv-b", "doctor", "--json").stdout)
+        hit = next(w for w in report["warnings"] if "machine-wide lock for gpu:0" in w)
+        self.assertIn("cannot be read", hit)
+        self.assertIn("--lock gpu:0 --force-stale", hit)
+
+        git_dir.chmod(mode)
+        # Readable again: the holder is live, so even --force-stale is refused.
+        forced = self.agentctl(
+            self.b, "conv-b", "resource", "release", "--lock", "gpu:0",
+            "--force-stale", "--reason", "impatient", expect=1,
+        )
+        self.assertIn("holder is live", forced.stderr)
+
     def test_legacy_lock_without_checkout_is_explained_and_force_releasable(self):
         owner_path = self.owner_path("gpu:0")
         owner_path.parent.mkdir(parents=True)

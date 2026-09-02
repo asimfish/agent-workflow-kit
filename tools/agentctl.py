@@ -6562,15 +6562,34 @@ def _foreign_lock_liveness(owner: dict) -> tuple[str, str]:
             "verified from another checkout"
         )
     path = Path(checkout)
-    if not path.exists() or not (path / ".git").exists():
-        return "checkout_gone", f"holder checkout {checkout} no longer exists"
     try:
+        if not path.exists() or not (path / ".git").exists():
+            return "checkout_gone", f"holder checkout {checkout} no longer exists"
+        # "Cannot read" must never look like "nothing there": on a shared
+        # host another user's checkout is typically unreadable, and an
+        # empty-looking registry would age into an auto-release that
+        # steals a card still in use. _git swallows errors and glob
+        # skips unreadable directories, so probe readability explicitly.
+        registry, _registry_lock = _runtime_lease_paths(path)
+        if registry is None:
+            return "unknown", (
+                f"holder checkout {checkout} exists but its Git metadata cannot be "
+                f"read from here"
+            )
+        sessions_dir = _session_runtime_dir(path)
+        for probe in (registry.parent, registry, sessions_dir):
+            if probe.exists() and not os.access(probe, os.R_OK):
+                return "unknown", (
+                    f"holder checkout {checkout} exists but its runtime state is not "
+                    f"readable from here"
+                )
         leases = [
             item for item in _load_runtime_leases(path).get("leases") or []
             if isinstance(item, dict)
         ]
-    except Exception as exc:  # registry unreadable: report, never guess
-        return "unknown", f"holder checkout {checkout} has an unreadable lease registry: {exc}"
+        sessions = _session_liveness_index(path)
+    except Exception as exc:  # anything unreadable: report, never guess
+        return "unknown", f"holder checkout {checkout} runtime state could not be read: {exc}"
     lease = next(
         (item for item in leases
          if item.get("id") == lease_id and item.get("kind") == "resource"),
@@ -6594,10 +6613,6 @@ def _foreign_lock_liveness(owner: dict) -> tuple[str, str]:
         for item in leases
         if item.get("kind") == "run" and item.get("id")
     }
-    try:
-        sessions = _session_liveness_index(path)
-    except Exception:
-        sessions = {}
     state, detail = _resource_holder_liveness(lease, runs, sessions)
     detail = f"{detail} ({where})"
     if state == "missing":

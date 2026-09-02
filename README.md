@@ -181,7 +181,7 @@ reported but not managed.
 ## Status and known limitations
 
 The controller, the lease model, GPU supervision, and the review gate are
-covered by 233 regression tests, CI on Linux and Windows, and a
+covered by 234 regression tests, CI on Linux and Windows, and a
 seven-scenario acceptance run against a fresh clone. The acceptance run
 was adversarial where it matters: forged lease timestamps, deleted session
 records, orphaned resources, replayed creation requests, and a same-runtime

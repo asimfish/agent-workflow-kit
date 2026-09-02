@@ -99,5 +99,10 @@ sessions, deleted checkouts, and legacy locks are refused with the holder's
 state and the new `resource release --lock <resource> --force-stale
 --reason` command, which is recorded as an audit row in the releasing
 checkout; live holders cannot be forced; and `doctor` in any checkout lists
-machine-wide locks without a live holder. Nine two-checkout regression
-tests cover the evidence rules.
+machine-wide locks without a live holder. A holder checkout that exists but
+cannot be read from here (another user's project on a shared host) is
+`unknown`, never `missing`: `_git` swallows errors and `glob` skips
+unreadable directories, so without an explicit readability probe an
+empty-looking registry would have aged into an auto-release of a card
+still in use. Ten two-checkout regression tests cover the evidence rules,
+including that one.

@@ -260,8 +260,11 @@ along three lines, ordered from automatic to manual:
    registry is the evidence: a holder its own registry proves dead
    (`released`, finished run, or missing past the registration grace) is
    released by the next `resource acquire` in any checkout; a stale session,
-   a checkout that no longer exists, or a legacy lock without a recorded
-   checkout is refused with the holder's state and the exact command,
+   a checkout that no longer exists, a legacy lock without a recorded
+   checkout, or a checkout whose runtime state cannot be read from here
+   (another user's project on a shared host -- "cannot read" is never
+   treated as "nothing there") is refused with the holder's state and the
+   exact command,
    `agentctl resource release --lock <resource> --force-stale --reason <why>`,
    which addresses the lock by resource name because the lease id lives in
    the other registry. Live holders are refused and cannot be forced. The
