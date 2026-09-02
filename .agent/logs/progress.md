@@ -264,3 +264,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-08-27 20:13:13 [TA08B0CC413F151F5-021] Implemented overwrite guard (_foreign_task_claim) and multi-source id derivation (_claimed_task_ids); 4 new regression tests, full suite 208 passed; inverse verification: guard removal turns tests red.
 - 2026-08-29 01:27:36 [TA08B0CC413F151F5-023] Updated README/README_CN status section and CHANGELOG for the tooled merge-back path (in-scope docs follow-up after finish)
 - 2026-08-29 02:32:20 [T023R-001] review of TA08B0CC413F151F5-023 delivered: approve decision recorded in gate; PR #51 merged as 14c8c52; closing reviewer task
+- 2026-09-02 21:19:27 [TA08B0CC413F151F5-026] fixes + tests + docs in place; full suite running in background; task doc stages 1-4 checked

@@ -106,6 +106,7 @@ IDENTITY_FREE_COMMAND_PATHS = frozenset({
     ("loop", "list"),
     ("loop", "show"),
     ("check",),
+    ("doctor",),
     ("migrate",),
     ("sessions", "list"),
     ("upgrade", "status"),
@@ -333,13 +334,35 @@ def _git_process(root: Path, *args: str, timeout: int = 120) -> subprocess.Compl
     )
 
 
+GITIGNORE_HEADER = "# Agent Workflow Kit local state"
+# Per-entry so a re-run on an older install appends only what is missing.
+# The default artifact root is where `run start --output` puts checkpoints and
+# logs; keeping it out of Git by default avoids staging gigabytes by accident.
+GITIGNORE_MANAGED_ENTRIES = (".agent/state/", ".agent/tmp/", ".agent-artifacts/")
+
+
 def _ensure_gitignore(root: Path) -> None:
     path = root / ".gitignore"
-    block = "\n# Agent Workflow Kit local state\n.agent/state/\n.agent/tmp/\n"
     text = _read(path)
-    if ".agent/state/" in text:
+    lines = text.splitlines()
+    present = {line.strip().lstrip("/") for line in lines}
+    missing = [entry for entry in GITIGNORE_MANAGED_ENTRIES if entry not in present]
+    if not missing:
         return
-    _write(path, text.rstrip() + block if text else block.lstrip())
+    if GITIGNORE_HEADER in lines:
+        idx = lines.index(GITIGNORE_HEADER) + 1
+        while idx < len(lines) and lines[idx].strip().lstrip("/") in GITIGNORE_MANAGED_ENTRIES:
+            idx += 1
+        lines[idx:idx] = missing
+        _write(path, "\n".join(lines) + "\n")
+        return
+    while lines and not lines[-1].strip():
+        lines.pop()
+    block = [GITIGNORE_HEADER, *missing]
+    if lines:
+        _write(path, "\n".join([*lines, "", *block]) + "\n")
+    else:
+        _write(path, "\n".join(block) + "\n")
 
 
 def _state_dir(root: Path) -> Path:
@@ -3209,8 +3232,10 @@ def cmd_complete(args: argparse.Namespace) -> int:
         )
     else:
         print(
-            f"agentctl: {task} -> review. independent reviewer gate: start a separate review task, "
-            f"then run agentctl gate approve --task {task} --by <reviewer>"
+            f"agentctl: {task} -> review. independent reviewer gate: from a different "
+            f"conversation, register the reviewer once ('agentctl agents add --id <reviewer> "
+            f"--role review'), start a separate review task, then run "
+            f"agentctl gate approve --task {task} --by <reviewer>"
         )
     _run_loop_checkpoint(root, "post-finish", once=True, trigger="post-finish", strict=False)
     return 0
@@ -3509,7 +3534,10 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
         review_problems.append("reviewer host runtime participated in the worker task and is not independent")
     if not any(label in reviewer_role for label in ("supervisor", "planning", "review")):
         review_problems.append(
-            f"reviewer {reviewer or '<missing>'} is not registered with a supervisor/planning/review role"
+            f"reviewer {reviewer or '<missing>'} is not registered with a "
+            f"supervisor/planning/review role; register it first with "
+            f"'agentctl agents add --id {reviewer or '<reviewer>'} --role review', "
+            f"then run 'agentctl refresh' in the reviewer session"
         )
     if review_problems:
         print("agentctl: independent gate decision rejected:", file=sys.stderr)
@@ -4396,7 +4424,10 @@ def _guidance_verify(root: Path, args: argparse.Namespace) -> int:
             f"active reviewer session is {reviewer_session.get('agent') or 'missing'}, expected {reviewer}"
         )
     if not any(label in reviewer_role for label in ("supervisor", "planning", "review")):
-        problems.append(f"reviewer {reviewer} is not registered with a supervisor/planning/review role")
+        problems.append(
+            f"reviewer {reviewer} is not registered with a supervisor/planning/review role; "
+            f"register it first with 'agentctl agents add --id {reviewer} --role review'"
+        )
     try:
         if _managed_worktree_lease(root):
             problems.append("guidance verification must run from the supervisor checkout, not a worker lease")
