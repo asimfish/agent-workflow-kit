@@ -6454,7 +6454,7 @@ def _external_resource_acquire(resource: str, owner: dict) -> tuple[dict | None,
         try:
             path.mkdir()
         except FileExistsError:
-            existing = _load_json(path / "owner.json", {})
+            existing, _raw = _read_lock_owner(path)
             detail = existing.get("lease_id") or "unknown owner"
             return None, f"resource {resource} is already locked by {detail}"
         try:
@@ -6514,6 +6514,67 @@ FOREIGN_LOCK_FORCE_RELEASE_STATES = FOREIGN_LOCK_AUTO_RELEASE_STATES | frozenset
 )
 
 
+def _read_lock_owner(lock_dir: Path) -> tuple[dict, bytes]:
+    """Owner record of a local lock directory plus the exact bytes it came from.
+
+    Never raises: a missing, unreadable, non-UTF-8, or non-JSON record is
+    an empty dict (with whatever bytes were read), so `doctor` and
+    `resource acquire` report a damaged lock instead of crashing on it.
+    """
+    try:
+        raw = (lock_dir / "owner.json").read_bytes()
+    except OSError:
+        return {}, b""
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError:  # UnicodeDecodeError and JSONDecodeError
+        return {}, raw
+    return (data if isinstance(data, dict) else {}), raw
+
+
+def _reclaim_lock_dir(lock_dir: Path, expected: bytes) -> str | None:
+    """Remove a local lock whose owner record still reads exactly `expected`.
+
+    Two checkouts can classify the same dead lock at the same moment, and
+    an acquirer can slip in between classification and removal. Renaming
+    the owner record is atomic, so only one releaser gets it; the record
+    is then compared byte-for-byte with what was classified, and a fresh
+    record written by someone else is put back untouched. Returns an
+    error string when nothing was removed.
+    """
+    owner = lock_dir / "owner.json"
+    claimed = lock_dir / f".reclaim-{os.getpid()}-{time.time_ns()}.json"
+    try:
+        os.rename(owner, claimed)
+    except FileNotFoundError:
+        return "lock owner record was already removed by another release"
+    except OSError as exc:
+        return str(exc)
+    try:
+        current = claimed.read_bytes()
+    except OSError as exc:
+        return str(exc)
+    if current != expected:
+        try:
+            os.rename(claimed, owner)
+        except OSError:
+            pass
+        return "lock owner record changed while releasing; left in place"
+    try:
+        claimed.unlink()
+        for straggler in lock_dir.glob(".reclaim-*.json"):
+            straggler.unlink()
+    except OSError as exc:
+        return str(exc)
+    try:
+        lock_dir.rmdir()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        return str(exc)
+    return None
+
+
 def _foreign_lock_owner(root: Path, resource: str) -> dict | None:
     """owner.json of a local machine-wide lock that no lease in `root` holds.
 
@@ -6526,8 +6587,8 @@ def _foreign_lock_owner(root: Path, resource: str) -> dict | None:
         return None
     if location.get("provider") != "local-mkdir":
         return None
-    owner = _load_json(Path(location["path"]) / "owner.json", {})
-    if not isinstance(owner, dict) or not owner:
+    owner, _raw = _read_lock_owner(Path(location["path"]))
+    if not owner:
         return None
     for item in _load_runtime_leases(root).get("leases") or []:
         if (
@@ -6653,14 +6714,19 @@ def _release_orphaned_foreign_lock(root: Path, resource: str) -> bool:
     never freed (for example a project whose conversation was released
     but whose lease registry the sweep never ran on again).
     """
-    owner = _foreign_lock_owner(root, resource)
-    if owner is None:
+    if _foreign_lock_owner(root, resource) is None:
+        return False
+    lock_dir = Path(_resource_lock_location(resource)["path"])
+    # Classify the exact bytes that will be compared at removal time, so a
+    # record rewritten by a faster releaser or a new acquirer is never
+    # mistaken for the dead one that was classified.
+    owner, raw = _read_lock_owner(lock_dir)
+    if not owner:
         return False
     state, detail = _foreign_lock_liveness(owner)
     if state not in FOREIGN_LOCK_AUTO_RELEASE_STATES:
         return False
-    error = _external_resource_release(_resource_lock_location(resource))
-    if error:
+    if _reclaim_lock_dir(lock_dir, raw):
         return False
     print(
         f"agentctl: released orphaned machine-wide lock for {resource} "
@@ -6962,8 +7028,7 @@ def _resource_release_foreign_lock(root: Path, resource: str, reason: str,
                 f"--reason <why>', with --force-stale if its holder is not live)"
             )
     lock_dir = Path(location["path"])
-    owner = _load_json(lock_dir / "owner.json", {})
-    owner = owner if isinstance(owner, dict) else {}
+    owner, raw = _read_lock_owner(lock_dir)
     if not owner:
         if not lock_dir.exists():
             return False, f"no machine-wide lock exists for {resource}"
@@ -6975,7 +7040,16 @@ def _resource_release_foreign_lock(root: Path, resource: str, reason: str,
             f"machine-wide lock for {resource} was not released: holder is {state} "
             f"({detail}); {_foreign_lock_recovery_hint(resource, state)}"
         )
-    error = _external_resource_release(location)
+    if owner:
+        error = _reclaim_lock_dir(lock_dir, raw)
+    else:
+        # No parsable owner record: nothing to compare against, remove the
+        # damaged directory outright (this is an explicit forced action).
+        try:
+            shutil.rmtree(lock_dir)
+            error = None
+        except OSError as exc:
+            error = str(exc)
     if error:
         return False, f"machine-wide lock for {resource} could not be removed: {error}"
     audit = {
@@ -12448,12 +12522,18 @@ def _machine_wide_lock_findings(root: Path, local_leases: list[dict]) -> list[st
         and item.get("status") not in {"released", "release_failed"}
         for resource in (item.get("resources") or [])
     }
-    for owner_path in sorted(base.glob("*/owner.json")):
-        owner = _load_json(owner_path, {})
-        if not isinstance(owner, dict) or not owner:
+    try:
+        lock_dirs = sorted(p for p in base.iterdir() if p.is_dir())
+    except OSError as exc:
+        return [f"machine-wide lock directory {base} could not be listed: {exc}"]
+    for lock_dir in lock_dirs:
+        owner, _raw = _read_lock_owner(lock_dir)
+        if not owner:
             findings.append(
-                f"machine-wide lock directory {owner_path.parent} has no readable "
-                f"owner record; remove it by hand once nothing on this host uses it"
+                f"machine-wide lock directory {lock_dir} has no readable owner record; "
+                f"once nothing on this host uses that resource, remove it with "
+                f"'agentctl resource release --lock <resource> --force-stale --reason <why>' "
+                f"or by hand"
             )
             continue
         resource = str(owner.get("resource") or "")

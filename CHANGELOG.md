@@ -104,5 +104,5 @@ cannot be read from here (another user's project on a shared host) is
 `unknown`, never `missing`: `_git` swallows errors and `glob` skips
 unreadable directories, so without an explicit readability probe an
 empty-looking registry would have aged into an auto-release of a card
-still in use. Ten two-checkout regression tests cover the evidence rules,
+still in use. Twelve two-checkout regression tests cover the evidence rules,
 including that one.

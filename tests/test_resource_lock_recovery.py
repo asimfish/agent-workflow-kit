@@ -343,6 +343,54 @@ class TwoCheckoutLockTest(unittest.TestCase):
         )
         self.assertIn("no machine-wide lock exists for gpu:7", nothing.stderr)
 
+    def test_damaged_owner_record_is_reported_not_a_traceback(self):
+        owner_path = self.owner_path("gpu:0")
+        owner_path.parent.mkdir(parents=True)
+        owner_path.write_bytes(b"\xff\xfe not json at all \x00")
+
+        refused = self.acquire(self.b, "conv-b", expect=1)
+        self.assertIn("already locked by unknown owner", refused.stderr)
+        self.assertNotIn("Traceback", refused.stderr)
+
+        doctor = self.agentctl(self.b, "conv-b", "doctor", "--json")
+        self.assertNotIn("Traceback", doctor.stderr)
+        report = json.loads(doctor.stdout)
+        self.assertTrue(any("no readable owner record" in w for w in report["warnings"]), report)
+
+        forced = self.agentctl(
+            self.b, "conv-b", "resource", "release", "--lock", "gpu:0",
+            "--force-stale", "--reason", "damaged lock directory",
+        )
+        self.assertIn("operator judgment", forced.stdout)
+        self.assertFalse(owner_path.parent.exists())
+        self.acquire(self.b, "conv-b")
+
+    def test_reclaim_only_removes_the_record_it_classified(self):
+        lock_dir = self.locks / "unit-reclaim"
+        lock_dir.mkdir(parents=True)
+        owner = lock_dir / "owner.json"
+        dead = json.dumps({"lease_id": "resource-dead000000000000"}).encode("utf-8")
+        owner.write_bytes(dead)
+
+        # Between classification and removal another acquirer replaced the
+        # record: the fresh lock must survive, byte for byte.
+        fresh = json.dumps({"lease_id": "resource-fresh00000000000"}).encode("utf-8")
+        owner.write_bytes(fresh)
+        error = agentctl._reclaim_lock_dir(lock_dir, dead)
+        self.assertIsNotNone(error)
+        self.assertIn("changed while releasing", error)
+        self.assertEqual(owner.read_bytes(), fresh)
+        self.assertEqual(sorted(p.name for p in lock_dir.iterdir()), ["owner.json"])
+
+        # The record we classified is still there: remove it and the directory.
+        self.assertIsNone(agentctl._reclaim_lock_dir(lock_dir, fresh))
+        self.assertFalse(lock_dir.exists())
+
+        # A faster releaser already took the record: report, do not fail loudly.
+        lock_dir.mkdir()
+        error = agentctl._reclaim_lock_dir(lock_dir, dead)
+        self.assertIn("already removed", error)
+
     def test_release_arguments_are_mutually_exclusive(self):
         both = self.agentctl(
             self.b, "conv-b", "resource", "release", "resource-0123456789abcdef",

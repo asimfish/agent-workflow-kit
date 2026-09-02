@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-03 02:55:35",
+  "updated_at": "2026-09-03 03:12:59",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -130,7 +130,7 @@
     "TA08B0CC413F151F5-028": {
       "title": "cross-checkout orphan GPU locks: record holder checkout, verify liveness across checkouts, self-heal or name the recovery, doctor scans machine-wide locks",
       "type": "code",
-      "status": "blocked",
+      "status": "review",
       "owner": "cursor",
       "scope": [
         "tools/agentctl.py",
@@ -142,7 +142,7 @@
       ],
       "deps": [],
       "created_at": "2026-09-03 00:24:19",
-      "updated_at": "2026-09-03 02:55:19"
+      "updated_at": "2026-09-03 03:12:59"
     },
     "T66D7BA7B09475618-001": {
       "title": "independent review of TA08B0CC413F151F5-028",

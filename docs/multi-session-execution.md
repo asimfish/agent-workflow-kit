@@ -273,20 +273,6 @@ along three lines, ordered from automatic to manual:
    any checkout lists machine-wide locks whose holder is not live, so the
    interlock is visible from the project that is actually blocked.
 
-### Locks held by another project on the same host
-
-A local resource lock (`gpu:0`) is machine-wide: one directory per resource
-under `~/.agent-workflow/resource-locks/` (or `AGENT_WORKFLOW_RESOURCE_LOCK_DIR`),
-shared by every checkout on the host. Lease registries and session records,
-however, are per checkout. So when project A's conversation dies holding
-`gpu:0`, project B's registry looks clean while B can never claim the card.
-
-The lock's `owner.json` therefore records the holder's checkout, and the same
-evidence rules apply across checkouts by reading that checkout's registry:
-
-- A holder that its own registry proves dead (lease released, run finished,
-  or lease missing past the registration grace) is released by B's next
-  `res
 ## Upgrade Barrier
 
 The install manifest records schema, kit version, source commit, and protocol
