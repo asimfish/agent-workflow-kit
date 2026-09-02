@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-02 23:55:48",
+  "updated_at": "2026-09-03 03:23:23",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -126,6 +126,47 @@
       "deps": [],
       "created_at": "2026-09-02 23:27:47",
       "updated_at": "2026-09-02 23:55:48"
+    },
+    "TA08B0CC413F151F5-028": {
+      "title": "cross-checkout orphan GPU locks: record holder checkout, verify liveness across checkouts, self-heal or name the recovery, doctor scans machine-wide locks",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/test_resource_lock_recovery.py",
+        "docs/multi-session-execution.md",
+        "CHANGELOG.md",
+        "README.md",
+        "README_CN.md"
+      ],
+      "deps": [],
+      "created_at": "2026-09-03 00:24:19",
+      "updated_at": "2026-09-03 03:23:08"
+    },
+    "T66D7BA7B09475618-001": {
+      "title": "independent review of TA08B0CC413F151F5-028",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-028b",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-03 02:47:14",
+      "updated_at": "2026-09-03 02:55:35"
+    },
+    "TA53E0FCAD2073DF3-001": {
+      "title": "re-review of TA08B0CC413F151F5-028 after rejection",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-028c",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-03 03:14:52",
+      "updated_at": "2026-09-03 03:23:23"
     }
   },
   "updated": ""

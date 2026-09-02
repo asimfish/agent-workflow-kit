@@ -250,6 +250,28 @@ along three lines, ordered from automatic to manual:
    doctor` reports every lease stuck without a live holder — including worktree
    leases whose task is already done and `release_failed` external locks — with
    the command that resolves each one.
+4. **Locks held by another checkout on the same host.** A local resource lock
+   is machine-wide (one directory per resource under
+   `~/.agent-workflow/resource-locks/`, or `AGENT_WORKFLOW_RESOURCE_LOCK_DIR`),
+   while lease registries and session records are per checkout. A project
+   whose conversation died holding `gpu:0` therefore blocks every other
+   project on the machine, and nothing in the newcomer's own registry says so.
+   The lock's owner record names the holder's checkout, and that checkout's
+   registry is the evidence: a holder its own registry proves dead
+   (`released`, finished run, or missing past the registration grace) is
+   released by the next `resource acquire` in any checkout; a stale session,
+   a checkout that no longer exists, a legacy lock without a recorded
+   checkout, or a checkout whose runtime state cannot be read from here
+   (another user's project on a shared host -- "cannot read" is never
+   treated as "nothing there") is refused with the holder's state and the
+   exact command,
+   `agentctl resource release --lock <resource> --force-stale --reason <why>`,
+   which addresses the lock by resource name because the lease id lives in
+   the other registry. Live holders are refused and cannot be forced. The
+   forced release is written into the releasing checkout's registry as an
+   audit row (`release_mode: force-stale-foreign`), and `agentctl doctor` in
+   any checkout lists machine-wide locks whose holder is not live, so the
+   interlock is visible from the project that is actually blocked.
 
 ## Upgrade Barrier
 
