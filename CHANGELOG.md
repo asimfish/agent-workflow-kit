@@ -68,3 +68,20 @@ terminal can run it, `init` gitignores the default artifact root
 and both READMEs now use the artifact root in the `run start` example,
 show the reviewer registration step, and say that `agentctl` is shorthand
 for `python3 tools/agentctl.py`.
+
+Chasing that PR's flaky CI run found two real defects rather than a test
+problem. First, `run start` is the supervisor's parent, so a supervisor
+that crashed before claiming its lease lingered as a zombie that still
+answered `kill(pid, 0)` with a matching birth marker; the pre-claim death
+detector reported "alive" for its whole 30s budget, the replacement spawn
+from #34 never fired, and the run surfaced later as `exited_unknown`. The
+parent now checks its own `Popen` handle, and on Linux `_pid_alive` reads
+the zombie state from `/proc`. Second -- exposed the moment the first fix
+made the death visible -- the supervisor token came from
+`secrets.token_urlsafe`, which starts with `-` one time in 64, and argparse
+then rejected `--token -...` as a missing value: about 1.5% of every `run
+start` never launched its payload. Tokens are hex now and the supervisor
+argv attaches values with `=`. The GPU watchdog regression tests, whose
+0.05s idle windows and 2--5s budgets assumed a fast machine, were resized
+for loaded runners (reproduced locally at 3x CPU oversubscription) and now
+dump the supervisor log when they fail.
