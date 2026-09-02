@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-02 21:43:35",
+  "updated_at": "2026-09-02 23:20:48",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -104,7 +104,7 @@
     "TA08B0CC413F151F5-027": {
       "title": "harden GPU watchdog regression tests against slow runners; probe supervisor startup race",
       "type": "code",
-      "status": "in_progress",
+      "status": "review",
       "owner": "cursor",
       "scope": [
         "tests/test_execution_lease_workflow.py",
@@ -113,7 +113,7 @@
       ],
       "deps": [],
       "created_at": "2026-09-02 22:14:48",
-      "updated_at": "2026-09-02 22:15:00"
+      "updated_at": "2026-09-02 23:20:48"
     }
   },
   "updated": ""

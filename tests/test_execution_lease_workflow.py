@@ -312,22 +312,27 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             "p.parent.mkdir(parents=True, exist_ok=True); "
             "p.write_text(str(child.pid), encoding='utf-8'); time.sleep(10)"
         )
+        # The watchdog starts sampling as soon as the supervisor is up, so
+        # the payload must publish its child pid before idle + grace
+        # elapse. Interpreter start-up on a loaded CI runner takes well
+        # over the 0.1s the original budget allowed; a 1s + 1s window keeps
+        # the reclaim fast while leaving real headroom.
         idle = self.agentctl(
             "run", "start", "--output", "outputs/T-336/idle.txt",
             "--resource", "gpu:0", "--gpu-watchdog",
-            "--gpu-idle-seconds", "0.05", "--gpu-grace-seconds", "0.05",
-            "--gpu-sample-seconds", "0.02", "--gpu-kill-seconds", "0.2",
+            "--gpu-idle-seconds", "1", "--gpu-grace-seconds", "1",
+            "--gpu-sample-seconds", "0.05", "--gpu-kill-seconds", "1",
             "--gpu-idle-action", "terminate", "--",
             sys.executable, "-c", idle_command,
             env=env,
         )
         idle_id = self.lease_id(idle.stdout, "run")
-        deadline = time.monotonic() + 2
+        deadline = time.monotonic() + 30
         while not idle_pid_file.exists() and time.monotonic() < deadline:
             time.sleep(0.01)
-        self.assertTrue(idle_pid_file.exists())
+        self.assertTrue(idle_pid_file.exists(), self.supervisor_log_dump())
         waited = self.agentctl(
-            "run", "wait", idle_id, "--timeout", "5",
+            "run", "wait", idle_id, "--timeout", "30",
             env=env, expect=1,
         )
         self.assertIn("cancelled", waited.stdout)
@@ -347,7 +352,7 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         )
         if os.name == "posix":
             process_group = idle_run["processes"][0]["process_group"]
-            deadline = time.monotonic() + 2
+            deadline = time.monotonic() + 30
             while (
                 workflow._posix_process_group_exists(process_group)
                 and time.monotonic() < deadline
@@ -355,19 +360,22 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
                 time.sleep(0.02)
             self.assertFalse(workflow._posix_process_group_exists(process_group))
 
+        # A payload that keeps producing output must never be reclaimed.
+        # It runs for ~3s so progress spans many samples even when the
+        # interpreter itself is slow to start.
         command = (
             "import time; "
-            "[(print(i, flush=True), time.sleep(0.03)) for i in range(20)]"
+            "[(print(i, flush=True), time.sleep(0.1)) for i in range(30)]"
         )
         progressing = self.agentctl(
             "run", "start", "--output", "outputs/T-336/progress.txt",
             "--resource", "gpu:0", "--gpu-watchdog",
-            "--gpu-idle-seconds", "0.12", "--gpu-grace-seconds", "0.12",
-            "--gpu-sample-seconds", "0.02", "--gpu-idle-action", "terminate", "--",
+            "--gpu-idle-seconds", "1", "--gpu-grace-seconds", "1",
+            "--gpu-sample-seconds", "0.05", "--gpu-idle-action", "terminate", "--",
             sys.executable, "-c", command, env=env,
         )
         progressing_id = self.lease_id(progressing.stdout, "run")
-        self.agentctl("run", "wait", progressing_id, "--timeout", "5", env=env)
+        self.agentctl("run", "wait", progressing_id, "--timeout", "30", env=env)
         progressing_run = json.loads(
             self.agentctl("run", "show", progressing_id, "--json", env=env).stdout
         )["runs"][0]
@@ -472,15 +480,17 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         nvidia_smi.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
         nvidia_smi.chmod(0o755)
         env = self.env("one", PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
+        # The payload must outlive the supervisor's start-up plus at least
+        # one probe, or the watchdog never gets to record the probe error.
         started = self.agentctl(
             "run", "start", "--output", "outputs/T-339/probe-error.txt",
             "--resource", "gpu:0", "--gpu-watchdog",
             "--gpu-idle-seconds", "0", "--gpu-grace-seconds", "0",
-            "--gpu-sample-seconds", "0.02", "--gpu-idle-action", "terminate", "--",
-            sys.executable, "-c", "import time; time.sleep(0.8)", env=env,
+            "--gpu-sample-seconds", "0.05", "--gpu-idle-action", "terminate", "--",
+            sys.executable, "-c", "import time; time.sleep(4)", env=env,
         )
         run_id = self.lease_id(started.stdout, "run")
-        self.agentctl("run", "wait", run_id, "--timeout", "5", env=env)
+        self.agentctl("run", "wait", run_id, "--timeout", "30", env=env)
         shown = json.loads(
             self.agentctl("run", "show", run_id, "--json", env=env).stdout
         )["runs"][0]
@@ -496,14 +506,17 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         nvidia_smi.chmod(0o755)
         env = self.env("one", PATH=f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}")
 
+        # The payload only has to outlive the checks below; `run stop` ends
+        # it. Every poll below is a full controller start, so the budgets
+        # are sized for a loaded CI runner, not a fast laptop.
         started = self.agentctl(
             "run", "start", "--output", "outputs/T-340/heartbeat.txt",
             "--resource", "gpu:0", "--gpu-watchdog",
             "--gpu-sample-seconds", "30", "--gpu-idle-action", "report", "--",
-            sys.executable, "-c", "import time; time.sleep(10)", env=env,
+            sys.executable, "-c", "import time; time.sleep(120)", env=env,
         )
         run_id = self.lease_id(started.stdout, "run")
-        deadline = time.monotonic() + 5
+        deadline = time.monotonic() + 30
         while True:
             initial = json.loads(
                 self.agentctl("run", "show", run_id, "--json", env=env).stdout
@@ -512,20 +525,29 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
                 "next_sample_at_ns"
             ):
                 break
-            if time.monotonic() >= deadline:
-                self.fail(f"watchdog did not publish its first sample: {initial}")
+            if time.monotonic() >= deadline or initial["status"] not in {"starting", "running"}:
+                self.fail(
+                    f"watchdog did not publish its first sample: {initial}\n"
+                    f"supervisor logs:\n{self.supervisor_log_dump()}"
+                )
             time.sleep(0.05)
-        time.sleep(2.3)
-        refreshed = json.loads(
-            self.agentctl("run", "show", run_id, "--json", env=env).stdout
-        )["runs"][0]
-        self.assertNotEqual(initial["heartbeat_at"], refreshed["heartbeat_at"])
+        deadline = time.monotonic() + 30
+        while True:
+            time.sleep(1.1)
+            refreshed = json.loads(
+                self.agentctl("run", "show", run_id, "--json", env=env).stdout
+            )["runs"][0]
+            if refreshed["heartbeat_at"] != initial["heartbeat_at"]:
+                break
+            if time.monotonic() >= deadline:
+                self.fail(f"supervisor heartbeat never advanced: {refreshed}")
+        self.assertEqual(refreshed["status"], "running")
         self.assertIn("watchdog=active", self.agentctl("run", "list", env=env).stdout)
         self.agentctl(
             "run", "stop", run_id, "--reason", "heartbeat verified", env=env,
         )
         self.agentctl(
-            "run", "wait", run_id, "--timeout", "5", env=env, expect=1,
+            "run", "wait", run_id, "--timeout", "30", env=env, expect=1,
         )
 
         policy_path = self.root / ".agent" / "runtime-policy.json"
@@ -545,7 +567,7 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             sys.executable, "-c", "import time; time.sleep(0.2); print('cpu-only')", env=env,
         )
         cpu_id = self.lease_id(cpu.stdout, "run")
-        self.agentctl("run", "wait", cpu_id, "--timeout", "5", env=env)
+        self.agentctl("run", "wait", cpu_id, "--timeout", "30", env=env)
 
     def test_only_the_owner_conversation_can_stop_a_run(self):
         self.start("owner", "T-341", "outputs/T-341/")
@@ -844,6 +866,77 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             ),
             "claimed",
         )
+
+    def test_supervisor_argv_survives_tokens_that_start_with_a_dash(self):
+        # secrets.token_urlsafe starts with "-" one time in 64. Passed as
+        # `--token -abc...`, argparse reported a missing option value and
+        # the supervisor died before claiming, so roughly 1.5% of run starts
+        # never launched their payload and surfaced later as exited_unknown.
+        from tools import agentctl as workflow
+
+        for token in ("-" + "a" * 42, "--" + "b" * 41, "-_-" + "c" * 40, "d" * 64):
+            argv = workflow._supervisor_argv(self.root, "run-0123456789abcdef", token)
+            self.assertEqual(argv[0], sys.executable)
+            self.assertTrue(argv[1].endswith("agentctl.py"), argv)
+            args = workflow.build_parser().parse_args(argv[2:])
+            self.assertEqual(args.cmd, "_run-supervise")
+            self.assertEqual(args.root, str(self.root))
+            self.assertEqual(args.lease, "run-0123456789abcdef")
+            self.assertEqual(args.token, token)
+
+    def test_await_supervisor_claim_sees_through_a_zombie_supervisor(self):
+        # `run start` is the supervisor's parent. A supervisor that crashes
+        # before claiming stays a zombie until reaped, and a zombie still
+        # answers kill(pid, 0) with a matching birth marker -- so the
+        # pid-based check alone reported it alive for the whole timeout and
+        # the replacement spawn never happened (seen as exited_unknown on
+        # a slow CI runner).
+        from tools import agentctl as workflow
+
+        zombie = subprocess.Popen(
+            [sys.executable, "-c", "raise SystemExit(3)"], start_new_session=True,
+        )
+        self.addCleanup(zombie.wait)
+        # Let the child exit without reaping it. Linux exposes the zombie
+        # state in /proc; elsewhere a generous sleep covers interpreter exit.
+        deadline = time.monotonic() + 10
+        if sys.platform.startswith("linux"):
+            while not workflow._posix_process_is_zombie(zombie.pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(workflow._posix_process_is_zombie(zombie.pid))
+        else:
+            time.sleep(1.0)
+        workflow._update_runtime_leases(
+            self.root, lambda data: data.setdefault("leases", []).append({
+                "id": "run-zombiesuper0001",
+                "kind": "run", "mode": "supervised", "status": "starting",
+                "processes": [],
+                "supervisor_process": {
+                    "role": "supervisor", "pid": zombie.pid,
+                    "birth_marker": workflow._process_birth_marker(zombie.pid),
+                },
+            }),
+        )
+        started = time.monotonic()
+        self.assertEqual(
+            workflow._await_supervisor_claim(
+                self.root, "run-zombiesuper0001", process=zombie, timeout_seconds=10.0,
+            ),
+            "died",
+        )
+        self.assertLess(time.monotonic() - started, 5.0)
+        if sys.platform.startswith("linux"):
+            # Defense in depth: other processes (run show, doctor) read the
+            # zombie state from /proc and stop counting it as live too.
+            again = subprocess.Popen(
+                [sys.executable, "-c", "raise SystemExit(3)"], start_new_session=True,
+            )
+            self.addCleanup(again.wait)
+            deadline = time.monotonic() + 10
+            while not workflow._posix_process_is_zombie(again.pid) and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(workflow._posix_process_is_zombie(again.pid))
+            self.assertFalse(workflow._pid_alive(again.pid))
 
     def test_resources_orphaned_by_finished_runs_are_released(self):
         from tools import agentctl as workflow

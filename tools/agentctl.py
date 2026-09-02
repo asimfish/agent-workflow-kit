@@ -1183,7 +1183,6 @@ def _pid_alive(pid) -> bool:
             return True
     try:
         os.kill(pid, 0)
-        return True
     except PermissionError:
         return True
     except ProcessLookupError:
@@ -1192,6 +1191,22 @@ def _pid_alive(pid) -> bool:
         return exc.errno == errno.EPERM
     except (OverflowError, ValueError, TypeError):
         return False
+    # kill(pid, 0) succeeds for a zombie: the process has exited but its
+    # parent has not reaped it yet. Treat that as dead where the kernel
+    # exposes the state, otherwise a supervisor that crashes at startup
+    # looks alive for as long as `run start` itself is running.
+    return not _posix_process_is_zombie(pid)
+
+
+def _posix_process_is_zombie(pid: int) -> bool:
+    if sys.platform.startswith("linux"):
+        try:
+            _head, separator, tail = Path(f"/proc/{pid}/stat").read_bytes().rpartition(b")")
+            fields = tail.split()
+            return bool(separator) and bool(fields) and fields[0] == b"Z"
+        except OSError:
+            return False
+    return False
 
 
 def _darwin_process_birth_marker(pid: int) -> str | None:
@@ -7210,7 +7225,21 @@ def _prune_terminal_run_state(root: Path) -> None:
             pass
 
 
+def _supervisor_argv(root: Path, lease_id: str, token: str) -> list[str]:
+    """Command line for the detached run supervisor.
+
+    Values are attached with `=` so argparse never mistakes one that starts
+    with "-" for an option name; a bare `--token -abc` was parsed as a
+    missing value and the supervisor exited before claiming its lease.
+    """
+    return [
+        sys.executable, str(Path(__file__).resolve()), "_run-supervise",
+        f"--root={root}", f"--lease={lease_id}", f"--token={token}",
+    ]
+
+
 def _await_supervisor_claim(root: Path, lease_id: str, *,
+                            process: "subprocess.Popen[bytes] | None" = None,
                             timeout_seconds: float = 30.0,
                             poll_seconds: float = 0.05) -> str:
     """Watch a freshly spawned supervisor until it claims its lease.
@@ -7221,6 +7250,11 @@ def _await_supervisor_claim(root: Path, lease_id: str, *,
     supervisor process exited before claiming. A pre-claim death would
     otherwise leave the lease unresolved forever, observed only as
     exited_unknown.
+
+    `process` is the Popen handle when the caller is the supervisor's
+    parent. An exited child stays a zombie until its parent reaps it, and
+    a zombie still answers kill(pid, 0), so pid-based liveness would keep
+    reporting a crashed supervisor as alive for the whole timeout.
     """
     deadline = time.monotonic() + max(0.0, timeout_seconds)
     while True:
@@ -7229,6 +7263,8 @@ def _await_supervisor_claim(root: Path, lease_id: str, *,
             str(lease.get("status") or "starting") != "starting"
         ):
             return "claimed"
+        if process is not None and process.poll() is not None:
+            return "died"
         supervisor = lease.get("supervisor_process")
         if supervisor and not _runtime_process_alive(supervisor):
             return "died"
@@ -7668,7 +7704,10 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
         os.chmod(payload_path, 0o600)
     except OSError:
         pass
-    supervisor_token = secrets.token_urlsafe(32)
+    # hex, not urlsafe: a urlsafe token starts with "-" one time in 64 and
+    # argparse then rejected it as a missing option value, so the
+    # supervisor died at start-up and the run never launched.
+    supervisor_token = secrets.token_hex(32)
     lease = {
         "id": lease_id,
         "kind": "run",
@@ -7728,8 +7767,7 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
             # because the lease just reports exited_unknown.
             with supervisor_log_path.open("ab") as supervisor_log:
                 supervisor = subprocess.Popen(
-                    [sys.executable, str(Path(__file__).resolve()), "_run-supervise",
-                     "--root", str(root), "--lease", lease_id, "--token", supervisor_token],
+                    _supervisor_argv(root, lease_id, supervisor_token),
                     cwd=str(root),
                     stdout=subprocess.DEVNULL,
                     stderr=supervisor_log,
@@ -7759,7 +7797,7 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
             "supervisor_process": supervisor_record,
             "heartbeat_at": _now(),
         }))
-        outcome = _await_supervisor_claim(root, lease_id)
+        outcome = _await_supervisor_claim(root, lease_id, process=supervisor)
         if outcome != "died":
             break
         if spawn_attempt == 1:
