@@ -7,4 +7,5 @@
 | TA08B0CC413F151F5-025 | done | cursor | `README.md, README_CN.md` | [.agent/tasks/TA08B0CC413F151F5-025.md](tasks/TA08B0CC413F151F5-025.md) | add a day-one quick start walkthrough to both READMEs |
 | T025R-001 | done | independent-reviewer-024 | `.agent/` | [.agent/tasks/T025R-001.md](tasks/T025R-001.md) | independent review of the day-one walkthrough |
 | T023R-001 | done | independent-reviewer-023 | `.agent/` | [.agent/tasks/T023R-001.md](tasks/T023R-001.md) | independent review of TA08B0CC413F151F5-023 |
-| TA08B0CC413F151F5-026 | review | cursor | `tools/, templates/project/tools/, tests/, README.md, README_CN.md, CHANGELOG.md, docs/workflow.md` | [.agent/tasks/TA08B0CC413F151F5-026.md](tasks/TA08B0CC413F151F5-026.md) | day-one acceptance fixes: doctor without identity, artifact gitignore, reviewer hints, README accuracy |
+| TA08B0CC413F151F5-026 | done | cursor | `tools/, templates/project/tools/, tests/, README.md, README_CN.md, CHANGELOG.md, docs/workflow.md` | [.agent/tasks/TA08B0CC413F151F5-026.md](tasks/TA08B0CC413F151F5-026.md) | day-one acceptance fixes: doctor without identity, artifact gitignore, reviewer hints, README accuracy |
+| T36DC21235DACCCFF-001 | done | independent-reviewer-026 | `.agent/` | [.agent/tasks/T36DC21235DACCCFF-001.md](tasks/T36DC21235DACCCFF-001.md) | independent review of TA08B0CC413F151F5-026 |
