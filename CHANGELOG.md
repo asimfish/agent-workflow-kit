@@ -155,3 +155,8 @@ push round trip, stages ledger data only, and refuses if anything else is
 staged. A side whose JSON does not parse is left as a conflict rather than
 read as a deletion, and a task archived on one side stays archived when the
 other side only touched its done entry. Eleven two-clone regression tests.
+CI then caught the one ledger file the driver could not help with: loop run
+reports were named by the second, so two clones running `work` in the same
+second wrote two different files with one name and the rebase stopped on
+an add/add conflict. Report names now carry a six-character nonce derived
+from the host and the checkout path.

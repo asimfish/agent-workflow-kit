@@ -70,10 +70,15 @@ proven in real projects.
 Each run writes:
 
 ```text
-.agent/loops/runs/YYYYMMDD-HHMMSS-<loop-id>.md
-.agent/loops/runs/YYYYMMDD-HHMMSS-<loop-id>-2.md  # if a same-second run already exists
+.agent/loops/runs/YYYYMMDD-HHMMSS-<loop-id>-<nonce>.md
+.agent/loops/runs/YYYYMMDD-HHMMSS-<loop-id>-<nonce>-2.md  # if a same-second run already exists
 .agent/loops/state.json
 ```
+
+The six-character nonce is derived from the host name and the checkout
+path, so two machines that run the same loop in the same second commit two
+differently named reports instead of an add/add conflict that no merge
+driver can resolve.
 
 The run report records what was read, what happened, which checks ran, what
 feedback was produced, what memory changed, and what should happen next.

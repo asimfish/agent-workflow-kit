@@ -358,6 +358,19 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
         merged = json.loads(agentctl._merge_ledger_json("", "", theirs, "tasks", agentctl._resolve_board_entry))
         self.assertEqual(set(merged["tasks"]), {"T-1", "T-2"})
 
+    def test_loop_run_reports_do_not_collide_across_checkouts(self):
+        # Two checkouts running the same loop in the same second must not
+        # produce two different files with one name (an add/add conflict).
+        self.assertNotEqual(agentctl._loop_report_nonce(self.a), agentctl._loop_report_nonce(self.b))
+        self.assertRegex(agentctl._loop_report_nonce(self.a), r"^[0-9a-f]{6}$")
+        result = {"status": "success", "trigger": "test", "execute": [], "check": [], "feedback": [], "memory": [], "next": []}
+        paths = [agentctl._write_loop_report(root, "daily-plan-triage", "test", result) for root in (self.a, self.b)]
+        self.assertNotEqual(paths[0].name, paths[1].name)
+        for root, path in zip((self.a, self.b), paths):
+            self.assertRegex(path.name, r"^\d{8}-\d{6}-daily-plan-triage-[0-9a-f]{6}(-\d+)?\.md$")
+            self.assertTrue(path.name.startswith(path.name[:15]), path)
+            self.assertIn(agentctl._loop_report_nonce(root), path.name)
+
     def test_plan_prose_conflicts_are_still_reported(self):
         base = "# Plan\n\nGoal: x\n\n## Task Board\n- [ ] T-1 - one\n\n## Notes\nkeep\n"
         ours = base.replace("Goal: x", "Goal: ours")

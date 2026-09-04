@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TA08B0CC413F151F5-033 - loop run reports: per-checkout nonce in the file name so two machines running a loop in the same second do not collide (owner: cursor)
 - [x] TE0090C6FA185D4E4-001 - review fixture fix TA08B0CC413F151F5-032 (owner: independent-reviewer-032)
 - [x] TA08B0CC413F151F5-032 - two-clone test fixture: pin the bare origin HEAD to main so clones are not empty on CI (owner: cursor)
 - [x] T5E51EACF1CDE8F05-001 - re-review multi-checkout ledger sync TA08B0CC413F151F5-031 (owner: independent-reviewer-031b)

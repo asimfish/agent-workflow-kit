@@ -11239,10 +11239,21 @@ def _run_loop_once(root: Path, loop_id: str, missing: list[str]) -> dict:
     return _attach_previous_run(root, loop_id, result)
 
 
+def _loop_report_nonce(root: Path) -> str:
+    """Short tag that differs between checkouts, including same-path checkouts on other hosts.
+
+    Run reports are committed to Git and named by the second; two machines
+    running the same loop in the same second used to produce two different
+    files with one name, an add/add conflict no merge driver can resolve.
+    """
+    digest = hashlib.sha256(f"{platform.node()}\n{root.resolve()}".encode("utf-8")).hexdigest()
+    return digest[:6]
+
+
 def _write_loop_report(root: Path, loop_id: str, trigger: str, result: dict) -> Path:
     ts = _dt.datetime.now()
     stamp = ts.strftime("%Y%m%d-%H%M%S")
-    base = _loop_runs_dir(root) / f"{stamp}-{loop_id}"
+    base = _loop_runs_dir(root) / f"{stamp}-{loop_id}-{_loop_report_nonce(root)}"
     path = base.with_suffix(".md")
     suffix = 2
     while path.exists():
