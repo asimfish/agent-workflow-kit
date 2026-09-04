@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-05 01:37:06",
+  "updated_at": "2026-09-05 02:24:12",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -238,7 +238,7 @@
     "TA08B0CC413F151F5-031": {
       "title": "multi-checkout ledger sync: git merge driver for ledger files, pushable ledger-only claims, explicit takeover of foreign in_progress tasks, agentctl sync",
       "type": "code",
-      "status": "review",
+      "status": "blocked",
       "owner": "cursor",
       "scope": [
         "tools/",
@@ -254,7 +254,19 @@
       ],
       "deps": [],
       "created_at": "2026-09-05 00:28:13",
-      "updated_at": "2026-09-05 01:37:06"
+      "updated_at": "2026-09-05 02:23:47"
+    },
+    "T1801098AB51B5959-001": {
+      "title": "review multi-checkout ledger sync TA08B0CC413F151F5-031",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-031",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 01:41:48",
+      "updated_at": "2026-09-05 02:24:12"
     }
   },
   "updated": ""
