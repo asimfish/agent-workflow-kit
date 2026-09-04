@@ -220,7 +220,7 @@ run completion would strand the resource forever.
 The failure this section exists for: nobody is using a GPU, yet no task can
 claim it, because a dead holder still owns the lease and fail-closed holder
 binding stops everyone else from releasing it. The kit breaks these interlocks
-along three lines, ordered from automatic to manual:
+along four lines, ordered from automatic to manual:
 
 1. **Orphan sweeps.** Resource leases whose holder is demonstrably gone are
    released automatically: a run holder whose lease is terminal (or missing

@@ -56,3 +56,5 @@ jobs:
           tests.test_execution_lease_workflow.ExecutionLeaseWorkflowRegressionTest.test_only_the_owner_conversation_can_stop_a_run
           tests.test_execution_lease_workflow.ExecutionLeaseWorkflowRegressionTest.test_supervisor_entrypoint_is_single_use
           tests.test_execution_lease_workflow.ExecutionLeaseWorkflowRegressionTest.test_await_supervisor_claim_flags_pre_claim_death_and_slow_start
+          tests.test_execution_lease_workflow.ExecutionLeaseWorkflowRegressionTest.test_await_supervisor_claim_sees_through_a_zombie_supervisor
+          tests.test_execution_lease_workflow.ExecutionLeaseWorkflowRegressionTest.test_supervisor_argv_survives_tokens_that_start_with_a_dash

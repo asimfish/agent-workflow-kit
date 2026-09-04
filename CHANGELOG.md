@@ -115,3 +115,15 @@ something is stuck" table that maps each symptom to the command that
 resolves it. The status section stopped being a log of every fix -- that
 history lives here -- and the Chinese edition is written as Chinese rather
 than translated sentence by sentence.
+
+Small things the reviews of the last three changes turned up: the pre-push
+task-reference check treated any `WORD-123` token as a task id, so a commit
+body mentioning `non-UTF-8` or `SHA-256` could not be pushed, while a
+multi-segment id such as `TR024-REVIEW-001` was read as the non-existent
+`REVIEW-001`; ids glued to a preceding letter or hyphen are prose now,
+middle segments are kept whole, and when a commit carries a `Refs:` trailer
+only the ids on it are resolved against the board. The
+Windows CI job also runs the zombie-supervisor and dash-token tests. `doctor`
+reports a machine-wide lock record that names no resource instead of
+skipping it, and the interlock section of the multi-session guide counts
+its own items correctly.
