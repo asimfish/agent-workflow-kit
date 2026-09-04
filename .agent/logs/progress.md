@@ -268,3 +268,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-09-03 03:12:58 [TA08B0CC413F151F5-028] review 028b findings fixed: stray truncated docs section removed; damaged owner.json handled; reclaim protocol verifies bytes before removal
 - 2026-09-05 04:00:44 [TA08B0CC413F151F5-032] fixture: bare origin HEAD -> main; clone -b main
 - 2026-09-05 04:43:06 [TA08B0CC413F151F5-033] nonce in loop report names; docs + tests updated
+- 2026-09-05 05:16:55 [TA08B0CC413F151F5-034] gitattributes + driver config applied to the kit repo

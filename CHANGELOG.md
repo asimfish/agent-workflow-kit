@@ -159,4 +159,6 @@ CI then caught the one ledger file the driver could not help with: loop run
 reports were named by the second, so two clones running `work` in the same
 second wrote two different files with one name and the rebase stopped on
 an add/add conflict. Report names now carry a six-character nonce derived
-from the host and the checkout path.
+from the host and the checkout path. The kit's own repository now carries
+the `.gitattributes` block too, so its worktree rebases merge the board
+instead of stopping on it.
