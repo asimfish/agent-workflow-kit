@@ -5,18 +5,17 @@
 
 [English](README.md) | 中文
 
-给共享仓库和 GPU 机器的 AI 编码智能体做任务追踪与协调。
+让多个 AI 编码智能体在同一个仓库、同一批显卡上干活，而互不干扰。
 
-如果你同时开过好几个智能体会话对着一个项目干活，这些场景你应该都见过：
-两个会话领了同一个任务；一个会话死掉后，它占着的任务把其他人永远堵住；
-SSH 拉起的实验比会话活得久，从此无人照看；跑完的任务占着 20GB 显存、
-利用率为零，一挂就是三天；智能体自己合并了自己没人看过的代码。
+- **一份计划，所有人都看。** 每个智能体动手之前都先读 `.agent/PROJECT_PLAN.md`
+  和任务板。你想调整方向，改计划文件就行。
+- **一个任务只有一个主人。** 任务和它允许写的路径，同一时刻只属于一个会话；
+  申请重叠的范围会被拒绝。会话死了，任务可以被明确接管，但不会被悄悄抢走。
+- **没评审的东西合不进去。** 必须由另一个会话批准。长任务和显卡都有登记，
+  会话死掉不会留下一张锁死的卡或一个没人管的训练。
 
-这个套件用纯文件和一个 Python 脚本来防住这些事。没有守护进程，没有服务器，
-除 Python 3.9 外零依赖。智能体把计划、任务、评审决定写进 `.agent/` 目录的
-Markdown 和 JSON，像普通文件一样提交；运行态（谁在干活、什么被锁、哪些进程
-和显卡被占）放在 Git 公共目录里，只留在本机。git hooks 和 CI 负责检查智能体
-想提交的东西。
+整个套件就是一个 Python 脚本加一个提交进 Git 的纯文件目录。没有守护进程，
+没有服务器，除 Python 3.9 外没有依赖。
 
 ## 安装
 
@@ -29,157 +28,170 @@ cd agent-workflow-kit
 或者直接在你的项目里对智能体说一句：
 `Install https://github.com/asimfish/agent-workflow-kit.git into this project.`
 
-安装会和已有文件合并而不是覆盖，重复执行无害。装好之后，人只需要一句提示词：
-
-```text
-按 .agent 规范开始工作。
-```
-
-细节、升级、迁移见 `docs/install-and-upgrade.md`。
-
-安装不会往 `PATH` 里加任何东西。下文所有 `agentctl` 都是在项目根目录执行
-`python3 tools/agentctl.py` 的简写；常敲的话可以加一条
-`alias agentctl='python3 tools/agentctl.py'`。智能体用的本来就是完整写法，
+安装会合并进已有文件，重复执行没有副作用。它会加入 `.agent/`（计划、任务板、
+规则）、`tools/agentctl.py`（控制器）、Git hooks，以及 Codex / Claude Code /
+Cursor 的 hook 配置。**不会往 `PATH` 里加任何东西**：本文里的 `agentctl`
+都指在项目根目录执行 `python3 tools/agentctl.py`。智能体用的本来就是完整写法，
 因为 `.agent/WORKFLOW_ENTRY.md` 里就是这么写的。
 
-## 第一个任务的完整走法
+装好之后，你对智能体只需要说：
 
-第一天用起来是什么样，提前心里有数。人只做第 1 步和第 5 步，
-其余由智能体按 `.agent/WORKFLOW_ENTRY.md` 自己完成。下面每条命令都在一个
-全新安装的空项目上原样跑过一遍。
+> 按 .agent 规范开始工作。
 
-**1. 把会话指向项目。** 对任意智能体会话说「按 .agent 规范开始工作。」
-它在碰任何文件之前先领任务：
+升级与迁移见 `docs/install-and-upgrade.md`。
+
+## 五分钟走一遍
+
+下面是平常一天会发生的事。**你**只做第一步和最后一步，中间都由**智能体**按
+`.agent/WORKFLOW_ENTRY.md` 自己完成。每条命令都在全新安装的空项目上原样跑过。
+
+**你：把一个会话指向项目。** 对任意智能体会话说「按 .agent 规范开始工作。」
+它在改任何文件之前，先认领一个任务和要写的路径：
 
 ```bash
-agentctl work --agent codex                 # 领取已有任务
+agentctl work --agent codex                        # 领取已有任务
 agentctl work --agent codex --auto-create \
-    --title "fix the data loader" --scope "src/data/"   # 或新建一个
+    --title "fix the data loader" --scope "src/data/"   # 或者新开一个
 ```
 
-领取会登记写入范围。第二个会话想领同一任务、或申请重叠范围，都会被
-拒绝——这正是设计目的。
+第二个会话如果想领同一个任务，或者申请 `src/data/` 之内的路径，会被拒绝。
+代码类和实验类任务会自动分到独立的 Git worktree，两个智能体永远不会在同一个
+检出里改文件。
 
-**2. 智能体干活并留痕。**
+**智能体：干活，并留下痕迹。**
 
 ```bash
 agentctl note "root cause: off-by-one in shard split"
 ```
 
-**3. 长任务不随对话消亡。** 跑几个小时的东西走 `run start` 而不是裸
-shell，对话死了任务照跑，还能在板上看到：
+**智能体：跑得久的东西都走套件，不走裸 shell。** 任务在对话结束后照跑，
+出现在任务板上，还能占一张卡：
 
 ```bash
 agentctl run start --task T-001 --output .agent-artifacts/T-001/ \
     --resource gpu:0 --gpu-watchdog -- python train.py
-agentctl run list                            # 状态、PID、日志
+agentctl run list
 ```
 
-声明的输出必须位于任务写范围内，或放在 `.agent-artifacts/<task>/` 下——
-安装时已把它加进 `.gitignore`，checkpoint 不会被误暂存。带 `--gpu-watchdog`
-时，占着显存零利用率超过宽限期的进程会被回收；编译阶段可以声明豁免。
+输出放在 `.agent-artifacts/<task>/`（安装时已加入 gitignore）或任务自己的
+路径下。带 `--gpu-watchdog` 时，占着显存但利用率长期为零、超过宽限期的进程
+会被回收；编译阶段可以声明豁免。
 
-**4. 智能体把任务交给评审。**
+**智能体：把任务交给评审。**
 
 ```bash
 agentctl finish --summary "..." --tests "pytest -x: 42 passed"
 ```
 
-任务进入 `review`，git hooks 从此挡住未评审工作的推送。由*另一个*
-会话——运行时从未碰过实现的那种——先把自己注册为评审者（每个项目一次），
-再领取评审任务并裁决：
+任务进入 `review`。在此之前 Git hooks 一直拒绝推送它的提交；现在分支可以推送、
+可以开 PR，但按套件的规则，要等别人批准之后才能合并。
+
+**评审者：由另一个会话批准。** 评审者在每个项目里注册一次，开一个评审任务，
+然后裁决：
 
 ```bash
-agentctl agents add --id reviewer-name --role review      # 每个项目做一次
-agentctl work --agent reviewer-name --auto-create --type review \
+agentctl agents add --id reviewer --role review
+agentctl work --agent reviewer --auto-create --type review \
     --title "review T-001" --scope ".agent/"
-agentctl gate approve --task T-001 --by reviewer-name --note "..."
+agentctl gate approve --task T-001 --by reviewer --note "..."
 ```
 
-自批会失败：控制器比对的是运行时指纹，不是自觉。代码任务在独立
-worktree 里进行；过门之后用 `agentctl reconcile merge-back --from-ref
-<branch>` 把结果走回主分支（见 `docs/worktree-merge-back.md`）。
+控制器比对的是运行时指纹，所以一个会话没法批准自己的工作。在 worktree 里
+完成的任务，开 PR 之前先用 `agentctl reconcile merge-back --from-ref <branch>`
+把它的记录搬回主检出（见 `docs/worktree-merge-back.md`）。
 
-**5. 你随时来看一眼。**
+**你：想看就看。**
 
 ```bash
 agentctl board      # 谁在干什么、哪些任务在跑
-agentctl doctor     # 过期会话、孤儿租约、互锁的 GPU
+agentctl doctor     # 哪里卡住了、用哪条命令解开
 ```
 
-这两条在任何普通终端里都能跑，不需要智能体会话。`doctor` 对每个问题给出
-恢复命令；不会背着你回收任何东西。
+这两条在普通终端里就能跑，不需要智能体会话。
 
-## 工作原理
+## 规则
 
 ```mermaid
 flowchart LR
     S["智能体会话<br/>(Codex, Claude Code, Cursor)"] --> C["tools/agentctl.py"]
-    C --> D[".agent/<br/>计划、任务、评审记录<br/>（随仓库提交）"]
-    C --> L["Git 公共目录<br/>会话、锁、运行中的任务<br/>（仅本机）"]
-    H["git hooks + CI"] -.- S
+    C --> D[".agent/<br/>计划、任务板、评审记录<br/>（提交进 Git）"]
+    C --> L[".git/<br/>会话、锁、运行中的任务<br/>（仅本机）"]
+    H["Git hooks + CI"] -.- S
     H -.- D
 ```
 
-智能体做的每件事都经过 `agentctl`。开工即认领一个任务和一个写范围；同一
-任务不能被两个会话持有，写范围重叠会被拒绝。心跳断了的会话变成过期状态：
-其他智能体会看到警告但照常干活，没有人能悄悄接管它的任务。
-
-长任务用 `agentctl run` 跑，它比启动它的会话活得久。run 可以租一张 GPU，
-可选的 watchdog 会在进程占着显存但长时间零利用率、零进度时回收这张卡——
-有宽限期，有给编译阶段用的豁免机制，遥测失败时宁可不杀。这套在真实共享的
-RTX 5090 上实测过，不只是单元测试。
-
-合并进 main 需要两样东西：CI 全绿，加上一条评审批准——批准者所在会话的
-运行时必须可证明地从未参与过实现。智能体不能给自己的工作放行，这由控制器
-校验，不靠智能体自觉。
+- **计划和任务都是 Git 里的文件。** `.agent/PROJECT_PLAN.md` 是计划，
+  `.agent/board.json` 是任务板，`.agent/tasks/` 下每个任务一份文档。智能体通过
+  `agentctl` 更新它们；人直接改计划和规则，智能体继续之前会重新读。
+- **一次认领 = 一个任务 + 一个写范围。** 两个会话不能持有同一个任务，写范围
+  不能重叠。hooks 会拒绝范围之外的写入。
+- **失联的会话是「过期」，不是「消失」。** 30 分钟没有心跳，它的认领会被标记
+  出来。其他人看到警告后照常干活。接管必须显式执行 `sessions release` 并写明
+  理由，没有任何东西会被自动重新分配。
+- **长任务是租约，不是 shell 进程。** `agentctl run` 监管任务、登记输出和资源，
+  并且比对话活得久。死掉的任务会释放显卡；可选的 watchdog 会回收占着不用的卡。
+  遥测失败时宁可不杀。
+- **评审是强制的，不是请求。** 合并需要 CI 全绿，加上一个从未碰过这份改动的
+  会话给出的批准。
+- **显卡锁是机器级的。** 一张卡被某个项目占用后，同一台机器上的其它项目都拿
+  不到，直到被释放。锁里记录了持有者是谁，所以任何项目都能分辨持有者是活着
+  还是死了。
 
 ## 日常命令
 
-```text
-agentctl work --agent <name>            认领或恢复任务
-agentctl note "..."                     记录进度
-agentctl finish --summary ... --tests   任务交付评审
-agentctl run start -- <command>         受监管的后台任务
-agentctl gate approve --task --by       独立评审批准
-agentctl board                          大家都在干什么
-agentctl doctor                         工作流是否健康
-```
+| 命令 | 作用 |
+|---|---|
+| `agentctl work --agent <name>` | 认领或恢复任务（`--auto-create` 新开一个） |
+| `agentctl note "..."` | 给当前任务记一笔进度 |
+| `agentctl finish --summary ... --tests ...` | 把任务交给评审 |
+| `agentctl run start -- <command>` | 受监管的后台任务；另有 `run list`、`run stop` |
+| `agentctl gate approve --task <id> --by <reviewer>` | 独立批准（或 `gate reject`） |
+| `agentctl board` | 谁在干什么 |
+| `agentctl doctor` | 哪里卡住了、怎么解 |
 
-完整命令表在 `docs/workflow.md`。多数时候上面七条够用；循环、supervisor
-指导包、harness 评估、升级屏障这些放在 `docs/` 里，用到再看。
+完整参考在 `docs/workflow.md`。循环、supervisor 指导包、harness 评估、升级屏障
+都在 `docs/` 里，用到再看。
+
+## 卡住了怎么办
+
+`agentctl doctor` 会对每一条发现给出对应的恢复命令。常见情况：
+
+| 你看到的 | 发生了什么 | 怎么做 |
+|---|---|---|
+| 任务是 `in_progress`，但它的会话已经不在了 | 会话过期 | 先看任务文档，然后 `agentctl sessions release <session> --reason "..."`，再 `agentctl start --task <id> --agent <name>`；释放会话会顺带释放它占的显卡 |
+| `resource acquire gpu:0` 被拒，`doctor` 显示一条没有活体持有者的租约 | 某个任务或会话带着卡死了 | `agentctl resource release <lease-id> --force-stale --reason "..."`；持有者活着时永远会被拒绝 |
+| 拒绝信息说锁属于**另一个检出** | 同一台机器上的另一个项目占着卡 | 如果那个项目自己的记录证明持有者已死，下一次 `resource acquire` 会自动释放；否则 `agentctl resource release --lock gpu:0 --force-stale --reason "..."` |
+| 某个 run 显示 `exited_unknown` | 监管进程失去了对它的跟踪 | 检查输出，然后 `agentctl run finish <run-id> --status succeeded\|failed --reason "..."` |
+| `gate approve` 说任务不存在或没有运行时证据 | 任务在 worktree 里完成，主检出还不知道 | 在主检出执行 `agentctl reconcile merge-back --from-ref <branch>`，再重试 |
+| 评审任务裁决之后还挂着 | 没人关闭它 | `agentctl reconcile close-decided-reviews` |
+
+以上操作都不会删掉工作成果：释放会话会保留任务、笔记和文件；释放锁不会杀进程。
 
 ## 它不做什么
 
-不带后台守护进程，不带 cron，不自动合并保护分支，不自动删 worktree 或
-分支，也不做沙箱——hooks 是协调护栏，不受信任的代码仍然需要真正的沙箱。
-绕过 `agentctl run` 启动的任务（裸 ssh、systemd）只会被报告，不会被接管。
+没有守护进程，没有 cron，不自动合并，不自动删分支或 worktree，也不是沙箱——
+hooks 负责协调智能体，不负责隔离不受信任的代码。绕过 `agentctl run` 启动的任务
+（裸 `ssh`、`systemd`）只会被报告，不会被接管。显卡协调只在单机范围内，套件不做
+跨机器调度。
 
-## 现状与已知限制
+## 现状
 
-控制器、租约模型、GPU 监管和评审门禁有 236 个回归测试、Linux 与 Windows
-双平台 CI，以及一轮对全新克隆做的七场景端到端验收。验收在关键处是对抗式
-的：伪造租约时间戳、删除会话记录、制造孤儿资源、重放创建请求、同运行时
-自批——全部按设计被拒绝或自愈。第二轮验收把上面的走法逐条在一个空项目上
-重放：三个并发会话、一个死掉的显卡持有者、一个独立评审者。
+236 个回归测试在 Linux 的 CI 上运行，另有一个 Windows job 跑其中涉及 Windows
+进程处理的子集。协调保证也在全新安装上完整
+演练过：并发会话、带着显卡死掉的会话、持有锁时被删除的项目、独立评审者，以及
+针对租约与评审检查的对抗式状态篡改。GPU 监管在共享的 RTX 5090 上实测过。
+改了什么、为什么改，见 `CHANGELOG.md`。
 
-验收发现的粗糙点已经修复：`agentctl reconcile merge-back` 会把 worktree
-里完成的任务账本搬回 planning 检出（见 `docs/worktree-merge-back.md`）；
-显式的 `--auto-create` 请求不会再静默续用无关的旧任务；worktree 隔离、
-评审门禁与评审者注册的拒绝提示会指向真正能解除拒绝的那一步；`doctor`
-在普通终端里无需智能体会话即可运行；默认产物目录在安装时即被 gitignore。
-GPU 锁是机器级的、账本却是按项目的，以前一个项目的会话带着 `gpu:0` 死掉，
-会让同一台机器上所有其它项目都拿不到卡、而且谁也看不出原因；现在锁会记下
-持有者的检出路径，任何项目下一次 acquire 都会释放对方登记表已证明死亡的持有者，
-`resource release --lock gpu:0 --force-stale` 处理过期会话与已删除的检出，
-`doctor` 在真正被卡住的那个项目里就能列出这类锁。
+已知限制：过期的会话和只是慢的会话无法区分，所以接管始终由人或 supervisor 决定；
+另一个用户持有、而你无权读取其检出的锁，只会被报告，不会被自动释放；远程
+（`ssh://`）显卡锁只报告不处理。
 
 ## 文档
 
 - `docs/install-and-upgrade.md` —— 安装、升级、迁移
-- `docs/workflow.md` —— 任务生命周期、评审门禁、worktree
-- `docs/multi-session-execution.md` —— 协调规则与 GPU 监管
-- `docs/worktree-merge-back.md` —— 把完成的 worktree 任务走到被批准的合并
+- `docs/workflow.md` —— 任务生命周期、评审门禁、worktree、完整命令表
+- `docs/multi-session-execution.md` —— 协调规则、GPU 监管、互锁恢复
+- `docs/worktree-merge-back.md` —— 从完成的 worktree 任务到被批准的合并
 - `docs/loop-engineering.md` —— 检查点循环
 - `docs/harness-evaluation.md` —— 如何评估对套件本身的修改
 - `CHANGELOG.md`、`CONTRIBUTING.md`、`LICENSE`

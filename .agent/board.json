@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-03 03:23:23",
+  "updated_at": "2026-09-04 22:34:49",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -167,6 +167,44 @@
       "deps": [],
       "created_at": "2026-09-03 03:14:52",
       "updated_at": "2026-09-03 03:23:23"
+    },
+    "TA08B0CC413F151F5-029": {
+      "title": "rewrite both READMEs for readability: mental model first, roles in the walkthrough, stuck-state quick reference, status section without the fix log",
+      "type": "docs",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-09-04 22:10:45",
+      "updated_at": "2026-09-04 22:34:27"
+    },
+    "T148B9308C5D771A2-001": {
+      "title": "review README rewrite TA08B0CC413F151F5-029",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-029",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-04 22:16:41",
+      "updated_at": "2026-09-04 22:22:51"
+    },
+    "T81204D354F17E8B3-001": {
+      "title": "re-review README rewrite TA08B0CC413F151F5-029",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-029b",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-04 22:26:30",
+      "updated_at": "2026-09-04 22:34:49"
     }
   },
   "updated": ""

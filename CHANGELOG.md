@@ -106,3 +106,12 @@ unreadable directories, so without an explicit readability probe an
 empty-looking registry would have aged into an auto-release of a card
 still in use. Twelve two-checkout regression tests cover the evidence rules,
 including that one.
+
+Both READMEs were rewritten for a first-time reader. They now open with the
+three guarantees the kit exists for (one shared plan, one owner per task,
+nothing merges unreviewed), label who does what in the walkthrough (you,
+agent, reviewer), state the rules as a short list, and add a "when
+something is stuck" table that maps each symptom to the command that
+resolves it. The status section stopped being a log of every fix -- that
+history lives here -- and the Chinese edition is written as Chinese rather
+than translated sentence by sentence.
