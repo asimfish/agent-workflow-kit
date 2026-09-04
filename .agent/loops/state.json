@@ -2,14 +2,14 @@
   "version": 1,
   "loops": {
     "daily-plan-triage": {
-      "last_run_at": "2026-09-05 05:16:17",
+      "last_run_at": "2026-09-05 05:18:55",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260905-051617-daily-plan-triage-3b703a.md"
+      "last_report": ".agent/loops/runs/20260905-051855-daily-plan-triage-3b703a.md"
     },
     "doc-hygiene": {
-      "last_run_at": "2026-09-05 05:16:59",
+      "last_run_at": "2026-09-05 05:20:49",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260905-051659-doc-hygiene-3b703a.md"
+      "last_report": ".agent/loops/runs/20260905-052049-doc-hygiene-3b703a.md"
     },
     "experiment-monitor": {
       "last_run_at": "2026-07-01 18:47:12",
@@ -24,23 +24,23 @@
   },
   "checkpoints": {
     "work-start": {
-      "last_run_at": "2026-09-05 05:16:17",
+      "last_run_at": "2026-09-05 05:18:55",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260905-051617-daily-plan-triage-3b703a.md"
+        ".agent/loops/runs/20260905-051855-daily-plan-triage-3b703a.md"
       ],
-      "last_input_hash": "845cc6d75e0bb263",
+      "last_input_hash": "c94401ce71cdb7e6",
       "strict": false,
       "trigger": "work-start",
       "open_follow_up": null
     },
     "pre-finish": {
-      "last_run_at": "2026-09-05 05:16:57",
+      "last_run_at": "2026-09-05 05:20:49",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260905-051657-doc-hygiene-3b703a.md"
+        ".agent/loops/runs/20260905-052048-doc-hygiene-3b703a.md"
       ],
-      "last_input_hash": "11b33f4299ecfc93",
+      "last_input_hash": "5f578e80d4860392",
       "strict": true,
       "trigger": "pre-finish",
       "open_follow_up": null
@@ -55,12 +55,12 @@
       "trigger": "manual"
     },
     "post-finish": {
-      "last_run_at": "2026-09-05 05:16:59",
+      "last_run_at": "2026-09-05 05:20:50",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260905-051659-doc-hygiene-3b703a.md"
+        ".agent/loops/runs/20260905-052049-doc-hygiene-3b703a.md"
       ],
-      "last_input_hash": "baa74ea8c0aa31c8",
+      "last_input_hash": "5deeba301284c205",
       "strict": false,
       "trigger": "post-finish",
       "open_follow_up": null
