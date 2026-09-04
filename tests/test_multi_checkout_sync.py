@@ -69,12 +69,22 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
         self.git(seed, "add", "-A")
         self.git(seed, "-c", "core.hooksPath=", "commit", "-q", "-m", "chore(init): install kit\n\nRefs: T-000")
         self.git(seed, "-c", "core.hooksPath=", "push", "-q", str(self.origin), "HEAD:main")
+        # The bare repo's default branch name follows the host's git config
+        # (master on CI, main here); point HEAD at what was pushed so clones
+        # check it out instead of coming up empty.
+        subprocess.run(
+            ["git", "-C", str(self.origin), "symbolic-ref", "HEAD", "refs/heads/main"],
+            check=True, timeout=60,
+        )
         self.a = self.clone("a")
         self.b = self.clone("b")
 
     def clone(self, name):
         root = self.base / name
-        subprocess.run(["git", "clone", "-q", str(self.origin), str(root)], check=True, timeout=60)
+        subprocess.run(
+            ["git", "clone", "-q", "-b", "main", str(self.origin), str(root)],
+            check=True, timeout=60,
+        )
         self.git(root, "config", "user.email", f"{name}@example.com")
         self.git(root, "config", "user.name", f"Machine {name.upper()}")
         # Every machine installs the kit into its own clone (idempotent on the

@@ -266,3 +266,4 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-08-29 02:32:20 [T023R-001] review of TA08B0CC413F151F5-023 delivered: approve decision recorded in gate; PR #51 merged as 14c8c52; closing reviewer task
 - 2026-09-02 21:19:27 [TA08B0CC413F151F5-026] fixes + tests + docs in place; full suite running in background; task doc stages 1-4 checked
 - 2026-09-03 03:12:58 [TA08B0CC413F151F5-028] review 028b findings fixed: stray truncated docs section removed; damaged owner.json handled; reclaim protocol verifies bytes before removal
+- 2026-09-05 04:00:44 [TA08B0CC413F151F5-032] fixture: bare origin HEAD -> main; clone -b main

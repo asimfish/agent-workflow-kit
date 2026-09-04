@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TA08B0CC413F151F5-032 - two-clone test fixture: pin the bare origin HEAD to main so clones are not empty on CI (owner: cursor)
 - [x] T5E51EACF1CDE8F05-001 - re-review multi-checkout ledger sync TA08B0CC413F151F5-031 (owner: independent-reviewer-031b)
 - [x] T1801098AB51B5959-001 - review multi-checkout ledger sync TA08B0CC413F151F5-031 (owner: independent-reviewer-031)
 - [x] TA08B0CC413F151F5-031 - multi-checkout ledger sync: git merge driver for ledger files, pushable ledger-only claims, explicit takeover of foreign in_progress tasks, agentctl sync (owner: cursor)
