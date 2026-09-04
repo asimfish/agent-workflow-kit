@@ -50,6 +50,7 @@ import shutil
 import string
 import subprocess
 import sys
+import tempfile
 import time
 from collections import Counter
 from pathlib import Path
@@ -107,6 +108,7 @@ IDENTITY_FREE_COMMAND_PATHS = frozenset({
     ("loop", "show"),
     ("check",),
     ("doctor",),
+    ("merge-driver",),
     ("migrate",),
     ("sessions", "list"),
     ("upgrade", "status"),
@@ -368,6 +370,390 @@ def _ensure_gitignore(root: Path) -> None:
         _write(path, "\n".join([*lines, "", *block]) + "\n")
     else:
         _write(path, "\n".join(block) + "\n")
+
+
+# ---------- ledger merge across checkouts ----------
+#
+# The plan, the task board, and the task index are files in Git, and every
+# checkout on every machine commits to them. Git's line merge cannot combine
+# two checkouts that each added a task, so without help every concurrent
+# ledger change ends in a conflict on board.json. These files are keyed by
+# task id, which makes a deterministic three-way merge possible: entries are
+# merged per id, a genuinely competing edit of the same entry resolves to the
+# one further along the task lifecycle, the progress log is append-only, and
+# loop runtime state stays with the checkout that owns it.
+
+LEDGER_MERGE_DRIVER = "agent-ledger"
+GITATTRIBUTES_HEADER = "# Agent Workflow Kit ledger merge"
+GITATTRIBUTES_MANAGED_ENTRIES = (
+    ".agent/board.json merge=agent-ledger",
+    ".agent/TASKS.md merge=agent-ledger",
+    ".agent/PROJECT_PLAN.md merge=agent-ledger",
+    ".agent/agents.json merge=agent-ledger",
+    ".agent/loops/state.json merge=agent-ledger",
+    ".agent/logs/progress.md merge=union",
+)
+LEDGER_STATUS_RANK = {
+    "todo": 0, "ready": 0, "in_progress": 1, "blocked": 1,
+    "review": 2, "approved": 3, "done": 4, "failed": 4,
+}
+
+
+def _ensure_gitattributes(root: Path) -> None:
+    path = root / ".gitattributes"
+    text = _read(path)
+    lines = text.splitlines()
+    present = {" ".join(line.split()) for line in lines}
+    missing = [entry for entry in GITATTRIBUTES_MANAGED_ENTRIES if entry not in present]
+    if not missing:
+        return
+    if GITATTRIBUTES_HEADER in lines:
+        idx = lines.index(GITATTRIBUTES_HEADER) + 1
+        while idx < len(lines) and " ".join(lines[idx].split()) in GITATTRIBUTES_MANAGED_ENTRIES:
+            idx += 1
+        lines[idx:idx] = missing
+        _write(path, "\n".join(lines) + "\n")
+        return
+    while lines and not lines[-1].strip():
+        lines.pop()
+    block = [GITATTRIBUTES_HEADER, *missing]
+    _write(path, "\n".join([*lines, "", *block] if lines else block) + "\n")
+
+
+def _ledger_merge_driver_command() -> str:
+    return (
+        "python3 tools/agentctl.py merge-driver --base %O --ours %A --theirs %B --path %P"
+    )
+
+
+def _configure_ledger_merge_driver(root: Path) -> None:
+    """Register the merge driver in this clone's Git config (per clone, like core.hooksPath)."""
+    _git(root, "config", f"merge.{LEDGER_MERGE_DRIVER}.name",
+         "agent workflow ledger (per-task three-way merge)")
+    _git(root, "config", f"merge.{LEDGER_MERGE_DRIVER}.driver", _ledger_merge_driver_command())
+
+
+def _ledger_merge_driver_configured(root: Path) -> bool:
+    return _git(root, "config", "--get", f"merge.{LEDGER_MERGE_DRIVER}.driver").strip() != ""
+
+
+def _three_way_entries(base: dict, ours: dict, theirs: dict, resolve) -> dict:
+    """Merge dicts keyed by id, one entry at a time.
+
+    Unchanged on one side takes the other side's version (including a
+    deletion). A deletion racing a modification keeps the modification,
+    because archiving a task someone else just advanced must not lose the
+    advance. Both sides changed differently -> `resolve(key, ours, theirs)`.
+    Ours' key order is kept; theirs' new keys follow in theirs' order.
+    """
+    merged: dict = {}
+    for key in [*ours, *[k for k in theirs if k not in ours], *[k for k in base if k not in ours and k not in theirs]]:
+        b, o, t = base.get(key), ours.get(key), theirs.get(key)
+        if o == t:
+            if o is not None:
+                merged[key] = o
+            continue
+        if o == b:
+            if t is not None:
+                merged[key] = t
+            continue
+        if t == b:
+            if o is not None:
+                merged[key] = o
+            continue
+        if o is None:
+            merged[key] = t
+        elif t is None:
+            merged[key] = o
+        else:
+            merged[key] = resolve(key, o, t)
+    return merged
+
+
+def _resolve_board_entry(_key: str, ours: dict, theirs: dict) -> dict:
+    """Competing edits of one task: the entry further along the lifecycle wins."""
+    if not isinstance(ours, dict) or not isinstance(theirs, dict):
+        return ours
+    o_rank = LEDGER_STATUS_RANK.get(str(ours.get("status") or ""), 0)
+    t_rank = LEDGER_STATUS_RANK.get(str(theirs.get("status") or ""), 0)
+    if t_rank > o_rank:
+        return theirs
+    if o_rank > t_rank:
+        return ours
+    if str(theirs.get("updated_at") or "") > str(ours.get("updated_at") or ""):
+        return theirs
+    return ours
+
+
+def _merge_ledger_json(base_text: str, ours_text: str, theirs_text: str,
+                       collection: str, resolve) -> str:
+    def load(text: str) -> dict:
+        try:
+            data = json.loads(text) if text.strip() else {}
+        except ValueError:
+            data = {}
+        return data if isinstance(data, dict) else {}
+
+    base, ours, theirs = load(base_text), load(ours_text), load(theirs_text)
+    merged = dict(ours or theirs)
+    merged[collection] = _three_way_entries(
+        base.get(collection) or {}, ours.get(collection) or {}, theirs.get(collection) or {},
+        resolve,
+    )
+    stamps = [str(d.get("updated") or "") for d in (ours, theirs) if d.get("updated")]
+    if stamps:
+        merged["updated"] = max(stamps)
+    return json.dumps(merged, indent=2, ensure_ascii=False) + "\n"
+
+
+_TASK_INDEX_ROW_RE = re.compile(
+    r"^\|\s*(?P<id>[A-Za-z][A-Za-z0-9]*-[\w.-]+)\s*\|\s*(?P<status>[a-z_]*)\s*\|"
+)
+_PLAN_ROW_RE = re.compile(
+    r"^- \[(?P<check>[ xX])\]\s+(?P<id>[A-Za-z][A-Za-z0-9]*-[\w.-]+)\s+-\s+"
+)
+
+
+def _merge_keyed_lines(base_lines: list[str], ours_lines: list[str], theirs_lines: list[str],
+                       key_re, better) -> tuple[list[str], list[str]]:
+    """Merge lists of lines keyed by the regex's `id` group; returns (prefix, merged rows).
+
+    Lines that do not match the key pattern (headers) come from ours.
+    """
+    def split(lines: list[str]) -> tuple[list[str], dict]:
+        prefix, rows = [], {}
+        for line in lines:
+            match = key_re.match(line)
+            if match:
+                rows[match.group("id")] = line
+            elif not rows:
+                prefix.append(line)
+        return prefix, rows
+
+    o_prefix, o_rows = split(ours_lines)
+    _b_prefix, b_rows = split(base_lines)
+    _t_prefix, t_rows = split(theirs_lines)
+    merged = _three_way_entries(b_rows, o_rows, t_rows, lambda _k, o, t: better(o, t))
+    return o_prefix, list(merged.values())
+
+
+def _better_index_row(ours: str, theirs: str) -> str:
+    def rank(line: str) -> int:
+        match = _TASK_INDEX_ROW_RE.match(line)
+        return LEDGER_STATUS_RANK.get(match.group("status") if match else "", 0)
+    return theirs if rank(theirs) > rank(ours) else ours
+
+
+def _better_plan_row(ours: str, theirs: str) -> str:
+    def checked(line: str) -> bool:
+        match = _PLAN_ROW_RE.match(line)
+        return bool(match and match.group("check").lower() == "x")
+    return theirs if checked(theirs) and not checked(ours) else ours
+
+
+def _merge_task_index(base_text: str, ours_text: str, theirs_text: str) -> str:
+    prefix, rows = _merge_keyed_lines(
+        base_text.splitlines(), ours_text.splitlines(), theirs_text.splitlines(),
+        _TASK_INDEX_ROW_RE, _better_index_row,
+    )
+    return "\n".join([*prefix, *rows]) + "\n"
+
+
+def _split_plan(text: str) -> tuple[str, list[str], str]:
+    """(before, task-board lines, after) for PROJECT_PLAN.md; board lines exclude the heading."""
+    heading = "## Task Board"
+    start = text.find(heading)
+    if start < 0:
+        return text, [], ""
+    content_start = start + len(heading)
+    rest = text[content_start:]
+    nxt = re.search(r"^##\s+", rest, flags=re.M)
+    section = rest[: nxt.start()] if nxt else rest
+    after = rest[nxt.start():] if nxt else ""
+    return text[:content_start], [l for l in section.splitlines() if l.strip()], after
+
+
+def _git_merge_file(base: str, ours: str, theirs: str) -> tuple[str, bool]:
+    """Three-way text merge via `git merge-file -p`; returns (text, conflicted)."""
+    with tempfile.TemporaryDirectory(prefix="awk-merge-") as tmp:
+        paths = []
+        for name, text in (("ours", ours), ("base", base), ("theirs", theirs)):
+            path = Path(tmp) / name
+            path.write_text(text, encoding="utf-8")
+            paths.append(str(path))
+        proc = subprocess.run(
+            ["git", "merge-file", "-p", "-L", "ours", "-L", "base", "-L", "theirs", *paths],
+            text=True, capture_output=True, timeout=60,
+        )
+    # merge-file exits with the number of conflicts (negative on error)
+    return proc.stdout, proc.returncode != 0
+
+
+def _merge_project_plan(base_text: str, ours_text: str, theirs_text: str) -> tuple[str, bool]:
+    b_before, b_rows, b_after = _split_plan(base_text)
+    o_before, o_rows, o_after = _split_plan(ours_text)
+    t_before, t_rows, t_after = _split_plan(theirs_text)
+    before, conflict_before = _git_merge_file(b_before, o_before, t_before)
+    after, conflict_after = _git_merge_file(b_after, o_after, t_after)
+    _prefix, rows = _merge_keyed_lines(b_rows, o_rows, t_rows, _PLAN_ROW_RE, _better_plan_row)
+    if not before.endswith("\n"):
+        before += "\n"
+    body = before + "\n".join(rows) + ("\n\n" if rows else "\n") + after.lstrip("\n")
+    return body, conflict_before or conflict_after
+
+
+def _git_run(root: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["git", "-C", str(root), *args], text=True, capture_output=True, timeout=300,
+    )
+
+
+def cmd_sync(args: argparse.Namespace) -> int:
+    """Publish this checkout's ledger and pick up everyone else's.
+
+    Stages only `.agent/`, commits with a `Refs:` trailer for the active
+    task, makes sure the ledger merge driver is registered, pulls with
+    rebase, re-renders the views if the merge left them behind the board,
+    and pushes. Code changes are never swept in: a staged path outside
+    `.agent/` is refused so an unreviewed edit cannot ride along with a
+    claim.
+    """
+    root = _repo_root()
+    if not (root / ".git").exists():
+        print("agentctl: sync needs a Git checkout", file=sys.stderr)
+        return 2
+    session = _require_session(root)
+    task = str(session.get("task") or "")
+    staged = [
+        line.strip() for line in _git(root, "diff", "--cached", "--name-only").splitlines()
+        if line.strip()
+    ]
+    outside = [path for path in staged if not path.startswith(f"{WORKFLOW_DIR}/")]
+    if outside:
+        print(
+            "agentctl: sync commits ledger files only; unstage these first: "
+            + ", ".join(outside[:5]) + (" ..." if len(outside) > 5 else ""),
+            file=sys.stderr,
+        )
+        return 1
+    if not _ledger_merge_driver_configured(root):
+        _configure_ledger_merge_driver(root)
+    attributes = _read(root / ".gitattributes")
+    if GITATTRIBUTES_MANAGED_ENTRIES[0] not in attributes:
+        print(
+            "agentctl: WARNING .gitattributes does not route ledger files to the merge "
+            "driver; run 'agentctl init .' and commit .gitattributes so concurrent "
+            "ledger changes merge instead of conflicting",
+            file=sys.stderr,
+        )
+    branch = args.branch or _git(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    if not branch or branch == "HEAD":
+        print("agentctl: sync needs a branch checked out (detached HEAD)", file=sys.stderr)
+        return 1
+
+    def commit_ledger(subject: str) -> tuple[bool, str]:
+        add = _git_run(root, "add", "-A", "--", WORKFLOW_DIR)
+        if add.returncode:
+            return False, add.stderr.strip() or add.stdout.strip()
+        pending = [
+            line.strip() for line in _git(root, "diff", "--cached", "--name-only").splitlines()
+            if line.strip()
+        ]
+        if not pending:
+            return False, ""
+        touched = sorted({
+            match.group(1) for path in pending
+            for match in [re.search(rf"^{WORKFLOW_DIR}/tasks/([^/]+)\.md$", path)] if match
+        })
+        refs = [tid for tid in [task, *touched] if tid]
+        if not refs:
+            return False, (
+                "no task id to reference: start or resume a task with 'agentctl work' first"
+            )
+        body = f"{subject}\n\nRefs: {', '.join(dict.fromkeys(refs))}\n"
+        commit = _git_run(root, "commit", "-q", "-m", body)
+        if commit.returncode:
+            return False, commit.stderr.strip() or commit.stdout.strip()
+        return True, ""
+
+    committed, error = commit_ledger(args.message or f"chore(ledger): sync {task or 'ledger'}")
+    if error:
+        print(f"agentctl: sync could not commit the ledger: {error}", file=sys.stderr)
+        return 1
+    if committed:
+        print(f"agentctl: sync committed ledger changes ({_git(root, 'rev-parse', '--short', 'HEAD')})")
+    else:
+        print("agentctl: sync found no ledger changes to commit")
+
+    pull = _git_run(root, "pull", "--rebase", "--quiet", args.remote, branch)
+    if pull.returncode:
+        conflicted = [
+            line.strip() for line in _git(root, "diff", "--name-only", "--diff-filter=U").splitlines()
+            if line.strip()
+        ]
+        print(
+            f"agentctl: sync stopped: 'git pull --rebase {args.remote} {branch}' failed",
+            file=sys.stderr,
+        )
+        if conflicted:
+            print(
+                "  conflicts in: " + ", ".join(conflicted) + "; hand-written text needs a human, "
+                "then 'git add' those files and 'git rebase --continue'",
+                file=sys.stderr,
+            )
+        else:
+            print("  " + (pull.stderr.strip() or pull.stdout.strip()), file=sys.stderr)
+        return 1
+    print(f"agentctl: sync pulled {args.remote}/{branch}")
+
+    # A merge that combined two boards can leave the rendered views a step
+    # behind (ordering, a title edited on one side); the board is canonical.
+    if _check_board_consistency(root):
+        _render_task_views(root, _load_board(root))
+        committed_views, error = commit_ledger("chore(ledger): re-render views after merge")
+        if error:
+            print(f"agentctl: sync could not commit re-rendered views: {error}", file=sys.stderr)
+            return 1
+        if committed_views:
+            print("agentctl: sync re-rendered task views from the merged board")
+
+    if args.no_push:
+        return 0
+    push = _git_run(root, "push", "--quiet", args.remote, f"HEAD:{branch}")
+    if push.returncode:
+        print(f"agentctl: sync stopped: push to {args.remote}/{branch} failed", file=sys.stderr)
+        print("  " + (push.stderr.strip() or push.stdout.strip()), file=sys.stderr)
+        return 1
+    print(f"agentctl: sync pushed {branch} to {args.remote}")
+    return 0
+
+
+def cmd_merge_driver(args: argparse.Namespace) -> int:
+    """Git merge driver entry point: %O %A %B %P -> merged result written to %A."""
+    base_text = _read(Path(args.base))
+    ours_text = _read(Path(args.ours))
+    theirs_text = _read(Path(args.theirs))
+    name = Path(args.path).name
+    conflicted = False
+    if name == "board.json":
+        merged = _merge_ledger_json(base_text, ours_text, theirs_text, "tasks", _resolve_board_entry)
+    elif name == "agents.json":
+        merged = _merge_ledger_json(
+            base_text, ours_text, theirs_text, "agents", lambda _k, o, _t: o,
+        )
+    elif name == "TASKS.md":
+        merged = _merge_task_index(base_text, ours_text, theirs_text)
+    elif name == "PROJECT_PLAN.md":
+        merged, conflicted = _merge_project_plan(base_text, ours_text, theirs_text)
+    elif name == "state.json":
+        merged = ours_text  # loop runtime bookkeeping belongs to this checkout
+    else:
+        merged, conflicted = _git_merge_file(base_text, ours_text, theirs_text)
+    Path(args.ours).write_text(merged, encoding="utf-8")
+    if conflicted:
+        print(f"agentctl merge-driver: {args.path} merged with conflicts in hand-written text", file=sys.stderr)
+        return 1
+    return 0
 
 
 def _state_dir(root: Path) -> Path:
@@ -769,6 +1155,7 @@ _UPGRADE_DRAIN_ALLOWED = frozenset({
     ("loop", "stop"),
     ("check",),
     ("doctor",),
+    ("merge-driver",),
     ("migrate",),
     ("sessions", "list"),
     ("sessions", "heartbeat"),
@@ -800,6 +1187,7 @@ _PROTOCOL_MISMATCH_ALLOWED = frozenset({
     ("loop", "stop"),
     ("check",),
     ("doctor",),
+    ("merge-driver",),
     ("migrate",),
     ("sessions", "list"),
     ("sessions", "release"),
@@ -2235,6 +2623,7 @@ def cmd_init(args: argparse.Namespace) -> int:
                       "model": "", "reasoning_effort": ""}}})
     _record_adoption_baseline(root)
     _ensure_gitignore(root)
+    _ensure_gitattributes(root)
     for kind in (BUS_INBOX, BUS_OUTBOX, BUS_DONE, BUS_FAILED):
         _bus_dir(root, kind).mkdir(parents=True, exist_ok=True)
     wired = False
@@ -2268,6 +2657,7 @@ def cmd_init(args: argparse.Namespace) -> int:
                     "into .githooks/* to keep them running."
                 )
         _git(root, "config", "core.hooksPath", ".githooks")
+        _configure_ledger_merge_driver(root)
         wired = True
     print(f"agentctl: initialized workflow ({copied} project seed files, {len(writes)} managed writes) at {root}")
     print(f"agentctl: distributed agentctl.py + {len(installed)} git hooks into .githooks/")
@@ -2275,6 +2665,7 @@ def cmd_init(args: argparse.Namespace) -> int:
         print(f"agentctl: WARNING {warning}", file=sys.stderr)
     if wired:
         print("agentctl: git core.hooksPath -> .githooks")
+        print(f"agentctl: git merge driver '{LEDGER_MERGE_DRIVER}' -> ledger files under .agent/")
     elif installed:
         print("agentctl: NOTE not a git repo; after 'git init' run: git config core.hooksPath .githooks")
     _finish_install_upgrade(root, upgrade_context)
@@ -2432,7 +2823,9 @@ def cmd_work(args: argparse.Namespace) -> int:
         meta = _resolve_worker_metadata(root, agent, args)
         start_args = argparse.Namespace(task=args.task, agent=agent, scope=args.scope, force=args.force,
                                         session_id=meta["session_id"], model=meta["model"],
-                                        reasoning_effort=meta["reasoning_effort"])
+                                        reasoning_effort=meta["reasoning_effort"],
+                                        takeover=getattr(args, "takeover", False),
+                                        reason=getattr(args, "reason", ""))
         return cmd_start(start_args)
     st = _load_session(root)
     active = st.get("task")
@@ -2747,6 +3140,8 @@ def cmd_work(args: argparse.Namespace) -> int:
                     task=task, agent=agent, scope=args.scope, force=args.force,
                     session_id=meta["session_id"], model=meta["model"],
                     reasoning_effort=meta["reasoning_effort"],
+                    takeover=getattr(args, "takeover", False),
+                    reason=getattr(args, "reason", ""),
                 )
                 start_fd = coordination_fd
                 coordination_fd = None
@@ -2783,8 +3178,57 @@ def cmd_work(args: argparse.Namespace) -> int:
         )
     start_args = argparse.Namespace(task=task, agent=agent, scope=args.scope, force=args.force,
                                     session_id=meta["session_id"], model=meta["model"],
-                                    reasoning_effort=meta["reasoning_effort"])
+                                    reasoning_effort=meta["reasoning_effort"],
+                                    takeover=getattr(args, "takeover", False),
+                                    reason=getattr(args, "reason", ""))
     return cmd_start(start_args)
+
+
+def _foreign_claim_holder(root: Path, task: str, entry: dict) -> str:
+    """Owner of a task the board shows in_progress that no session here ever held.
+
+    Sessions never leave the machine, so a board entry that is in_progress
+    while this checkout (including its linked worktrees) has no record of
+    the task -- active, stale, or released -- is a claim made somewhere
+    else. Returns the recorded owner, or "" when the claim is local.
+    """
+    if str(entry.get("status") or "") != "in_progress":
+        return ""
+    for row in _session_rows_unlocked(root):
+        if str(row.get("task") or "") == task:
+            return ""
+    return str(entry.get("owner") or "another agent")
+
+
+def _foreign_claim_error(task: str, entry: dict, holder: str, args: argparse.Namespace) -> str:
+    reason = str(getattr(args, "reason", "") or "").strip()
+    if getattr(args, "takeover", False):
+        if not reason:
+            return f"--takeover of {task} requires --reason <why the previous holder is not coming back>"
+        return ""
+    updated = entry.get("updated_at") or entry.get("created_at") or "-"
+    return (
+        f"task {task} is in_progress for {holder} according to the board (updated {updated}), "
+        f"and this checkout has no session for it, so it is probably being worked on from another "
+        f"checkout or machine; after verifying that work is abandoned, rerun with "
+        f"--takeover --reason <why>"
+    )
+
+
+def _record_takeover(root: Path, task: str, agent: str, holder: str, reason: str) -> None:
+    ts = _now()
+    line = f"taken over from {holder} by {agent}: {reason}"
+    log = root / WORKFLOW_DIR / LOG_DIR / PROGRESS_LOG
+    _write(log, _read(log) + f"- {ts} [{task}] {line}\n")
+    task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    if task_doc.is_file():
+        body = _read(task_doc).replace("- No updates yet.\n", "", 1)
+        i = body.find("## Stage Log")
+        if i >= 0:
+            j = body.find("\n", i) + 1
+            body = body[:j] + f"- {ts} {line}\n" + body[j:]
+            _write(task_doc, body)
+    print(f"agentctl: {task} {line}", file=sys.stderr)
 
 
 def cmd_start(
@@ -2885,6 +3329,12 @@ def cmd_start(
                 file=sys.stderr,
             )
             return 1
+        foreign_holder = _foreign_claim_holder(root, task, entry)
+        if foreign_holder:
+            foreign_error = _foreign_claim_error(task, entry, foreign_holder, args)
+            if foreign_error:
+                print(f"agentctl: {foreign_error}", file=sys.stderr)
+                return 1
         if scope:
             for tid, other_task in tasks.items():
                 if tid == task or other_task.get("status") not in ACTIVE_STATUSES:
@@ -2931,12 +3381,18 @@ def cmd_start(
         if scope:
             e["scope"] = scope
         e["updated_at"] = now
+        if foreign_holder:
+            e["taken_over_from"] = foreign_holder
+            e["taken_over_at"] = now
+            e["takeover_reason"] = str(getattr(args, "reason", "") or "").strip()
         _save_board(root, board)
         _update_tasks_index(
             root, task, status="in_progress", owner=agent,
             scope=e.get("scope"), title=e.get("title"),
         )
         _set_task_doc_status(root, task, "in_progress")
+        if foreign_holder:
+            _record_takeover(root, task, agent, foreign_holder, str(getattr(args, "reason", "") or "").strip())
         session = {
             "task": task, "agent": agent, "started_at": now, "scope": scope,
             "task_type": entry.get("type") or "generic",
@@ -12015,6 +12471,15 @@ def _check_commit_msg(root: Path, msg_file: str | None) -> list:
     return p
 
 
+def _commit_is_ledger_only(root: Path, sha: str) -> bool:
+    """True when every path the commit touches is under .agent/ (no code)."""
+    if not sha:
+        return False
+    listing = _git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)
+    paths = [line.strip() for line in listing.splitlines() if line.strip()]
+    return bool(paths) and all(path.startswith(f"{WORKFLOW_DIR}/") for path in paths)
+
+
 def _refs_trailer_task_ids(body: str) -> list[str]:
     """Task ids named on `Refs:` lines of a commit body, in order, deduplicated."""
     ids: list[str] = []
@@ -12048,11 +12513,17 @@ def _check_prepush(
         return p
     tasks = _load_board(root).get("tasks", {})
     seen = set()
+    # Ids referenced by commits that change anything outside .agent/. Those
+    # must have reached review: unreviewed code never leaves the machine.
+    # A commit that only touches the ledger carries no code, and pushing it
+    # is exactly how another checkout learns that a task has been claimed.
+    code_refs = set()
     for rec in log.split("\x1e"):
         rec = rec.strip()
         if not rec:
             continue
         parts = rec.split("\x1f")
+        sha = parts[0].strip()
         subject = parts[1] if len(parts) > 1 else ""
         body = parts[2] if len(parts) > 2 else ""
         if not CONVENTIONAL_RE.match(subject.strip()):
@@ -12064,7 +12535,10 @@ def _check_prepush(
         # the board, so prose such as "SHA-256" in the body is not mistaken
         # for a task reference. Without a trailer every id-shaped token
         # must resolve, as before.
-        seen.update(_refs_trailer_task_ids(body) or ids)
+        refs = set(_refs_trailer_task_ids(body) or ids)
+        seen.update(refs)
+        if not _commit_is_ledger_only(root, sha):
+            code_refs.update(refs)
     archived_tasks: dict | None = None
     for tid in sorted(seen):
         t = tasks.get(tid)
@@ -12089,8 +12563,11 @@ def _check_prepush(
                 "or in .agent/archive/board.json"
             )
             continue
-        if t.get("status") not in PUSHABLE_STATUSES:
-            p.append(f"task {tid} is '{t.get('status')}', must be review/approved/done before push")
+        if tid in code_refs and t.get("status") not in PUSHABLE_STATUSES:
+            p.append(
+                f"task {tid} is '{t.get('status')}', must be review/approved/done before "
+                f"pushing commits that change files outside .agent/"
+            )
         if t.get("status") == "done":
             rec = _extract_section(_read(root / WORKFLOW_DIR / TASKS_DIR / f"{tid}.md"), "## Completion Record")
             if "Completed-at:" not in rec:
@@ -12676,6 +13153,28 @@ def _doctor_report(root: Path) -> dict:
             "name": "git hooks",
             "status": "ok" if hooks_path == ".githooks" else "fail",
             "detail": f"core.hooksPath={hooks_path or '<unset>'}",
+        })
+        driver_ok = _ledger_merge_driver_configured(root)
+        attributes_ok = all(
+            entry in {" ".join(line.split()) for line in _read(root / ".gitattributes").splitlines()}
+            for entry in GITATTRIBUTES_MANAGED_ENTRIES
+        )
+        if not driver_ok or not attributes_ok:
+            warnings.append(
+                "ledger merge driver is not fully set up "
+                f"({'config missing' if not driver_ok else 'config ok'}, "
+                f"{'.gitattributes incomplete' if not attributes_ok else '.gitattributes ok'}); "
+                "concurrent ledger changes from other checkouts will conflict instead of "
+                "merging; run 'agentctl init .' and commit .gitattributes"
+            )
+        checks.append({
+            "name": "ledger merge driver",
+            "status": "ok" if driver_ok and attributes_ok else "warn",
+            "detail": (
+                f"merge.{LEDGER_MERGE_DRIVER}.driver "
+                f"{'configured' if driver_ok else 'missing'}, .gitattributes "
+                f"{'routes ledger files' if attributes_ok else 'incomplete'}"
+            ),
         })
     else:
         warnings.append("not a Git repository; local Git hooks are not active")
@@ -13430,6 +13929,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--reasoning-effort")
     sp.add_argument("--force", action="store_true")
     sp.add_argument("--request-id", default="")
+    sp.add_argument(
+        "--takeover", action="store_true",
+        help="Claim a task the board shows in_progress for another checkout or "
+             "machine; requires --reason and is recorded in the task document",
+    )
+    sp.add_argument("--reason", default="")
     sp.set_defaults(func=cmd_work)
 
     sp = sub.add_parser("start")
@@ -13440,6 +13945,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--model")
     sp.add_argument("--reasoning-effort")
     sp.add_argument("--force", action="store_true")
+    sp.add_argument(
+        "--takeover", action="store_true",
+        help="Claim a task the board shows in_progress for another checkout or "
+             "machine; requires --reason and is recorded in the task document",
+    )
+    sp.add_argument("--reason", default="")
     sp.set_defaults(func=cmd_start)
 
     sp = sub.add_parser("focus")
@@ -13827,6 +14338,24 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("status")
     sp.add_argument("--json", action="store_true")
     sp.set_defaults(func=cmd_status)
+
+    sp = sub.add_parser(
+        "sync",
+        help="Commit this checkout's ledger changes, pull with the ledger merge "
+             "driver, and push, so other checkouts see the claim",
+    )
+    sp.add_argument("--remote", default="origin")
+    sp.add_argument("--branch", default="", help="Remote branch; defaults to the current branch")
+    sp.add_argument("--message", default="", help="Commit subject; defaults to a ledger summary")
+    sp.add_argument("--no-push", dest="no_push", action="store_true")
+    sp.set_defaults(func=cmd_sync)
+
+    sp = sub.add_parser("merge-driver", help=argparse.SUPPRESS)
+    sp.add_argument("--base", required=True)
+    sp.add_argument("--ours", required=True)
+    sp.add_argument("--theirs", required=True)
+    sp.add_argument("--path", required=True)
+    sp.set_defaults(func=cmd_merge_driver)
 
     return p
 

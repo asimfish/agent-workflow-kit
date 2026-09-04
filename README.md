@@ -152,6 +152,11 @@ flowchart LR
   unavailable to every other project on the host until released. The lock
   records who holds it, so any project can tell a live holder from a dead
   one.
+- **Several machines share the plan through Git.** Sessions and locks stay
+  on their machine; the ledger under `.agent/` travels. A claim can be
+  pushed while the task is still `in_progress` (code cannot), the ledger
+  files merge per task instead of conflicting per line, and a task that
+  another machine has claimed can only be taken with `--takeover --reason`.
 
 ## Everyday commands
 
@@ -164,6 +169,7 @@ flowchart LR
 | `agentctl gate approve --task <id> --by <reviewer>` | independent approval (or `gate reject`) |
 | `agentctl board` | who is doing what |
 | `agentctl doctor` | what is stuck, and how to unstick it |
+| `agentctl sync` | publish this checkout's claims and pick up everyone else's (ledger-only commit, pull, push) |
 
 The full reference is `docs/workflow.md`. Loops, supervisor guidance
 packets, harness evaluation, and upgrade barriers live in `docs/` and can
@@ -182,6 +188,8 @@ cases:
 | a run shows `exited_unknown` | the supervisor lost track of the process | inspect the outputs, then `agentctl run finish <run-id> --status succeeded\|failed --reason "..."` |
 | `gate approve` says the task is unknown or has no runtime evidence | the task finished in a worktree and the main checkout has not heard of it | `agentctl reconcile merge-back --from-ref <branch>` in the main checkout, then retry |
 | a review task is still open after its decision | nobody closed it | `agentctl reconcile close-decided-reviews` |
+| `git pull` stops with conflicts in `.agent/board.json` or `TASKS.md` | this clone has no ledger merge driver (`doctor` says so) | `agentctl init .` registers it and writes `.gitattributes`; commit `.gitattributes`, then `git rebase --continue` after resolving once |
+| `start --task` says the task is `in_progress` for someone according to the board | another machine claimed it | check its notes; if it is really abandoned, `agentctl work --agent <name> --task <id> --takeover --reason "..."` |
 
 Nothing above deletes work. Releasing a session keeps its task, notes, and
 files; releasing a lock never kills a process.
@@ -192,7 +200,9 @@ No daemon, no cron, no automatic merges, no automatic deletion of branches
 or worktrees, and no sandbox: the hooks coordinate agents, they do not
 contain untrusted code. Jobs started outside `agentctl run` (a raw `ssh`, a
 `systemd` unit) are reported but not managed. GPU coordination is per host;
-the kit does not schedule across machines.
+the kit does not schedule across machines, and it cannot tell whether a
+conversation on another machine is still alive, only that its claim is on
+the board.
 
 ## Status
 

@@ -87,6 +87,7 @@ IDENTITY_FREE_COMMAND_PATHS = frozenset({
     ("loop", "show"),
     ("check",),
     ("doctor",),
+    ("merge-driver",),
     ("migrate",),
     ("sessions", "list"),
     ("upgrade", "status"),

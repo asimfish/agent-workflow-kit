@@ -127,3 +127,26 @@ Windows CI job also runs the zombie-supervisor and dash-token tests. `doctor`
 reports a machine-wide lock record that names no resource instead of
 skipping it, and the interlock section of the multi-session guide counts
 its own items correctly.
+
+Several machines, one remote. Sessions and locks never leave a machine, so
+between machines the ledger under `.agent/` is the only channel -- and a
+two-clone experiment showed it did not work as one: the pre-push hook
+refused to push a claim until the task reached review, so a second machine
+could not learn that a task was taken; that second machine could then
+`start` the same task and the owner flipped without a word; and two clones
+that each finished a task conflicted on `board.json`, `TASKS.md`, and
+`PROJECT_PLAN.md` with nothing to resolve them. Three changes close this.
+Commits that touch only `.agent/` are pushable at any task status (commits
+that change anything else still wait for review). `agentctl init` commits a
+`.gitattributes` and registers an `agent-ledger` merge driver per clone that
+merges the ledger per task id -- one side changed wins, a deletion racing an
+advance keeps the advance, a competing edit resolves to the later lifecycle
+status then the newer timestamp -- with `progress.md` as a union merge,
+`loops/state.json` kept local, and plan prose merged as text with real
+conflicts left for a human; `doctor` reports a clone without the driver.
+`start`/`work --task` refuse a task the board shows `in_progress` when no
+session in this checkout ever held it, unless `--takeover --reason` is
+given, which is recorded in the task document, the progress log, and the
+board entry. `agentctl sync` does the ledger-only commit, pull, re-render,
+push round trip and refuses if code is staged. Eight two-clone regression
+tests.

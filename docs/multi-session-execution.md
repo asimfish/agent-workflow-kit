@@ -273,6 +273,56 @@ along four lines, ordered from automatic to manual:
    any checkout lists machine-wide locks whose holder is not live, so the
    interlock is visible from the project that is actually blocked.
 
+## Several Machines, One Remote
+
+Sessions, locks, and run leases never leave the machine they were created
+on. Between machines the only channel is the Git ledger under `.agent/`, so
+the kit treats that ledger as something that must travel early and merge
+cleanly.
+
+**Claims travel before code does.** The pre-push hook refuses a commit that
+changes files outside `.agent/` while its task is still `in_progress`;
+unreviewed code never leaves the machine. A commit that changes only
+`.agent/` carries no code and is pushable at any status, and pushing it is
+how another machine learns that a task has been claimed. `agentctl sync`
+does the round trip: it stages only `.agent/`, commits with a `Refs:`
+trailer for the active task, pulls with rebase, and pushes. A staged path
+outside `.agent/` makes it refuse, so an edit cannot ride along with a
+claim.
+
+**Ledger files merge per task, not per line.** `agentctl init` commits a
+`.gitattributes` that routes `board.json`, `TASKS.md`, `PROJECT_PLAN.md`,
+`agents.json`, and `loops/state.json` to the `agent-ledger` merge driver
+and `logs/progress.md` to Git's `union` merge, and registers the driver in
+the clone's config (per clone, like `core.hooksPath`; `doctor` reports a
+clone that lacks it). The driver merges entries keyed by task id: an entry
+changed on one side takes that side, an entry deleted on one side and
+advanced on the other keeps the advance (archiving must not lose progress),
+and a genuinely competing edit of one entry resolves to the status further
+along the lifecycle (`todo` < `in_progress` < `review` < `approved` <
+`done`), then to the newer `updated_at`. `TASKS.md` rows and the `## Task
+Board` checklist in `PROJECT_PLAN.md` follow the same rule; the plan's
+hand-written prose is merged as text and a real conflict there is left with
+markers for a human. `loops/state.json` keeps this checkout's version
+because loop runtime is checkout-local bookkeeping. After a pull, `sync`
+re-renders the views from the merged board if they drifted.
+
+**A claim made elsewhere is not yours to resume.** `start` and `work
+--task` refuse a task the board shows `in_progress` when no session in this
+checkout -- active, stale, or released -- has ever held it: that is a claim
+from another checkout or machine, and taking it silently would be the
+cross-machine version of stealing a task. `--takeover --reason <why>` claims
+it anyway and records `taken over from <owner> by <agent>: <reason>` in
+the task document, the progress log, and the board entry
+(`taken_over_from`, `takeover_reason`). Auto-selection never picks an
+`in_progress` task, so this only ever applies to an explicit `--task`.
+
+What still does not cross machines: session liveness (a machine cannot tell
+whether another machine's conversation is alive, only that its claim is on
+the board), resource locks (a GPU is claimed per host), and worktree
+leases. Treat a foreign claim as live until its owner's notes or commits
+say otherwise.
+
 ## Upgrade Barrier
 
 The install manifest records schema, kit version, source commit, and protocol

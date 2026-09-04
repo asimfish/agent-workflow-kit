@@ -1188,7 +1188,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             ("sessions", "release"), ("upgrade", "begin"),
             ("upgrade", "status"), ("upgrade", "validate"),
             ("upgrade", "complete"), ("upgrade", "rebind"),
-            ("_run-supervise",), ("status",),
+            ("_run-supervise",), ("status",), ("sync",), ("merge-driver",),
         }
         discovered = leaf_paths(agentctl.build_parser())
         self.assertEqual(discovered, expected)
