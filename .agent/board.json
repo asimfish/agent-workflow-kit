@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-05 04:01:26",
+  "updated_at": "2026-09-05 04:08:35",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -283,14 +283,26 @@
     "TA08B0CC413F151F5-032": {
       "title": "two-clone test fixture: pin the bare origin HEAD to main so clones are not empty on CI",
       "type": "generic",
-      "status": "review",
+      "status": "done",
       "owner": "cursor",
       "scope": [
         "tests/test_multi_checkout_sync.py"
       ],
       "deps": [],
       "created_at": "2026-09-05 03:59:42",
-      "updated_at": "2026-09-05 04:01:26"
+      "updated_at": "2026-09-05 04:08:13"
+    },
+    "TE0090C6FA185D4E4-001": {
+      "title": "review fixture fix TA08B0CC413F151F5-032",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-032",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 04:03:35",
+      "updated_at": "2026-09-05 04:08:35"
     }
   },
   "updated": ""
