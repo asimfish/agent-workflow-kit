@@ -169,9 +169,70 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
         self.git_as(self.a, "conv-a", "commit", "-q", "-m", f"feat(collect): first run\n\nRefs: {task}")
         refused = self.git_as(self.a, "conv-a", "push", "-q", "origin", "HEAD:main", expect=1)
         self.assertIn(
-            "must be review/approved/done before pushing commits that change files outside .agent/",
+            "must be review/approved/done before pushing commits that change anything but ledger data under .agent/",
             refused.stdout + refused.stderr,
         )
+
+    def test_behavior_changing_files_under_agent_are_not_ledger_data(self):
+        # Loop contracts are executed (their check lines run through a shell)
+        # and checkpoints.json wires them to work-start, so a change to them
+        # is code for the purpose of the push rule and waits for review.
+        task = self.open_task(self.a, "conv-a", "codex", "collect on 4090", "collect/a/")
+        (self.a / ".agent" / "loops" / "evil.md").write_text(
+            "# Loop evil\n\n## Trigger\nx\n## Execute\n```loop-check\n$ echo evil\n```\n"
+            "## Check\nx\n## Feedback\nx\n## Memory\nx\n## Next\nx\n",
+            encoding="utf-8",
+        )
+        self.agentctl(self.a, "conv-a", "note", "adding a loop")
+        self.git_as(self.a, "conv-a", "-c", "core.hooksPath=", "add", "--", ".agent")
+        self.git_as(
+            self.a, "conv-a", "-c", "core.hooksPath=", "commit", "-q", "-m",
+            f"chore(loops): add loop\n\nRefs: {task}",
+        )
+        refused = self.git_as(self.a, "conv-a", "push", "-q", "origin", "HEAD:main", expect=1)
+        self.assertIn("must be review/approved/done", refused.stdout + refused.stderr)
+        for path, expected in (
+            (".agent/board.json", True), (".agent/tasks/T-1.md", True), (".agent/logs/progress.md", True),
+            (".agent/loops/runs/x.md", True), (".agent/loops/state.json", True), (".agent/archive/board.json", True),
+            (".agent/loops/evil.md", False), (".agent/loops/checkpoints.json", False),
+            (".agent/rules/x.md", False), (".agent/evals/suites.json", False),
+            (".agent/runtime-policy.json", False), (".agent/WORKFLOW_ENTRY.md", False),
+            ("tools/agentctl.py", False),
+        ):
+            self.assertEqual(agentctl._is_ledger_data_path(path), expected, path)
+
+    def test_sync_stages_ledger_data_only(self):
+        task = self.open_task(self.a, "conv-a", "codex", "collect on 4090", "collect/a/")
+        # A rule file changes agent behavior; it is under .agent/ but not ledger data.
+        (self.a / ".agent" / "rules" / "local-note.md").write_text("# local rule\n", encoding="utf-8")
+        synced = self.agentctl(self.a, "conv-a", "sync", "--no-push")
+        self.assertIn("committed ledger changes", synced.stdout)
+        self.assertIn("left these .agent/ changes unstaged", synced.stderr)
+        self.assertIn(".agent/rules/local-note.md", synced.stderr)
+        self.assertEqual(
+            self.git(self.a, "status", "--porcelain", "--", ".agent/rules/local-note.md"),
+            "?? .agent/rules/local-note.md",
+        )
+        shown = self.git(self.a, "show", "--name-only", "--format=", "HEAD")
+        self.assertIn(".agent/board.json", shown)
+        self.assertNotIn("local-note.md", shown)
+        self.assertIn(task, self.git(self.a, "log", "-1", "--format=%B"))
+
+    def test_archive_stands_when_the_other_side_only_touched_a_done_entry(self):
+        base = json.dumps({"version": 1, "tasks": {"T-1": {"status": "done", "updated_at": "2026-01-01 00:00:00"}}})
+        archived = json.dumps({"version": 1, "tasks": {}})
+        touched = json.dumps({"version": 1, "tasks": {"T-1": {"status": "done", "updated_at": "2026-01-02 00:00:00"}}})
+        merged = json.loads(agentctl._merge_ledger_json(base, archived, touched, "tasks", agentctl._resolve_board_entry))
+        self.assertEqual(merged["tasks"], {}, "a done task archived on one side is not resurrected by a touch")
+        reopened = json.dumps({"version": 1, "tasks": {"T-1": {"status": "in_progress", "updated_at": "2026-01-02 00:00:00"}}})
+        merged2 = json.loads(agentctl._merge_ledger_json(base, archived, reopened, "tasks", agentctl._resolve_board_entry))
+        self.assertEqual(merged2["tasks"]["T-1"]["status"], "in_progress", "a real status change survives the archive")
+        # Theirs-only top-level keys survive; ours wins on shared ones.
+        merged3 = json.loads(agentctl._merge_ledger_json(
+            base, json.dumps({"version": 1, "tasks": {}, "x": "ours"}),
+            json.dumps({"version": 1, "tasks": {}, "x": "theirs", "y": "theirs"}), "tasks", agentctl._resolve_board_entry,
+        ))
+        self.assertEqual((merged3["x"], merged3["y"]), ("ours", "theirs"))
 
     def test_foreign_in_progress_claim_needs_an_explicit_takeover(self):
         task = self.open_task(self.a, "conv-a", "codex", "collect on 4090", "collect/a/")
@@ -262,6 +323,31 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
         merged4 = json.loads(agentctl._merge_ledger_json(base, deleted_ours, theirs, "tasks", agentctl._resolve_board_entry))
         self.assertEqual(merged4["tasks"]["T-1"]["status"], "review", "a deletion racing an advance keeps the advance")
 
+    def test_malformed_ledger_side_is_a_conflict_not_a_deletion(self):
+        base = json.dumps({"version": 1, "tasks": {"T-1": {"status": "in_progress"}}})
+        theirs = json.dumps({"version": 1, "tasks": {"T-1": {"status": "in_progress"}, "T-2": {"status": "todo"}}})
+        with self.assertRaises(ValueError):
+            agentctl._merge_ledger_json(base, "{not json", theirs, "tasks", agentctl._resolve_board_entry)
+        with self.assertRaises(ValueError):
+            agentctl._merge_ledger_json(base, "[1, 2]", theirs, "tasks", agentctl._resolve_board_entry)
+        # Through the driver entry point: exit 1, ours left untouched.
+        tmp = self.base / "driver"
+        tmp.mkdir()
+        (tmp / "base").write_text(base, encoding="utf-8")
+        (tmp / "ours").write_text("{not json", encoding="utf-8")
+        (tmp / "theirs").write_text(theirs, encoding="utf-8")
+        proc = subprocess.run(
+            [sys.executable, "tools/agentctl.py", "merge-driver", "--base", str(tmp / "base"),
+             "--ours", str(tmp / "ours"), "--theirs", str(tmp / "theirs"), "--path", ".agent/board.json"],
+            cwd=str(self.a), env=self.env("conv-a"), text=True, capture_output=True, timeout=120,
+        )
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("not merged", proc.stderr)
+        self.assertEqual((tmp / "ours").read_text(encoding="utf-8"), "{not json")
+        # An empty side is a legitimate empty ledger, not damage.
+        merged = json.loads(agentctl._merge_ledger_json("", "", theirs, "tasks", agentctl._resolve_board_entry))
+        self.assertEqual(set(merged["tasks"]), {"T-1", "T-2"})
+
     def test_plan_prose_conflicts_are_still_reported(self):
         base = "# Plan\n\nGoal: x\n\n## Task Board\n- [ ] T-1 - one\n\n## Notes\nkeep\n"
         ours = base.replace("Goal: x", "Goal: ours")
@@ -294,7 +380,7 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
         (self.a / "collect" / "a" / "run.py").write_text("print('x')\n", encoding="utf-8")
         self.git_as(self.a, "conv-a", "add", "collect/a/run.py")
         refused = self.agentctl(self.a, "conv-a", "sync", expect=1)
-        self.assertIn("ledger files only", refused.stderr)
+        self.assertIn("ledger data only", refused.stderr)
         self.git_as(self.a, "conv-a", "reset", "-q", "collect/a/run.py")
 
         # Nothing new locally: sync still pulls B's claim.

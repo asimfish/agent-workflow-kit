@@ -281,14 +281,20 @@ the kit treats that ledger as something that must travel early and merge
 cleanly.
 
 **Claims travel before code does.** The pre-push hook refuses a commit that
-changes files outside `.agent/` while its task is still `in_progress`;
-unreviewed code never leaves the machine. A commit that changes only
-`.agent/` carries no code and is pushable at any status, and pushing it is
-how another machine learns that a task has been claimed. `agentctl sync`
-does the round trip: it stages only `.agent/`, commits with a `Refs:`
-trailer for the active task, pulls with rebase, and pushes. A staged path
-outside `.agent/` makes it refuse, so an edit cannot ride along with a
-claim.
+changes anything but ledger *data* while its task is still `in_progress`;
+unreviewed code never leaves the machine. Ledger data is what the controller
+records and nothing executes: `board.json`, `TASKS.md`, `PROJECT_PLAN.md`,
+`agents.json`, `tasks/`, `logs/`, `gates/`, `loops/state.json`,
+`loops/runs/`, `handoffs/`, `decisions/`, `bus/`, `archive/`. A commit that
+touches only those is pushable at any status, and pushing it is how another
+machine learns that a task has been claimed. Everything else under
+`.agent/` changes behavior -- loop contracts (their check lines run through
+a shell) and `loops/checkpoints.json` that binds them to `work-start`,
+rules, evals, the runtime policy, the workflow entry -- and travels only
+with reviewed work. `agentctl sync` does the round trip: it stages only
+ledger data, commits with a `Refs:` trailer for the active task, pulls with
+rebase, and pushes; a staged path that is not ledger data makes it refuse,
+and unstaged non-data changes under `.agent/` are named and left alone.
 
 **Ledger files merge per task, not per line.** `agentctl init` commits a
 `.gitattributes` that routes `board.json`, `TASKS.md`, `PROJECT_PLAN.md`,
@@ -300,7 +306,12 @@ changed on one side takes that side, an entry deleted on one side and
 advanced on the other keeps the advance (archiving must not lose progress),
 and a genuinely competing edit of one entry resolves to the status further
 along the lifecycle (`todo` < `in_progress` < `review` < `approved` <
-`done`), then to the newer `updated_at`. `TASKS.md` rows and the `## Task
+`done`), then to the newer `updated_at` -- so a concurrent step back
+(`in_progress` to `todo`) loses to a concurrent touch that stays
+`in_progress`; abandon a task after syncing, not during. A `done` task
+archived on one side stays archived when the other side merely touched
+its `done` entry. A side whose JSON does not parse is a conflict for a
+human, never read as "deleted everything". `TASKS.md` rows and the `## Task
 Board` checklist in `PROJECT_PLAN.md` follow the same rule; the plan's
 hand-written prose is merged as text and a real conflict there is left with
 markers for a human. `loops/state.json` keeps this checkout's version

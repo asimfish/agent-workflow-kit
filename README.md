@@ -154,7 +154,8 @@ flowchart LR
   one.
 - **Several machines share the plan through Git.** Sessions and locks stay
   on their machine; the ledger under `.agent/` travels. A claim can be
-  pushed while the task is still `in_progress` (code cannot), the ledger
+  pushed while the task is still `in_progress` (code and anything that
+  changes agent behavior cannot), the ledger
   files merge per task instead of conflicting per line, and a task that
   another machine has claimed can only be taken with `--takeover --reason`.
 

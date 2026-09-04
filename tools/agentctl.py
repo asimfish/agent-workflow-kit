@@ -391,6 +391,7 @@ GITATTRIBUTES_MANAGED_ENTRIES = (
     ".agent/PROJECT_PLAN.md merge=agent-ledger",
     ".agent/agents.json merge=agent-ledger",
     ".agent/loops/state.json merge=agent-ledger",
+    ".agent/archive/board.json merge=agent-ledger",
     ".agent/logs/progress.md merge=union",
 )
 LEDGER_STATUS_RANK = {
@@ -437,14 +438,18 @@ def _ledger_merge_driver_configured(root: Path) -> bool:
     return _git(root, "config", "--get", f"merge.{LEDGER_MERGE_DRIVER}.driver").strip() != ""
 
 
-def _three_way_entries(base: dict, ours: dict, theirs: dict, resolve) -> dict:
+def _three_way_entries(base: dict, ours: dict, theirs: dict, resolve,
+                       deletion_wins=None) -> dict:
     """Merge dicts keyed by id, one entry at a time.
 
     Unchanged on one side takes the other side's version (including a
     deletion). A deletion racing a modification keeps the modification,
     because archiving a task someone else just advanced must not lose the
-    advance. Both sides changed differently -> `resolve(key, ours, theirs)`.
-    Ours' key order is kept; theirs' new keys follow in theirs' order.
+    advance -- unless `deletion_wins(base_entry, survivor)` says the
+    modification changed nothing that matters (both still `done`, for the
+    board), in which case the archive stands. Both sides changed
+    differently -> `resolve(key, ours, theirs)`. Ours' key order is kept;
+    theirs' new keys follow in theirs' order.
     """
     merged: dict = {}
     for key in [*ours, *[k for k in theirs if k not in ours], *[k for k in base if k not in ours and k not in theirs]]:
@@ -461,13 +466,23 @@ def _three_way_entries(base: dict, ours: dict, theirs: dict, resolve) -> dict:
             if o is not None:
                 merged[key] = o
             continue
-        if o is None:
-            merged[key] = t
-        elif t is None:
-            merged[key] = o
+        if o is None or t is None:
+            survivor = t if o is None else o
+            if deletion_wins is not None and b is not None and deletion_wins(b, survivor):
+                continue
+            merged[key] = survivor
         else:
             merged[key] = resolve(key, o, t)
     return merged
+
+
+def _board_deletion_wins(base_entry: dict, survivor: dict) -> bool:
+    """An archived task stays archived when the other side only touched a done entry."""
+    return (
+        isinstance(base_entry, dict) and isinstance(survivor, dict)
+        and str(base_entry.get("status") or "") == "done"
+        and str(survivor.get("status") or "") == "done"
+    )
 
 
 def _resolve_board_entry(_key: str, ours: dict, theirs: dict) -> dict:
@@ -487,18 +502,29 @@ def _resolve_board_entry(_key: str, ours: dict, theirs: dict) -> dict:
 
 def _merge_ledger_json(base_text: str, ours_text: str, theirs_text: str,
                        collection: str, resolve) -> str:
-    def load(text: str) -> dict:
-        try:
-            data = json.loads(text) if text.strip() else {}
-        except ValueError:
-            data = {}
-        return data if isinstance(data, dict) else {}
+    """Merge two JSON ledgers by entry; raises ValueError on a side that is not a JSON object.
 
-    base, ours, theirs = load(base_text), load(ours_text), load(theirs_text)
-    merged = dict(ours or theirs)
+    A side that fails to parse must not be read as "deleted everything": that
+    would turn a damaged board on one machine into deletions everywhere. The
+    driver reports it as a conflict for a human instead.
+    """
+    def load(label: str, text: str) -> dict:
+        if not text.strip():
+            return {}
+        try:
+            data = json.loads(text)
+        except ValueError as exc:
+            raise ValueError(f"{label} side is not valid JSON: {exc}") from exc
+        if not isinstance(data, dict):
+            raise ValueError(f"{label} side is not a JSON object")
+        return data
+
+    base, ours, theirs = load("base", base_text), load("ours", ours_text), load("theirs", theirs_text)
+    merged = {**theirs, **ours}  # top-level fields: ours wins, theirs-only keys survive
     merged[collection] = _three_way_entries(
         base.get(collection) or {}, ours.get(collection) or {}, theirs.get(collection) or {},
         resolve,
+        deletion_wins=_board_deletion_wins if collection == "tasks" else None,
     )
     stamps = [str(d.get("updated") or "") for d in (ours, theirs) if d.get("updated")]
     if stamps:
@@ -628,10 +654,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
         line.strip() for line in _git(root, "diff", "--cached", "--name-only").splitlines()
         if line.strip()
     ]
-    outside = [path for path in staged if not path.startswith(f"{WORKFLOW_DIR}/")]
+    outside = [path for path in staged if not _is_ledger_data_path(path)]
     if outside:
         print(
-            "agentctl: sync commits ledger files only; unstage these first: "
+            "agentctl: sync commits ledger data only; unstage these first: "
             + ", ".join(outside[:5]) + (" ..." if len(outside) > 5 else ""),
             file=sys.stderr,
         )
@@ -646,15 +672,39 @@ def cmd_sync(args: argparse.Namespace) -> int:
             "ledger changes merge instead of conflicting",
             file=sys.stderr,
         )
+    git_dir = _git_dir(root)
+    if git_dir is not None and ((git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists()):
+        print(
+            "agentctl: sync stopped: a rebase is in progress in this checkout; resolve it "
+            "('git status' lists the files), then 'git rebase --continue' or 'git rebase --abort'",
+            file=sys.stderr,
+        )
+        return 1
     branch = args.branch or _git(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
     if not branch or branch == "HEAD":
         print("agentctl: sync needs a branch checked out (detached HEAD)", file=sys.stderr)
         return 1
 
     def commit_ledger(subject: str) -> tuple[bool, str]:
-        add = _git_run(root, "add", "-A", "--", WORKFLOW_DIR)
-        if add.returncode:
-            return False, add.stderr.strip() or add.stdout.strip()
+        # Stage ledger data only (see LEDGER_DATA_PATHS). Loop contracts,
+        # rules, evals, and policy files under .agent/ change behavior and
+        # travel with reviewed work, never with a claim.
+        data_paths = [entry.rstrip("/") for entry in LEDGER_DATA_PATHS if (root / entry.rstrip("/")).exists()]
+        if data_paths:
+            add = _git_run(root, "add", "-A", "--", *data_paths)
+            if add.returncode:
+                return False, add.stderr.strip() or add.stdout.strip()
+        skipped = [
+            line[3:].strip() for line in _git(root, "status", "--porcelain", "--", WORKFLOW_DIR).splitlines()
+            if line[:2].strip() and not _is_ledger_data_path(line[3:].strip())
+        ]
+        if skipped:
+            print(
+                "agentctl: sync left these .agent/ changes unstaged because they are not ledger "
+                "data (commit them with reviewed work): " + ", ".join(sorted(skipped)[:6])
+                + (" ..." if len(skipped) > 6 else ""),
+                file=sys.stderr,
+            )
         pending = [
             line.strip() for line in _git(root, "diff", "--cached", "--name-only").splitlines()
             if line.strip()
@@ -728,27 +778,36 @@ def cmd_sync(args: argparse.Namespace) -> int:
     return 0
 
 
+def _merge_ledger_file(name: str, base: str, ours: str, theirs: str) -> tuple[str, bool]:
+    """Dispatch on the ledger file name; returns (merged text, conflicted).
+
+    Raises ValueError when a JSON side cannot be parsed.
+    """
+    if name == "board.json":
+        return _merge_ledger_json(base, ours, theirs, "tasks", _resolve_board_entry), False
+    if name == "agents.json":
+        return _merge_ledger_json(base, ours, theirs, "agents", lambda _k, o, _t: o), False
+    if name == "TASKS.md":
+        return _merge_task_index(base, ours, theirs), False
+    if name == "PROJECT_PLAN.md":
+        return _merge_project_plan(base, ours, theirs)
+    if name == "state.json":
+        return ours, False  # loop runtime bookkeeping belongs to this checkout
+    return _git_merge_file(base, ours, theirs)
+
+
 def cmd_merge_driver(args: argparse.Namespace) -> int:
     """Git merge driver entry point: %O %A %B %P -> merged result written to %A."""
     base_text = _read(Path(args.base))
     ours_text = _read(Path(args.ours))
     theirs_text = _read(Path(args.theirs))
-    name = Path(args.path).name
-    conflicted = False
-    if name == "board.json":
-        merged = _merge_ledger_json(base_text, ours_text, theirs_text, "tasks", _resolve_board_entry)
-    elif name == "agents.json":
-        merged = _merge_ledger_json(
-            base_text, ours_text, theirs_text, "agents", lambda _k, o, _t: o,
-        )
-    elif name == "TASKS.md":
-        merged = _merge_task_index(base_text, ours_text, theirs_text)
-    elif name == "PROJECT_PLAN.md":
-        merged, conflicted = _merge_project_plan(base_text, ours_text, theirs_text)
-    elif name == "state.json":
-        merged = ours_text  # loop runtime bookkeeping belongs to this checkout
-    else:
-        merged, conflicted = _git_merge_file(base_text, ours_text, theirs_text)
+    try:
+        merged, conflicted = _merge_ledger_file(Path(args.path).name, base_text, ours_text, theirs_text)
+    except ValueError as exc:
+        # Leave ours in place and let git record the conflict; a damaged
+        # ledger needs a human, not a guess.
+        print(f"agentctl merge-driver: {args.path} not merged: {exc}", file=sys.stderr)
+        return 1
     Path(args.ours).write_text(merged, encoding="utf-8")
     if conflicted:
         print(f"agentctl merge-driver: {args.path} merged with conflicts in hand-written text", file=sys.stderr)
@@ -12471,13 +12530,42 @@ def _check_commit_msg(root: Path, msg_file: str | None) -> list:
     return p
 
 
+# Ledger *data*: records the controller writes and nothing ever executes.
+# Not on the list, deliberately: loop contracts (`loops/*.md`, whose check
+# lines run through a shell) and `loops/checkpoints.json` that wires them to
+# work-start, rules, evals, the runtime policy, the workflow entry, and the
+# install manifest. Those change behavior and travel only with reviewed work.
+LEDGER_DATA_PATHS = (
+    f"{WORKFLOW_DIR}/board.json",
+    f"{WORKFLOW_DIR}/TASKS.md",
+    f"{WORKFLOW_DIR}/PROJECT_PLAN.md",
+    f"{WORKFLOW_DIR}/agents.json",
+    f"{WORKFLOW_DIR}/tasks/",
+    f"{WORKFLOW_DIR}/logs/",
+    f"{WORKFLOW_DIR}/gates/",
+    f"{WORKFLOW_DIR}/loops/state.json",
+    f"{WORKFLOW_DIR}/loops/runs/",
+    f"{WORKFLOW_DIR}/handoffs/",
+    f"{WORKFLOW_DIR}/decisions/",
+    f"{WORKFLOW_DIR}/bus/",
+    f"{WORKFLOW_DIR}/archive/",
+)
+
+
+def _is_ledger_data_path(path: str) -> bool:
+    return any(
+        path == entry or (entry.endswith("/") and path.startswith(entry))
+        for entry in LEDGER_DATA_PATHS
+    )
+
+
 def _commit_is_ledger_only(root: Path, sha: str) -> bool:
-    """True when every path the commit touches is under .agent/ (no code)."""
+    """True when every path the commit touches is ledger data (see LEDGER_DATA_PATHS)."""
     if not sha:
         return False
     listing = _git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)
     paths = [line.strip() for line in listing.splitlines() if line.strip()]
-    return bool(paths) and all(path.startswith(f"{WORKFLOW_DIR}/") for path in paths)
+    return bool(paths) and all(_is_ledger_data_path(path) for path in paths)
 
 
 def _refs_trailer_task_ids(body: str) -> list[str]:
@@ -12566,7 +12654,7 @@ def _check_prepush(
         if tid in code_refs and t.get("status") not in PUSHABLE_STATUSES:
             p.append(
                 f"task {tid} is '{t.get('status')}', must be review/approved/done before "
-                f"pushing commits that change files outside .agent/"
+                f"pushing commits that change anything but ledger data under .agent/"
             )
         if t.get("status") == "done":
             rec = _extract_section(_read(root / WORKFLOW_DIR / TASKS_DIR / f"{tid}.md"), "## Completion Record")

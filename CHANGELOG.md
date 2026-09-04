@@ -136,8 +136,11 @@ could not learn that a task was taken; that second machine could then
 `start` the same task and the owner flipped without a word; and two clones
 that each finished a task conflicted on `board.json`, `TASKS.md`, and
 `PROJECT_PLAN.md` with nothing to resolve them. Three changes close this.
-Commits that touch only `.agent/` are pushable at any task status (commits
-that change anything else still wait for review). `agentctl init` commits a
+Commits that touch only ledger data under `.agent/` (board, index, plan,
+task documents, logs, gates, run reports, handoffs, decisions, bus,
+archive) are pushable at any task status; anything that changes behavior --
+loop contracts, checkpoint wiring, rules, evals, policy -- and any code
+still waits for review. `agentctl init` commits a
 `.gitattributes` and registers an `agent-ledger` merge driver per clone that
 merges the ledger per task id -- one side changed wins, a deletion racing an
 advance keeps the advance, a competing edit resolves to the later lifecycle
@@ -148,5 +151,7 @@ conflicts left for a human; `doctor` reports a clone without the driver.
 session in this checkout ever held it, unless `--takeover --reason` is
 given, which is recorded in the task document, the progress log, and the
 board entry. `agentctl sync` does the ledger-only commit, pull, re-render,
-push round trip and refuses if code is staged. Eight two-clone regression
-tests.
+push round trip, stages ledger data only, and refuses if anything else is
+staged. A side whose JSON does not parse is left as a conflict rather than
+read as a deletion, and a task archived on one side stays archived when the
+other side only touched its done entry. Eleven two-clone regression tests.
