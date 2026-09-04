@@ -1,0 +1,8 @@
+# Agent Workflow Kit ledger merge
+.agent/board.json merge=agent-ledger
+.agent/TASKS.md merge=agent-ledger
+.agent/PROJECT_PLAN.md merge=agent-ledger
+.agent/agents.json merge=agent-ledger
+.agent/loops/state.json merge=agent-ledger
+.agent/archive/board.json merge=agent-ledger
+.agent/logs/progress.md merge=union

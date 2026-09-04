@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] T3BEB219C89F9854B-001 - review kit gitattributes TA08B0CC413F151F5-034 (owner: independent-reviewer-034)
+- [x] TA08B0CC413F151F5-034 - kit repository: adopt the ledger merge driver (.gitattributes) so its own worktree rebases stop conflicting on the board (owner: cursor)
 - [x] TB024B152CAB8BC86-001 - review loop report nonce TA08B0CC413F151F5-033 (owner: independent-reviewer-033)
 - [x] TA08B0CC413F151F5-033 - loop run reports: per-checkout nonce in the file name so two machines running a loop in the same second do not collide (owner: cursor)
 - [x] TE0090C6FA185D4E4-001 - review fixture fix TA08B0CC413F151F5-032 (owner: independent-reviewer-032)
