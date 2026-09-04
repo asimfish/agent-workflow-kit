@@ -136,6 +136,11 @@ flowchart LR
 - **显卡锁是机器级的。** 一张卡被某个项目占用后，同一台机器上的其它项目都拿
   不到，直到被释放。锁里记录了持有者是谁，所以任何项目都能分辨持有者是活着
   还是死了。
+- **多台机器通过 Git 共享计划。** 会话和锁留在各自的机器上，`.agent/` 下的账本
+  随 Git 流动。任务还在 `in_progress` 时就可以把认领推送出去（代码和任何会改变智能体
+  行为的文件不行）；账本
+  文件按任务合并而不是按行冲突；别的机器认领的任务只能用 `--takeover --reason`
+  接管。
 
 ## 日常命令
 
@@ -148,6 +153,7 @@ flowchart LR
 | `agentctl gate approve --task <id> --by <reviewer>` | 独立批准（或 `gate reject`） |
 | `agentctl board` | 谁在干什么 |
 | `agentctl doctor` | 哪里卡住了、怎么解 |
+| `agentctl sync` | 发布本检出的认领、拉回其他人的（只提交账本，拉取，推送） |
 
 完整参考在 `docs/workflow.md`。循环、supervisor 指导包、harness 评估、升级屏障
 都在 `docs/` 里，用到再看。
@@ -164,6 +170,8 @@ flowchart LR
 | 某个 run 显示 `exited_unknown` | 监管进程失去了对它的跟踪 | 检查输出，然后 `agentctl run finish <run-id> --status succeeded\|failed --reason "..."` |
 | `gate approve` 说任务不存在或没有运行时证据 | 任务在 worktree 里完成，主检出还不知道 | 在主检出执行 `agentctl reconcile merge-back --from-ref <branch>`，再重试 |
 | 评审任务裁决之后还挂着 | 没人关闭它 | `agentctl reconcile close-decided-reviews` |
+| `git pull` 在 `.agent/board.json` 或 `TASKS.md` 上冲突 | 这个克隆没有账本合并驱动（`doctor` 会指出） | `agentctl init .` 会注册驱动并写入 `.gitattributes`；提交 `.gitattributes`，手动解一次后 `git rebase --continue` |
+| `start --task` 说任务按任务板是别人的 `in_progress` | 另一台机器认领了它 | 先看它的笔记；确认已放弃后 `agentctl work --agent <name> --task <id> --takeover --reason "..."` |
 
 以上操作都不会删掉工作成果：释放会话会保留任务、笔记和文件；释放锁不会杀进程。
 
@@ -172,7 +180,7 @@ flowchart LR
 没有守护进程，没有 cron，不自动合并，不自动删分支或 worktree，也不是沙箱——
 hooks 负责协调智能体，不负责隔离不受信任的代码。绕过 `agentctl run` 启动的任务
 （裸 `ssh`、`systemd`）只会被报告，不会被接管。显卡协调只在单机范围内，套件不做
-跨机器调度。
+跨机器调度，也无法判断另一台机器上的会话是否还活着——只知道它的认领在任务板上。
 
 ## 现状
 

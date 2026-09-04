@@ -36,6 +36,13 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] TB024B152CAB8BC86-001 - review loop report nonce TA08B0CC413F151F5-033 (owner: independent-reviewer-033)
+- [x] TA08B0CC413F151F5-033 - loop run reports: per-checkout nonce in the file name so two machines running a loop in the same second do not collide (owner: cursor)
+- [x] TE0090C6FA185D4E4-001 - review fixture fix TA08B0CC413F151F5-032 (owner: independent-reviewer-032)
+- [x] TA08B0CC413F151F5-032 - two-clone test fixture: pin the bare origin HEAD to main so clones are not empty on CI (owner: cursor)
+- [x] T5E51EACF1CDE8F05-001 - re-review multi-checkout ledger sync TA08B0CC413F151F5-031 (owner: independent-reviewer-031b)
+- [x] T1801098AB51B5959-001 - review multi-checkout ledger sync TA08B0CC413F151F5-031 (owner: independent-reviewer-031)
+- [x] TA08B0CC413F151F5-031 - multi-checkout ledger sync: git merge driver for ledger files, pushable ledger-only claims, explicit takeover of foreign in_progress tasks, agentctl sync (owner: cursor)
 - [x] T6A41B848ACDD2E58-001 - review hooks hardening TA08B0CC413F151F5-030 (owner: independent-reviewer-030)
 - [x] TA08B0CC413F151F5-030 - post-review hardening: task-id references in commits, Windows CI test list, doctor report for lock records without a resource, docs count (owner: cursor)
 - [x] T81204D354F17E8B3-001 - re-review README rewrite TA08B0CC413F151F5-029 (owner: independent-reviewer-029b)

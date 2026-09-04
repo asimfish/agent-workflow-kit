@@ -765,7 +765,7 @@ raise SystemExit(module.main([
         started = time.monotonic()
         timed_out = self.agentctl("loop", "run", "regress-descendant", "--once", expect=1)
         self.assertIn("-> failed", timed_out.stdout + timed_out.stderr)
-        report = max((self.root / ".agent" / "loops" / "runs").glob("*-regress-descendant.md"))
+        report = max((self.root / ".agent" / "loops" / "runs").glob("*-regress-descendant-*.md"))
         self.assertIn("timeout after 1s", report.read_text(encoding="utf-8"))
         self.assertLess(time.monotonic() - started, 5)
         time.sleep(2.5)

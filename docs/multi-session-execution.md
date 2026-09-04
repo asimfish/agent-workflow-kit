@@ -273,6 +273,67 @@ along four lines, ordered from automatic to manual:
    any checkout lists machine-wide locks whose holder is not live, so the
    interlock is visible from the project that is actually blocked.
 
+## Several Machines, One Remote
+
+Sessions, locks, and run leases never leave the machine they were created
+on. Between machines the only channel is the Git ledger under `.agent/`, so
+the kit treats that ledger as something that must travel early and merge
+cleanly.
+
+**Claims travel before code does.** The pre-push hook refuses a commit that
+changes anything but ledger *data* while its task is still `in_progress`;
+unreviewed code never leaves the machine. Ledger data is what the controller
+records and nothing executes: `board.json`, `TASKS.md`, `PROJECT_PLAN.md`,
+`agents.json`, `tasks/`, `logs/`, `gates/`, `loops/state.json`,
+`loops/runs/`, `handoffs/`, `decisions/`, `bus/`, `archive/`. A commit that
+touches only those is pushable at any status, and pushing it is how another
+machine learns that a task has been claimed. Everything else under
+`.agent/` changes behavior -- loop contracts (their check lines run through
+a shell) and `loops/checkpoints.json` that binds them to `work-start`,
+rules, evals, the runtime policy, the workflow entry -- and travels only
+with reviewed work. `agentctl sync` does the round trip: it stages only
+ledger data, commits with a `Refs:` trailer for the active task, pulls with
+rebase, and pushes; a staged path that is not ledger data makes it refuse,
+and unstaged non-data changes under `.agent/` are named and left alone.
+
+**Ledger files merge per task, not per line.** `agentctl init` commits a
+`.gitattributes` that routes `board.json`, `TASKS.md`, `PROJECT_PLAN.md`,
+`agents.json`, and `loops/state.json` to the `agent-ledger` merge driver
+and `logs/progress.md` to Git's `union` merge, and registers the driver in
+the clone's config (per clone, like `core.hooksPath`; `doctor` reports a
+clone that lacks it). The driver merges entries keyed by task id: an entry
+changed on one side takes that side, an entry deleted on one side and
+advanced on the other keeps the advance (archiving must not lose progress),
+and a genuinely competing edit of one entry resolves to the status further
+along the lifecycle (`todo` < `in_progress` < `review` < `approved` <
+`done`), then to the newer `updated_at` -- so a concurrent step back
+(`in_progress` to `todo`) loses to a concurrent touch that stays
+`in_progress`; abandon a task after syncing, not during. A `done` task
+archived on one side stays archived when the other side merely touched
+its `done` entry. A side whose JSON does not parse is a conflict for a
+human, never read as "deleted everything". `TASKS.md` rows and the `## Task
+Board` checklist in `PROJECT_PLAN.md` follow the same rule; the plan's
+hand-written prose is merged as text and a real conflict there is left with
+markers for a human. `loops/state.json` keeps this checkout's version
+because loop runtime is checkout-local bookkeeping. After a pull, `sync`
+re-renders the views from the merged board if they drifted.
+
+**A claim made elsewhere is not yours to resume.** `start` and `work
+--task` refuse a task the board shows `in_progress` when no session in this
+checkout -- active, stale, or released -- has ever held it: that is a claim
+from another checkout or machine, and taking it silently would be the
+cross-machine version of stealing a task. `--takeover --reason <why>` claims
+it anyway and records `taken over from <owner> by <agent>: <reason>` in
+the task document, the progress log, and the board entry
+(`taken_over_from`, `takeover_reason`). Auto-selection never picks an
+`in_progress` task, so this only ever applies to an explicit `--task`.
+
+What still does not cross machines: session liveness (a machine cannot tell
+whether another machine's conversation is alive, only that its claim is on
+the board), resource locks (a GPU is claimed per host), and worktree
+leases. Treat a foreign claim as live until its owner's notes or commits
+say otherwise.
+
 ## Upgrade Barrier
 
 The install manifest records schema, kit version, source commit, and protocol

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-05 00:02:30",
+  "updated_at": "2026-09-05 04:58:32",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -234,6 +234,103 @@
       "deps": [],
       "created_at": "2026-09-04 23:45:02",
       "updated_at": "2026-09-05 00:02:30"
+    },
+    "TA08B0CC413F151F5-031": {
+      "title": "multi-checkout ledger sync: git merge driver for ledger files, pushable ledger-only claims, explicit takeover of foreign in_progress tasks, agentctl sync",
+      "type": "code",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/",
+        "templates/project/",
+        "tests/test_multi_checkout_sync.py",
+        "tests/test_multi_session_workflow.py",
+        "docs/multi-session-execution.md",
+        "docs/workflow.md",
+        "README.md",
+        "README_CN.md",
+        "CHANGELOG.md",
+        "install.sh"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 00:28:13",
+      "updated_at": "2026-09-05 03:22:40"
+    },
+    "T1801098AB51B5959-001": {
+      "title": "review multi-checkout ledger sync TA08B0CC413F151F5-031",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-031",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 01:41:48",
+      "updated_at": "2026-09-05 02:24:12"
+    },
+    "T5E51EACF1CDE8F05-001": {
+      "title": "re-review multi-checkout ledger sync TA08B0CC413F151F5-031",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-031b",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 02:58:32",
+      "updated_at": "2026-09-05 03:23:01"
+    },
+    "TA08B0CC413F151F5-032": {
+      "title": "two-clone test fixture: pin the bare origin HEAD to main so clones are not empty on CI",
+      "type": "generic",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tests/test_multi_checkout_sync.py"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 03:59:42",
+      "updated_at": "2026-09-05 04:08:13"
+    },
+    "TE0090C6FA185D4E4-001": {
+      "title": "review fixture fix TA08B0CC413F151F5-032",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-032",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 04:03:35",
+      "updated_at": "2026-09-05 04:08:35"
+    },
+    "TA08B0CC413F151F5-033": {
+      "title": "loop run reports: per-checkout nonce in the file name so two machines running a loop in the same second do not collide",
+      "type": "generic",
+      "status": "done",
+      "owner": "cursor",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/test_multi_checkout_sync.py",
+        "tests/test_loop_workflow.py",
+        "CHANGELOG.md",
+        "docs/loop-engineering.md"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 04:34:23",
+      "updated_at": "2026-09-05 04:58:11"
+    },
+    "TB024B152CAB8BC86-001": {
+      "title": "review loop report nonce TA08B0CC413F151F5-033",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-reviewer-033",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 04:48:06",
+      "updated_at": "2026-09-05 04:58:32"
     }
   },
   "updated": ""

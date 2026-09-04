@@ -127,3 +127,36 @@ Windows CI job also runs the zombie-supervisor and dash-token tests. `doctor`
 reports a machine-wide lock record that names no resource instead of
 skipping it, and the interlock section of the multi-session guide counts
 its own items correctly.
+
+Several machines, one remote. Sessions and locks never leave a machine, so
+between machines the ledger under `.agent/` is the only channel -- and a
+two-clone experiment showed it did not work as one: the pre-push hook
+refused to push a claim until the task reached review, so a second machine
+could not learn that a task was taken; that second machine could then
+`start` the same task and the owner flipped without a word; and two clones
+that each finished a task conflicted on `board.json`, `TASKS.md`, and
+`PROJECT_PLAN.md` with nothing to resolve them. Three changes close this.
+Commits that touch only ledger data under `.agent/` (board, index, plan,
+task documents, logs, gates, run reports, handoffs, decisions, bus,
+archive) are pushable at any task status; anything that changes behavior --
+loop contracts, checkpoint wiring, rules, evals, policy -- and any code
+still waits for review. `agentctl init` commits a
+`.gitattributes` and registers an `agent-ledger` merge driver per clone that
+merges the ledger per task id -- one side changed wins, a deletion racing an
+advance keeps the advance, a competing edit resolves to the later lifecycle
+status then the newer timestamp -- with `progress.md` as a union merge,
+`loops/state.json` kept local, and plan prose merged as text with real
+conflicts left for a human; `doctor` reports a clone without the driver.
+`start`/`work --task` refuse a task the board shows `in_progress` when no
+session in this checkout ever held it, unless `--takeover --reason` is
+given, which is recorded in the task document, the progress log, and the
+board entry. `agentctl sync` does the ledger-only commit, pull, re-render,
+push round trip, stages ledger data only, and refuses if anything else is
+staged. A side whose JSON does not parse is left as a conflict rather than
+read as a deletion, and a task archived on one side stays archived when the
+other side only touched its done entry. Eleven two-clone regression tests.
+CI then caught the one ledger file the driver could not help with: loop run
+reports were named by the second, so two clones running `work` in the same
+second wrote two different files with one name and the rebase stopped on
+an add/add conflict. Report names now carry a six-character nonce derived
+from the host and the checkout path.
