@@ -365,6 +365,21 @@ class TwoCheckoutLockTest(unittest.TestCase):
         self.assertFalse(owner_path.parent.exists())
         self.acquire(self.b, "conv-b")
 
+    def test_owner_record_without_a_resource_name_is_reported(self):
+        lock_dir = self.locks / "no-resource-name"
+        lock_dir.mkdir(parents=True)
+        (lock_dir / "owner.json").write_text(
+            json.dumps({"lease_id": "resource-0123456789abcdef", "task": "T-X"}),
+            encoding="utf-8",
+        )
+        report = json.loads(self.agentctl(self.b, "conv-b", "doctor", "--json").stdout)
+        hit = next(
+            (w for w in report["warnings"] if "owner record without a resource name" in w),
+            None,
+        )
+        self.assertIsNotNone(hit, report["warnings"])
+        self.assertIn("resource-0123456789abcdef", hit)
+
     def test_reclaim_only_removes_the_record_it_classified(self):
         lock_dir = self.locks / "unit-reclaim"
         lock_dir.mkdir(parents=True)

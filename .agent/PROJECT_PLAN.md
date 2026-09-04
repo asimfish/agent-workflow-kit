@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TA08B0CC413F151F5-030 - post-review hardening: task-id references in commits, Windows CI test list, doctor report for lock records without a resource, docs count (owner: cursor)
 - [x] T81204D354F17E8B3-001 - re-review README rewrite TA08B0CC413F151F5-029 (owner: independent-reviewer-029b)
 - [x] T148B9308C5D771A2-001 - review README rewrite TA08B0CC413F151F5-029 (owner: independent-reviewer-029)
 - [x] TA08B0CC413F151F5-029 - rewrite both READMEs for readability: mental model first, roles in the walkthrough, stuck-state quick reference, status section without the fix log (owner: cursor)

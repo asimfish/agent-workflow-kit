@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-04 22:34:49",
+  "updated_at": "2026-09-04 23:42:37",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -205,6 +205,23 @@
       "deps": [],
       "created_at": "2026-09-04 22:26:30",
       "updated_at": "2026-09-04 22:34:49"
+    },
+    "TA08B0CC413F151F5-030": {
+      "title": "post-review hardening: task-id references in commits, Windows CI test list, doctor report for lock records without a resource, docs count",
+      "type": "code",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/test_pre_push_hook.py",
+        "tests/test_resource_lock_recovery.py",
+        "docs/multi-session-execution.md",
+        "CHANGELOG.md",
+        ".github/workflows/agent-workflow-check.yml"
+      ],
+      "deps": [],
+      "created_at": "2026-09-04 22:47:49",
+      "updated_at": "2026-09-04 23:42:37"
     }
   },
   "updated": ""

@@ -228,7 +228,12 @@ PUSHABLE_STATUSES = {"review", "approved", "done"}
 COMMIT_TYPES = ("feat", "fix", "docs", "refactor", "test", "chore", "perf", "ci", "build")
 
 CONVENTIONAL_RE = re.compile(r"^(?:" + "|".join(COMMIT_TYPES) + r")(?:\([^)]+\))?!?: .+")
-TASK_ID_RE = re.compile(r"\b[A-Z][A-Z0-9]*-\d+\b")
+# A task id is not preceded by a letter, digit, or hyphen ("non-UTF-8" and
+# "x-T-1" are prose; "T-1" and "(T-1)" are references) and may carry
+# middle segments ("TR024-REVIEW-001"), which the old `\b` boundary split
+# into a bogus "REVIEW-001".
+TASK_ID_RE = re.compile(r"(?<![A-Za-z0-9-])[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)*-\d+\b")
+REFS_LINE_RE = re.compile(r"^\s*refs?\s*:\s*(.+)$", re.IGNORECASE)
 TASK_RECORD_ID_RE = re.compile(r"[A-Z][A-Z0-9]*-[A-Z0-9][A-Z0-9._-]*")
 SECRET_RES = [
     re.compile(r"-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----"),
@@ -12010,6 +12015,19 @@ def _check_commit_msg(root: Path, msg_file: str | None) -> list:
     return p
 
 
+def _refs_trailer_task_ids(body: str) -> list[str]:
+    """Task ids named on `Refs:` lines of a commit body, in order, deduplicated."""
+    ids: list[str] = []
+    for line in body.splitlines():
+        match = REFS_LINE_RE.match(line)
+        if not match:
+            continue
+        for tid in TASK_ID_RE.findall(match.group(1)):
+            if tid not in ids:
+                ids.append(tid)
+    return ids
+
+
 def _check_prepush(
     root: Path,
     commit_range: str | None,
@@ -12042,7 +12060,11 @@ def _check_prepush(
         ids = TASK_ID_RE.findall(subject + " " + body)
         if not ids:
             p.append(f"commit missing task ID: '{subject.strip()}'")
-        seen.update(ids)
+        # With an explicit Refs: trailer only those ids are resolved against
+        # the board, so prose such as "SHA-256" in the body is not mistaken
+        # for a task reference. Without a trailer every id-shaped token
+        # must resolve, as before.
+        seen.update(_refs_trailer_task_ids(body) or ids)
     archived_tasks: dict | None = None
     for tid in sorted(seen):
         t = tasks.get(tid)
@@ -12537,7 +12559,14 @@ def _machine_wide_lock_findings(root: Path, local_leases: list[dict]) -> list[st
             )
             continue
         resource = str(owner.get("resource") or "")
-        if not resource or resource in local_resources:
+        if not resource:
+            findings.append(
+                f"machine-wide lock directory {lock_dir} has an owner record without a "
+                f"resource name (lease {owner.get('lease_id') or 'unknown'}); remove it by "
+                f"hand once nothing on this host uses it"
+            )
+            continue
+        if resource in local_resources:
             continue
         state, detail = _foreign_lock_liveness(owner)
         if state in {"live", "registering", "remote"}:
