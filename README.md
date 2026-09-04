@@ -92,7 +92,9 @@ can declare an exemption.
 agentctl finish --summary "..." --tests "pytest -x: 42 passed"
 ```
 
-The task is now `review`, and the Git hooks block pushing it further.
+The task is now `review`. Until this point the Git hooks refused to push
+its commits; now the branch can be pushed and a pull request opened, but
+by the kit's rules it merges only after someone else approves.
 
 **Reviewer: a different conversation approves.** The reviewer registers
 once per project, opens a review task, and decides:
@@ -194,8 +196,9 @@ the kit does not schedule across machines.
 
 ## Status
 
-236 regression tests run on Linux and Windows in CI. The coordination
-guarantees were also exercised end to end on a fresh install: concurrent
+236 regression tests run on Linux in CI; a Windows job runs the subset that
+exercises Windows-specific process handling. The coordination guarantees
+were also exercised end to end on a fresh install: concurrent
 conversations, a conversation that died holding a GPU, a project deleted
 while it held a lock, an independent reviewer, and adversarial state
 surgery against the lease and review checks. GPU supervision was validated
