@@ -1,5 +1,6 @@
 """Unified conversation, run, and resource lease regressions."""
 
+import hashlib
 import json
 import os
 import re
@@ -672,6 +673,70 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
         except subprocess.TimeoutExpired:
             self.fail("payload was not terminated after registration")
         supervisor.kill()
+
+    def test_stop_before_the_supervisor_claim_still_lets_the_claim_land(self):
+        # `run start` can return while the supervisor is alive but has not
+        # claimed yet. A stop in that state marks the lease stopping; the
+        # claim must still succeed so the supervisor can finalize the
+        # cancellation instead of exiting and stranding the lease.
+        from tools import agentctl as workflow
+
+        self.start("one", "T-346", "outputs/T-346/")
+        session_key = json.loads(self.agentctl("sessions", "list", "--json").stdout)["current"]
+        supervisor = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(supervisor.kill)
+        token = "a" * 64
+        run_id = "run-preclaimstop001"
+        workflow._update_runtime_leases(self.root, lambda data: data.setdefault("leases", []).append({
+            "id": run_id, "kind": "run", "mode": "supervised", "status": "starting",
+            "task": "T-346", "holder": {"type": "conversation", "id": session_key},
+            "checkout": str(self.root), "scope": ["outputs/T-346/"], "outputs": [], "resources": [],
+            "processes": [],
+            "supervisor_token_sha256": hashlib.sha256(token.encode("utf-8")).hexdigest(),
+            "supervisor_process": {
+                "role": "supervisor", "pid": supervisor.pid,
+                "birth_marker": workflow._process_birth_marker(supervisor.pid),
+            },
+            "created_at": workflow._now(), "heartbeat_at": workflow._now(),
+        }))
+        stopped = self.agentctl("run", "stop", run_id, "--reason", "changed my mind", "--wait-seconds", "1")
+        self.assertIn("stop recorded", stopped.stdout)
+        self.assertEqual((workflow._runtime_lease(self.root, run_id) or {}).get("status"), "stopping")
+
+        claimed, error = workflow._run_supervisor_claim(self.root, run_id, token)
+        self.assertIsNone(error, error)
+        self.assertTrue(claimed)
+        self.assertTrue(workflow._run_stop_requested_before_launch(self.root, run_id))
+        # And a second claim is still refused: the token is single-use.
+        again, error_again = workflow._run_supervisor_claim(self.root, run_id, token)
+        self.assertIsNone(again)
+        self.assertIn("already claimed", error_again)
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM handling is POSIX-specific")
+    def test_stop_sends_sigterm_exactly_once(self):
+        # `run stop` signals directly and the supervisor also honors the stop;
+        # the payload must see one SIGTERM, then the kill after --kill-seconds.
+        self.start("one", "T-347", "outputs/T-347/")
+        marker = self.root / "outputs" / "T-347" / "terms.txt"
+        command = (
+            "import signal, time, pathlib; "
+            f"p=pathlib.Path({str(marker)!r}); p.parent.mkdir(parents=True, exist_ok=True); "
+            "signal.signal(signal.SIGTERM, lambda *_: p.open('a').write('TERM\\n')); "
+            "p.write_text(''); time.sleep(120)"
+        )
+        started = self.agentctl(
+            "run", "start", "--output", "outputs/T-347/terms.txt", "--",
+            sys.executable, "-c", command,
+        )
+        run_id = self.lease_id(started.stdout, "run")
+        deadline = time.monotonic() + 30
+        while not marker.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(marker.exists())
+        self.agentctl("run", "stop", run_id, "--reason", "once", "--kill-seconds", "3")
+        waited = self.agentctl("run", "wait", run_id, "--timeout", "30", expect=1)
+        self.assertIn("cancelled", waited.stdout)
+        self.assertEqual(marker.read_text(encoding="utf-8").count("TERM"), 1)
 
     @unittest.skipIf(os.name == "nt", "SIGTERM handling is POSIX-specific")
     def test_stop_escalates_to_kill_for_a_payload_that_ignores_sigterm(self):

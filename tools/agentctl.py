@@ -762,6 +762,17 @@ def cmd_sync(args: argparse.Namespace) -> int:
             print("  " + (pull.stderr.strip() or pull.stdout.strip()), file=sys.stderr)
         return 1
     print(f"agentctl: sync pulled {args.remote}/{branch}")
+    # git exits 0 when the autostash could not be re-applied cleanly and only
+    # warns; the edits then sit in the stash list. Say so instead of hiding it.
+    pull_output = (pull.stdout or "") + (pull.stderr or "")
+    leftover_stash = any("autostash" in line for line in _git(root, "stash", "list").splitlines())
+    if leftover_stash or "autostash resulted in conflicts" in pull_output:
+        print(
+            "agentctl: WARNING your unrelated local edits could not be re-applied after the "
+            "pull and were kept in the stash; run 'git stash list' and 'git stash pop' to "
+            "resolve them by hand",
+            file=sys.stderr,
+        )
 
     # A merge that combined two boards can leave the rendered views a step
     # behind (ordering, a title edited on one side); the board is canonical.
@@ -8224,7 +8235,11 @@ def _run_supervisor_claim(root: Path, lease_id: str, token: str) -> tuple[dict |
             expected_hash = str(lease.get("supervisor_token_sha256") or "")
             if lease.get("kind") != "run" or lease.get("mode") != "supervised":
                 found["error"] = "lease is not a supervised run"
-            elif lease.get("status") != "starting" or lease.get("supervisor_claimed_at"):
+            elif lease.get("supervisor_claimed_at") or lease.get("status") not in {"starting", "stopping"}:
+                # A `run stop` that lands before this claim leaves the lease
+                # `stopping`; the claim must still succeed so the supervisor
+                # can finalize the cancellation instead of exiting and
+                # stranding the lease as exited_unknown.
                 found["error"] = "supervisor was already claimed"
             elif not expected_hash or not hmac.compare_digest(expected_hash, supplied_hash):
                 found["error"] = "supervisor token does not match"
@@ -8360,13 +8375,16 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
 
             while child.poll() is None:
                 current = _runtime_lease(root, lease_id) or {}
-                if str(current.get("status") or "") == "stopping":
+                if str(current.get("status") or "") == "stopping" and not (
+                    current.get("watchdog") or {}
+                ).get("auto_termination_at_ns"):
                     # The supervisor is the one process guaranteed to see a
                     # stop request and to be able to signal the payload: it
                     # terminates once (unless `run stop` already did) and
                     # escalates to a kill when the deadline passes -- also
                     # for runs without a watchdog, which previously had no
-                    # escalation at all.
+                    # escalation at all. A stop the watchdog itself issued is
+                    # left to the watchdog's own kill deadline.
                     now_ns = time.time_ns()
                     deadline_ns = int(current.get("termination_deadline_ns") or 0)
                     if not supervisor_stop_sent_ns:
@@ -9047,6 +9065,16 @@ def _run_stop_before_payload(root: Path, args: argparse.Namespace, kill_seconds:
         child = processes[-1] if processes else None
         if child is not None:
             if _runtime_process_alive(child):
+                # Record before signalling so the supervisor, which may
+                # observe the registered payload at the same moment, does
+                # not send a second SIGTERM; if the signal fails it still
+                # escalates to a kill after the deadline.
+                try:
+                    _run_update(root, args.lease, lambda item: item.update({
+                        "stop_signal_sent_at_ns": time.time_ns(),
+                    }))
+                except TimeoutError:
+                    pass
                 try:
                     _signal_run_process(child, signal.SIGTERM)
                 except OSError as exc:
@@ -9106,6 +9134,9 @@ def _run_stop(root: Path, args: argparse.Namespace) -> int:
         "status": "stopping",
         "stop_reason": args.reason,
         "termination_deadline_ns": time.time_ns() + int(kill_seconds * 1_000_000_000),
+        # Recorded before the signal: the supervisor sends its own SIGTERM
+        # only when nobody else did, and escalates to a kill regardless.
+        "stop_signal_sent_at_ns": time.time_ns(),
         "heartbeat_at": _now(),
     }))
     try:
@@ -9116,17 +9147,12 @@ def _run_stop(root: Path, args: argparse.Namespace) -> int:
                 item["status"] = "running"
                 item.pop("stop_reason", None)
                 item.pop("termination_deadline_ns", None)
+                item.pop("stop_signal_sent_at_ns", None)
                 item["heartbeat_at"] = _now()
 
         _run_update(root, args.lease, rollback)
         print(f"agentctl: unable to stop run process: {exc}", file=sys.stderr)
         return 1
-    try:
-        _run_update(root, args.lease, lambda item: item.update({
-            "stop_signal_sent_at_ns": time.time_ns(),
-        }))
-    except TimeoutError:
-        pass
     print(f"agentctl: stop requested for run {args.lease}")
     return 0
 

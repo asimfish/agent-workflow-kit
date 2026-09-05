@@ -176,4 +176,9 @@ recorded and the supervisor cancels the launch or the stop signals the
 payload as it appears, instead of the old "run process is not alive"
 refusal; the supervisor also escalates a requested stop to a kill after
 `--kill-seconds`, so a payload that ignores SIGTERM can be stopped without
-a watchdog -- a gap Windows CI had already brushed against.
+a watchdog -- a gap Windows CI had already brushed against. Review of this change found and fixed two more: a stop that
+landed before the supervisor's claim used to make the claim fail and strand
+the lease, and the payload could receive a second SIGTERM from the
+supervisor; the claim now accepts a lease that is already stopping and every
+stop path records that it signalled before it signals. `sync` warns when
+git kept an autostash it could not re-apply.
