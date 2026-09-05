@@ -288,6 +288,24 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-reviewer-036": {
+      "role": "review",
+      "backend": "any",
+      "write_scope": [],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
+    },
+    "independent-reviewer-036c": {
+      "role": "review",
+      "backend": "any",
+      "write_scope": [],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }
