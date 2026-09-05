@@ -29,6 +29,46 @@ cd agent-workflow-kit
 python3 tools/agentctl.py init /path/to/your/project
 ```
 
+### Commit the installation
+
+The installer ends by printing the two commands that commit what it wrote:
+
+```bash
+git add .agent .githooks tools/agentctl.py tools/agent_workflow_hook.py ...
+git commit -m "chore(agent): adopt agent-workflow-kit"
+```
+
+This is the one commit the hooks accept without a task. The commit that
+first adds `.agent/install-manifest.json` is the adoption commit, the last
+step of the adoption baseline recorded in `.agent/adoption.json`; the
+pre-commit, commit-msg, and pre-push checks recognize it and require neither
+an active task nor a task id. The exemption holds only for a clean
+installation: every changed path must be one the installer writes or merges,
+and each managed file must match the hash the manifest records for it. A
+project file bundled into the commit, or an edited `tools/agentctl.py`, is
+refused with the offending path, and pre-push judges the commit from its
+content, so skipping the local hooks does not widen the exemption. The
+subject line is still held to Conventional Commits. From the next commit on
+the normal rules apply: an active task, a task id in the message, and review
+before code is pushed. The kit's own source checkout is never an installed
+target and has no adoption commit; a manifest staged there is ordinary work.
+
+### New clones of an adopted project
+
+`core.hooksPath` and the `agent-ledger` merge driver are Git config, which
+`git clone` does not copy: another machine or a teammate checks out
+`.githooks/` and `.gitattributes` and, without a further step, would work
+with no enforcement. Either run `agentctl init .` in the clone (idempotent
+on the committed files) or simply start work: the first `agentctl work`
+or `agentctl start` in a clone that has the kit's hooks in its tree and no
+`core.hooksPath` sets it to `.githooks` and registers the merge driver,
+saying so on stdout, before any task state is written. A `core.hooksPath`
+that already points elsewhere (husky, a global hooks directory) is a
+conflict the controller will not resolve on its own: the session is
+refused with the setting named, and `agentctl init .` after chaining the
+existing hooks from `.githooks/*` is the fix. `doctor` reports an unwired
+clone either way.
+
 ### Install semantics
 
 Normal installation is preflighted before any file is written. Existing

@@ -34,6 +34,10 @@ Cursor 的 hook 配置。**不会往 `PATH` 里加任何东西**：本文里的 
 都指在项目根目录执行 `python3 tools/agentctl.py`。智能体用的本来就是完整写法，
 因为 `.agent/WORKFLOW_ENTRY.md` 里就是这么写的。
 
+然后按安装器最后打印的 `git add` 和 `git commit` 两行，把安装本身单独提交一次。
+这一次提交不需要任务：hooks 能识别出“把套件加进仓库”的那个提交，只要里面
+全是安装器写入的文件就放行。规则从下一个提交开始生效。
+
 装好之后，你对智能体只需要说：
 
 > 按 .agent 规范开始工作。
@@ -50,13 +54,14 @@ Cursor 的 hook 配置。**不会往 `PATH` 里加任何东西**：本文里的 
 
 ```bash
 agentctl work --agent codex                        # 领取已有任务
-agentctl work --agent codex --auto-create \
+agentctl work --agent codex --auto-create --type code \
     --title "fix the data loader" --scope "src/data/"   # 或者新开一个
 ```
 
 第二个会话如果想领同一个任务，或者申请 `src/data/` 之内的路径，会被拒绝。
-代码类和实验类任务会自动分到独立的 Git worktree，两个智能体永远不会在同一个
-检出里改文件。
+`code` 和 `experiment` 类型的任务会自动分到独立的 Git worktree（命令会打印
+接着去哪里干活），两个智能体永远不会在同一个检出里改文件；`docs`、`review`、
+`generic` 类型共用当前检出。
 
 **智能体：干活，并留下痕迹。**
 
@@ -94,9 +99,11 @@ agentctl agents add --id reviewer --role review
 agentctl work --agent reviewer --auto-create --type review \
     --title "review T-001" --scope ".agent/"
 agentctl gate approve --task T-001 --by reviewer --note "..."
+agentctl finish --summary "approved T-001" --tests "..."   # 关闭评审任务
 ```
 
-控制器比对的是运行时指纹，所以一个会话没法批准自己的工作。在 worktree 里
+控制器比对的是运行时指纹，所以一个会话没法批准自己的工作。评审者自己的
+`finish` 会按已记录的裁决直接关闭评审任务，不会再要求“评审的评审”。在 worktree 里
 完成的任务，开 PR 之前先用 `agentctl reconcile merge-back --from-ref <branch>`
 把它的记录搬回主检出（见 `docs/worktree-merge-back.md`）。
 
@@ -140,7 +147,9 @@ flowchart LR
   随 Git 流动。任务还在 `in_progress` 时就可以把认领推送出去（代码和任何会改变智能体
   行为的文件不行）；账本
   文件按任务合并而不是按行冲突；别的机器认领的任务只能用 `--takeover --reason`
-  接管。
+  接管。新克隆的仓库里 hooks 只在文件树里、不在 Git 配置里：在那里执行的第一次
+  `agentctl work` 会先把 hooks 和合并驱动接上，再写任何任务状态；如果
+  `core.hooksPath` 已经指向别处，则拒绝开始。
 
 ## 日常命令
 
@@ -149,7 +158,7 @@ flowchart LR
 | `agentctl work --agent <name>` | 认领或恢复任务（`--auto-create` 新开一个） |
 | `agentctl note "..."` | 给当前任务记一笔进度 |
 | `agentctl finish --summary ... --tests ...` | 把任务交给评审 |
-| `agentctl run start -- <command>` | 受监管的后台任务；另有 `run list`、`run stop` |
+| `agentctl run start -- <command>` | 受监管的后台任务；另有 `run list`、`run stop <run-id> --reason "..."` |
 | `agentctl gate approve --task <id> --by <reviewer>` | 独立批准（或 `gate reject`） |
 | `agentctl board` | 谁在干什么 |
 | `agentctl doctor` | 哪里卡住了、怎么解 |
@@ -184,7 +193,7 @@ hooks 负责协调智能体，不负责隔离不受信任的代码。绕过 `age
 
 ## 现状
 
-236 个回归测试在 Linux 的 CI 上运行，另有一个 Windows job 跑其中涉及 Windows
+272 个回归测试在 Linux 的 CI 上运行，另有一个 Windows job 跑其中涉及 Windows
 进程处理的子集。协调保证也在全新安装上完整
 演练过：并发会话、带着显卡死掉的会话、持有锁时被删除的项目、独立评审者，以及
 针对租约与评审检查的对抗式状态篡改。GPU 监管在共享的 RTX 5090 上实测过。

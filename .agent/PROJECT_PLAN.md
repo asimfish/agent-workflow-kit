@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TA08B0CC413F151F5-036 - adoption commit: the commit that installs the kit passes the kit's own hooks (owner: cursor)
 - [x] T4C1BFE6624636614-001 - re-review run stop fixes TA08B0CC413F151F5-035 (owner: independent-reviewer-035b)
 - [x] T3C559BCE606C5AE3-001 - review run stop and agent-loop sync TA08B0CC413F151F5-035 (owner: independent-reviewer-035)
 - [x] TA08B0CC413F151F5-035 - multi-machine day to day: sync in the agent loop with hints, run stop during the launch window and supervisor-side stop escalation, sync autostash, foreign-claim age on board and doctor (owner: cursor)
