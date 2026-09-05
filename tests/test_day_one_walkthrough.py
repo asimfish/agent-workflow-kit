@@ -216,7 +216,7 @@ class ReviewerRegistrationHintTest(_KitRepoTestCase):
         board = json.loads((self.root / ".agent" / "board.json").read_text(encoding="utf-8"))
         task = next(t for t, e in board["tasks"].items() if e.get("title") == "fix the data loader")
         finished = self.agentctl(
-            "finish", "--summary", "done", "--tests", "pytest: 1 passed", session="worker",
+            "finish", "--done", "fixture contract", "--summary", "done", "--tests", "pytest: 1 passed", session="worker",
         )
         self.assertIn("agentctl agents add --id <reviewer> --role review", finished.stdout)
         self.assertIn(f"gate approve --task {task} --by <reviewer>", finished.stdout)

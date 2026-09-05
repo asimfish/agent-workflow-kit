@@ -160,7 +160,7 @@ class DocumentOwnershipRegressionTest(unittest.TestCase):
         self.agentctl("refresh", session="two")
         self.agentctl("note", "sibling progress before completion", session="two")
         self.agentctl(
-            "complete", "--summary", "sibling task done",
+            "complete", "--done", "fixture contract", "--summary", "sibling task done",
             "--tests", "not applicable (docs-only fixture)", session="two",
         )
         # T-222's create + complete changed TASKS.md rows, the plan Task Board

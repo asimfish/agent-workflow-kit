@@ -2237,6 +2237,156 @@ def _extract_section(text: str, header: str) -> str:
     return "\n".join(out).strip()
 
 
+# The task contract is the part of a task document a reviewer judges the
+# deliverable against, the way a proof is judged against its statement: the
+# Definition of Done says what "done" means in words, and the tests command
+# is the one check that must pass for the claim to hold. `finish` refuses
+# without the former and executes the latter; `gate approve --rerun-tests`
+# executes it again on the reviewer's side.
+CONTRACT_SECTION = "## Task Contract"
+CONTRACT_GOAL = "Goal"
+CONTRACT_DONE = "Definition of Done"
+VERIFICATION_SECTION = "## Verification"
+VERIFICATION_TESTS_CMD = "Tests command"
+TESTS_TIMEOUT_ENV = "AGENT_WORKFLOW_TESTS_TIMEOUT"
+TESTS_TIMEOUT_DEFAULT = 1800.0
+TESTS_OUTPUT_TAIL_LINES = 30
+
+
+def _task_doc_field(body: str, header: str, label: str) -> str:
+    """Value of a `- <label>: <value>` bullet inside one `## ` section ("" when absent or empty)."""
+    section = _extract_section(body, header)
+    match = re.search(
+        rf"^-\s*{re.escape(label)}:[ \t]*(.*)$", section, flags=re.M | re.I,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _set_task_doc_field(body: str, header: str, label: str, value: str) -> str:
+    """Set the `- <label>:` bullet in a section, adding the bullet or the section when missing."""
+    # One Markdown line; internal spacing is kept because a shell command may depend on it.
+    value = re.sub(r"[ \t]*[\r\n]+[ \t]*", " ", str(value)).strip()
+    lines = body.splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if ln.strip().lower() == header.lower()), None,
+    )
+    if start is None:
+        tail = [header, "", f"- {label}: {value}"]
+        return "\n".join([*[ln for ln in lines], "", *tail]).lstrip("\n") + "\n"
+    end = next(
+        (i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("## ")),
+        len(lines),
+    )
+    pattern = re.compile(rf"^(\s*-\s*){re.escape(label)}:", flags=re.I)
+    for i in range(start + 1, end):
+        if pattern.match(lines[i]):
+            lines[i] = f"{pattern.match(lines[i]).group(1)}{label}: {value}"
+            return "\n".join(lines) + "\n"
+    insert_at = end
+    while insert_at > start + 1 and not lines[insert_at - 1].strip():
+        insert_at -= 1
+    lines.insert(insert_at, f"- {label}: {value}")
+    return "\n".join(lines) + "\n"
+
+
+def _task_contract(root: Path, task: str) -> dict:
+    body = _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md")
+    tests_cmd = _task_doc_field(body, VERIFICATION_SECTION, VERIFICATION_TESTS_CMD)
+    if tests_cmd.startswith("`") and tests_cmd.endswith("`") and len(tests_cmd) >= 2:
+        tests_cmd = tests_cmd[1:-1]
+    return {
+        "goal": _task_doc_field(body, CONTRACT_SECTION, CONTRACT_GOAL),
+        "done": _task_doc_field(body, CONTRACT_SECTION, CONTRACT_DONE),
+        "tests_cmd": tests_cmd.strip(),
+    }
+
+
+def _write_task_contract(
+    root: Path, task: str, *, goal: str | None = None, done: str | None = None,
+    tests_cmd: str | None = None,
+) -> bool:
+    """Write the given contract fields into the task document; True when anything changed."""
+    path = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    body = _read(path)
+    if not body:
+        return False
+    new = body
+    if goal is not None and goal.strip():
+        new = _set_task_doc_field(new, CONTRACT_SECTION, CONTRACT_GOAL, goal)
+    if done is not None and done.strip():
+        new = _set_task_doc_field(new, CONTRACT_SECTION, CONTRACT_DONE, done)
+    if tests_cmd is not None and tests_cmd.strip():
+        new = _set_task_doc_field(
+            new, VERIFICATION_SECTION, VERIFICATION_TESTS_CMD,
+            "`" + tests_cmd.strip().replace("`", "'") + "`",
+        )
+    if new != body:
+        _write(path, new)
+        return True
+    return False
+
+
+def _tests_timeout_seconds() -> float:
+    raw = os.environ.get(TESTS_TIMEOUT_ENV, "").strip()
+    try:
+        value = float(raw) if raw else TESTS_TIMEOUT_DEFAULT
+    except ValueError:
+        value = TESTS_TIMEOUT_DEFAULT
+    return value if value > 0 else TESTS_TIMEOUT_DEFAULT
+
+
+def _run_tests_command(root: Path, command: str) -> dict:
+    """Run the task's tests command in the checkout and return exit, duration, output tail.
+
+    The command is a shell line the worker (or the contract's author) wrote;
+    it is executed the way the worker would run it, from the checkout root.
+    """
+    started = time.monotonic()
+    timeout = _tests_timeout_seconds()
+    try:
+        proc = subprocess.run(
+            command, shell=True, cwd=str(root), text=True, encoding="utf-8",
+            errors="replace", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            timeout=timeout,
+        )
+        output = proc.stdout or ""
+        exit_code: int | None = proc.returncode
+        timed_out = False
+    except subprocess.TimeoutExpired as exc:
+        raw = exc.stdout
+        output = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else (raw or "")
+        exit_code = None
+        timed_out = True
+    duration = time.monotonic() - started
+    lines = [ln for ln in output.splitlines() if ln.strip()]
+    return {
+        "command": command,
+        "exit": exit_code,
+        "timed_out": timed_out,
+        "timeout": timeout,
+        "duration": duration,
+        "tail": lines[-TESTS_OUTPUT_TAIL_LINES:],
+        "last_line": lines[-1].strip() if lines else "",
+    }
+
+
+def _print_tests_result(result: dict, *, stream) -> None:
+    for line in result["tail"]:
+        print(f"    {line}", file=stream)
+    if result["timed_out"]:
+        print(
+            f"agentctl: tests command timed out after {result['timeout']:.0f}s "
+            f"(set {TESTS_TIMEOUT_ENV} to raise): {result['command']}",
+            file=stream,
+        )
+    else:
+        print(
+            f"agentctl: tests command exited {result['exit']} in "
+            f"{result['duration']:.1f}s: {result['command']}",
+            file=stream,
+        )
+
+
 def _task_word_re(task: str) -> str:
     # \b alone is not enough: 'T-005' is a literal suffix of 'AGENT-005'.
     return rf"(?<![\w-]){re.escape(task)}\b"
@@ -3145,6 +3295,9 @@ def cmd_work(args: argparse.Namespace) -> int:
                 deps=args.deps or "",
                 task_type=args.task_type or "generic",
                 force=args.force,
+                goal=getattr(args, "goal", None),
+                done=getattr(args, "done", None),
+                tests_cmd=getattr(args, "tests_cmd", None),
             )
             isolation = _task_isolation(
                 root, {"type": create_args.task_type}, args.isolation,
@@ -3745,6 +3898,61 @@ def _decided_review_closure(root: Path, task: str, entry: dict, *,
     return _decided_review_evidence(root, task)
 
 
+def _finish_contract_problem(
+    root: Path, task: str, entry: dict, args: argparse.Namespace,
+) -> str:
+    """Why this task may not be handed to review yet, or "" when the contract is complete.
+
+    `--done` / `--tests-cmd` given to finish are written into the task
+    document first (and the session's read receipt is refreshed, since the
+    tool wrote them on the agent's behalf). A review task's deliverable is
+    its recorded gate decision, which stands in for a Definition of Done.
+    """
+    done = _completion_record_value(getattr(args, "done", None))
+    tests_cmd = str(getattr(args, "tests_cmd", None) or "").strip()
+    if done or tests_cmd:
+        if _write_task_contract(root, task, done=done or None, tests_cmd=tests_cmd or None):
+            st = _load_session(root)
+            if st.get("task") == task:
+                st["doc_hashes"] = _hash_docs(root, task)
+                _save_session(root, st)
+    if _task_contract(root, task)["done"]:
+        return ""
+    if str(entry.get("type") or "") == "review" and _decided_review_closure(
+        root, task, entry, require_review_type=True,
+    ):
+        return ""
+    return (
+        f"{task} has no Definition of Done; a reviewer needs it to judge the work. "
+        "Set it with 'agentctl contract --done \"<what a reviewer can check>\"' "
+        "(or pass --done to finish), then finish again."
+    )
+
+
+def cmd_contract(args: argparse.Namespace) -> int:
+    root = _repo_root()
+    st = _require_session(root)
+    task = st["task"]
+    goal = _completion_record_value(args.goal)
+    done = _completion_record_value(args.done)
+    tests_cmd = str(args.tests_cmd or "").strip()
+    if goal or done or tests_cmd:
+        if _write_task_contract(root, task, goal=goal or None, done=done or None,
+                                tests_cmd=tests_cmd or None):
+            st["doc_hashes"] = _hash_docs(root, task)
+            _save_session(root, st)
+            print(f"agentctl: contract updated for {task}")
+    contract = _task_contract(root, task)
+    if args.json:
+        print(json.dumps({"task": task, **contract}, indent=2, ensure_ascii=False))
+        return 0
+    print(f"{task}")
+    print(f"  Goal: {contract['goal'] or '(empty)'}")
+    print(f"  Definition of Done: {contract['done'] or '(empty; finish will refuse)'}")
+    print(f"  Tests command: {contract['tests_cmd'] or '(none; finish records only your word)'}")
+    return 0
+
+
 def cmd_complete(args: argparse.Namespace) -> int:
     root = _repo_root()
     st = _require_session(root)
@@ -3788,6 +3996,28 @@ def cmd_complete(args: argparse.Namespace) -> int:
         print("agentctl: finish blocked; incorporate the supervisor guidance and acknowledge it before finishing.", file=sys.stderr)
         return 1
     tests = _completion_record_value(args.tests)
+    board_entry = (_load_board(root).get("tasks") or {}).get(task) or {}
+    contract_problem = _finish_contract_problem(root, task, board_entry, args)
+    if contract_problem:
+        print(f"agentctl: {contract_problem}", file=sys.stderr)
+        return 1
+    tests_result = None
+    tests_cmd = str(getattr(args, "tests_cmd", None) or "").strip() or _task_contract(root, task)["tests_cmd"]
+    if tests_cmd:
+        print(f"agentctl: running tests command: {tests_cmd}")
+        tests_result = _run_tests_command(root, tests_cmd)
+        if tests_result["timed_out"] or tests_result["exit"] != 0:
+            _print_tests_result(tests_result, stream=sys.stderr)
+            print(
+                "agentctl: finish refused; the tests command must exit 0. Fix the "
+                "work, or change the command with 'agentctl contract --tests-cmd \"...\"' "
+                "if it no longer describes done.",
+                file=sys.stderr,
+            )
+            return 1
+        _print_tests_result(tests_result, stream=sys.stdout)
+        if not tests:
+            tests = tests_result["last_line"] or f"{tests_cmd} exited 0"
     ack = bool(getattr(args, "ack_escalations", False))
     escalated = _escalated_follow_ups(root, task)
     if escalated and not ack:
@@ -3845,6 +4075,10 @@ def cmd_complete(args: argparse.Namespace) -> int:
             record = f"- Summary: {summary}\n"
             if tests:
                 record += f"- Tests: {tests}\n"
+            if tests_result is not None:
+                record += f"- Tests-command: {tests_result['command']}\n"
+                record += f"- Tests-exit: {tests_result['exit']}\n"
+                record += f"- Tests-duration: {tests_result['duration']:.1f}s\n"
             worker_runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item)]
             if worker_runtimes:
                 record += f"- Worker-runtimes: {', '.join(worker_runtimes)}\n"
@@ -3882,12 +4116,19 @@ def cmd_complete(args: argparse.Namespace) -> int:
             f"gate decisions: {', '.join(decisions)}"
         )
     else:
+        rerun = " --rerun-tests" if tests_result is not None else ""
         print(
             f"agentctl: {task} -> review. independent reviewer gate: from a different "
             f"conversation, register the reviewer once ('agentctl agents add --id <reviewer> "
-            f"--role review'), start a separate review task, then run "
-            f"agentctl gate approve --task {task} --by <reviewer>"
+            f"--role review'), start a separate review task, check the work against the "
+            f"Definition of Done in .agent/tasks/{task}.md, then run "
+            f"agentctl gate approve --task {task} --by <reviewer>{rerun}"
         )
+        if tests_result is None:
+            print(
+                "agentctl: no tests command was recorded, so the reviewer has only "
+                "your word for the verification; next time give finish --tests-cmd"
+            )
         _print_sync_hint(root, "this review request")
     _run_loop_checkpoint(root, "post-finish", once=True, trigger="post-finish", strict=False)
     return 0
@@ -3901,8 +4142,13 @@ def cmd_finish(args: argparse.Namespace) -> int:
     if not summary:
         title = (_load_board(root).get("tasks", {}).get(task) or {}).get("title") or task
         summary = f"Completed {task}: {title}"
-    tests = args.tests or "not recorded"
+    tests_cmd = getattr(args, "tests_cmd", None) or _task_contract(root, task)["tests_cmd"]
+    # Without a command the record is only the worker's word; say so once so
+    # the sentence is not mistaken for evidence.
+    tests = args.tests or ("not recorded" if not tests_cmd else "")
     return cmd_complete(argparse.Namespace(summary=summary, tests=tests,
+                                           done=getattr(args, "done", None),
+                                           tests_cmd=getattr(args, "tests_cmd", None),
                                            ack_escalations=bool(getattr(args, "ack_escalations", False))))
 
 
@@ -4198,6 +4444,12 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
         return 1
     ts = _now()
     gate_doc = root / WORKFLOW_DIR / GATES_DIR / f"{task}.md"
+    contract = _task_contract(root, task)
+    recorded_cmd_match = re.search(r"^- Tests-command:\s*(.+)$", completion, flags=re.M)
+    recorded_cmd = recorded_cmd_match.group(1).strip() if recorded_cmd_match else ""
+    recorded_exit_match = re.search(r"^- Tests-exit:\s*(\S+)$", completion, flags=re.M)
+    recorded_exit = recorded_exit_match.group(1) if recorded_exit_match else ""
+    rerun_line = "not rerun"
     if args.action == "approve":
         if t.get("status") not in ("review", "approved"):
             print(f"agentctl: {task} is '{t.get('status')}', must be 'review' to approve", file=sys.stderr)
@@ -4206,6 +4458,36 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
         if "Completed-at:" not in _extract_section(_read(doc), "## Completion Record"):
             print(f"agentctl: {task} has no completion record; run 'agentctl finish' first.", file=sys.stderr)
             return 1
+        print(f"agentctl: Definition of Done: {contract['done'] or '(none recorded)'}")
+        if recorded_cmd:
+            print(f"agentctl: worker's tests command: {recorded_cmd} (exit {recorded_exit or '?'})")
+        if getattr(args, "rerun_tests", False):
+            command = recorded_cmd or contract["tests_cmd"]
+            if not command:
+                print(
+                    f"agentctl: --rerun-tests: {task} recorded no tests command; "
+                    "there is nothing to rerun, decide on the evidence you gathered yourself",
+                    file=sys.stderr,
+                )
+                return 1
+            print(f"agentctl: rerunning the tests command here: {command}")
+            result = _run_tests_command(root, command)
+            if result["timed_out"] or result["exit"] != 0:
+                _print_tests_result(result, stream=sys.stderr)
+                print(
+                    f"agentctl: approval refused; the recorded tests command does not pass "
+                    f"in this checkout. Reject with the output above, or investigate "
+                    f"the difference between the checkouts first.",
+                    file=sys.stderr,
+                )
+                return 1
+            _print_tests_result(result, stream=sys.stdout)
+            rerun_line = f"passed (exit 0 in {result['duration']:.1f}s, runtime {reviewer_runtime})"
+        elif recorded_cmd:
+            print(
+                "agentctl: note: approving on the worker's record; add --rerun-tests "
+                "to execute the command in this checkout and have the gate record it"
+            )
         t["status"] = "done"
         t["updated_at"] = ts
         _save_board(root, board)
@@ -4218,6 +4500,9 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
             f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
             f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
             f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
+            f"- Definition of Done: {contract['done'] or 'none recorded'}\n"
+            f"- Tests command: {recorded_cmd or 'none recorded'}\n"
+            f"- Tests rerun: {rerun_line}\n"
             f"- At: {ts}\n- Note: {args.note or 'none'}\n",
         )
         st = _load_session(root)
@@ -4369,6 +4654,12 @@ def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
         else:
             body = f"# {task} - {title}\n\nStatus: todo\n"
         _write(doc, body)
+    _write_task_contract(
+        root, task,
+        goal=getattr(args, "goal", None),
+        done=getattr(args, "done", None),
+        tests_cmd=getattr(args, "tests_cmd", None),
+    )
     tasks_md = root / WORKFLOW_DIR / TASKS_FILE
     ttext = _read(tasks_md)
     row = f"| {task} | todo | {owner or '-'} | `{', '.join(scope) or '-'}` | [.agent/tasks/{task}.md](tasks/{task}.md) | {title} |"
@@ -5029,7 +5320,10 @@ def _completion_evidence_problems(
         r"^(?:not run|not recorded|n/?a|none)(?:\b|\s*[:;,({\[-])",
         test_evidence,
     )
-    if test_evidence in missing_test_markers or missing_test_prefix:
+    # A tests command that finish executed and that exited 0 is evidence in
+    # its own right, whatever the prose line says.
+    executed_ok = re.search(r"^- Tests-exit:[ \t]*0[ \t]*$", section, flags=re.M) is not None
+    if (test_evidence in missing_test_markers or missing_test_prefix) and not executed_ok:
         problems.append("task verification evidence is missing")
     if not completed or not completed.group(1).strip():
         problems.append("task completion timestamp is missing")
@@ -6258,6 +6552,11 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
         ]
         if create_args.deps:
             create_command.extend(["--deps", str(create_args.deps)])
+        for flag, attr in (("--goal", "goal"), ("--done", "done"), ("--tests-cmd", "tests_cmd")):
+            value = getattr(create_args, attr, None)
+            if value and str(value).strip():
+                # --flag=value: a value that begins with '-' must not be read as an option.
+                create_command.append(f"{flag}={value}")
         try:
             created = subprocess.run(
                 create_command, cwd=str(path), text=True, capture_output=True,
@@ -14415,6 +14714,18 @@ def cmd_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def _add_contract_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--goal", help="what the task is for, one sentence")
+    parser.add_argument(
+        "--done",
+        help="Definition of Done: what a reviewer can check; finish refuses without it",
+    )
+    parser.add_argument(
+        "--tests-cmd", dest="tests_cmd",
+        help="shell command that must exit 0 for the task to be done",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="agentctl", description="Agent Workflow Kit controller")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -14449,6 +14760,7 @@ def build_parser() -> argparse.ArgumentParser:
              "machine; requires --reason and is recorded in the task document",
     )
     sp.add_argument("--reason", default="")
+    _add_contract_arguments(sp)
     sp.set_defaults(func=cmd_work)
 
     sp = sub.add_parser("start")
@@ -14488,23 +14800,36 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("note", nargs="+")
     sp.set_defaults(func=cmd_note)
 
-    sp = sub.add_parser("complete")
-    sp.add_argument("--summary")
-    sp.add_argument("--tests")
-    sp.add_argument("--ack-escalations", action="store_true", dest="ack_escalations")
-    sp.set_defaults(func=cmd_complete)
+    for name, handler in (("complete", cmd_complete), ("finish", cmd_finish)):
+        sp = sub.add_parser(name)
+        sp.add_argument("--summary")
+        sp.add_argument("--tests", help="what was verified, in words (the reviewer has only this to go on)")
+        sp.add_argument(
+            "--tests-cmd", dest="tests_cmd",
+            help="shell command that must exit 0 for the task to be done; finish runs it "
+                 "and records the result, and the reviewer can rerun it",
+        )
+        sp.add_argument("--done", help="Definition of Done, if the task document has none yet")
+        sp.add_argument("--ack-escalations", action="store_true", dest="ack_escalations")
+        sp.set_defaults(func=handler)
 
-    sp = sub.add_parser("finish")
-    sp.add_argument("--summary")
-    sp.add_argument("--tests")
-    sp.add_argument("--ack-escalations", action="store_true", dest="ack_escalations")
-    sp.set_defaults(func=cmd_finish)
+    sp = sub.add_parser("contract", help="show or set the active task's Goal, Definition of Done, and tests command")
+    sp.add_argument("--goal")
+    sp.add_argument("--done")
+    sp.add_argument("--tests-cmd", dest="tests_cmd")
+    sp.add_argument("--json", action="store_true")
+    sp.set_defaults(func=cmd_contract)
 
     sp = sub.add_parser("gate")
     sp.add_argument("action", choices=["approve", "reject", "reconcile-github"])
     sp.add_argument("--task", required=True)
     sp.add_argument("--by", required=True)
     sp.add_argument("--note")
+    sp.add_argument(
+        "--rerun-tests", action="store_true", dest="rerun_tests",
+        help="execute the task's recorded tests command in this checkout before approving; "
+             "approval is refused if it does not exit 0",
+    )
     sp.add_argument("--pr", help="merged GitHub PR number or URL for reconcile-github")
     sp.add_argument("--repo", help="GitHub OWNER/REPO for reconcile-github")
     sp.set_defaults(func=cmd_gate)
@@ -14526,6 +14851,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--deps")
     c.add_argument("--type", dest="task_type", choices=sorted(TASK_TYPES), default="generic")
     c.add_argument("--force", action="store_true")
+    _add_contract_arguments(c)
     sh = tsub.add_parser("show")
     sh.add_argument("id")
     sp.set_defaults(func=cmd_task)

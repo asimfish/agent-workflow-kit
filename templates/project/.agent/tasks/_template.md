@@ -16,6 +16,10 @@ Updated: $updated_at
 
 ## Task Contract
 
+The reviewer judges the work against this section, so fill it before the work
+starts (`--goal`, `--done`, `--tests-cmd` on `work --auto-create`, or
+`agentctl contract`). `finish` refuses while Definition of Done is empty.
+
 - Goal:
 - Non-Goals:
 - Dependencies:
@@ -52,10 +56,13 @@ Format: `- YYYY-MM-DD HH:MM:SS <short factual update>`.
 
 ## Verification
 
+- Tests command:
 - Commands to run:
   - `python3 tools/agentctl.py check --mode manual`
 - Expected result:
-  - Workflow checks pass and task-specific acceptance criteria are met.
+  - The tests command exits 0 (`finish` runs it and records the result; the
+    reviewer reruns it with `gate approve --rerun-tests`), workflow checks pass,
+    and the Definition of Done holds.
 
 ## Completion Record
 

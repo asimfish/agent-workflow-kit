@@ -211,3 +211,26 @@ the `--reason` that `run stop` requires, and the real test count. When a
 code task cannot get its worktree because the planning checkout is dirty,
 the refusal now names the paths, or says `agentctl sync` when all of them
 are ledger data another conversation has not published yet.
+
+The task contract becomes the audit surface. Reading Prove2Me (Chen et al.,
+2026), the platform behind the Fermat's Last Theorem formalization, made
+one gap obvious: there, a proof is checked against a statement fixed before
+anyone proves it, and humans audit only the statements; here, the `Task
+Contract` section of every task document had been empty since the kit
+began, and `finish --tests` was a sentence the worker typed. Now the
+Definition of Done is required -- `finish` refuses without it, a review
+task's recorded gate decision standing in for one -- and the tests command
+is executed rather than transcribed: `finish` runs it from the checkout
+root, refuses on a non-zero exit or a timeout (`AGENT_WORKFLOW_TESTS_TIMEOUT`,
+default 1800s), and records `Tests-command`, `Tests-exit`, and
+`Tests-duration`; `gate approve --rerun-tests` runs it again on the
+reviewer's side and refuses approval if it fails, and the gate record keeps
+the Definition of Done, the command, and the rerun result. Both fields are
+accepted at creation (`--goal`, `--done`, `--tests-cmd` on `task create` and
+`work --auto-create`, forwarded through the worktree bootstrap), by the new
+`agentctl contract`, and by `finish` as a last resort; writing them through
+the tool refreshes the read receipt. The task template, `WORKFLOW_ENTRY.md`,
+both READMEs, and `docs/workflow.md` say to write the contract before the
+work, because a Definition of Done written at `finish` is a claim and one
+written at creation is a specification. A recorded `Tests-exit: 0` counts as
+verification evidence wherever completion records are judged.

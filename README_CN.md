@@ -55,13 +55,20 @@ Cursor 的 hook 配置。**不会往 `PATH` 里加任何东西**：本文里的 
 ```bash
 agentctl work --agent codex                        # 领取已有任务
 agentctl work --agent codex --auto-create --type code \
-    --title "fix the data loader" --scope "src/data/"   # 或者新开一个
+    --title "fix the data loader" --scope "src/data/" \
+    --done "shard split is exact for every n" \
+    --tests-cmd "pytest tests/data -q"                  # 或者新开一个
 ```
 
 第二个会话如果想领同一个任务，或者申请 `src/data/` 之内的路径，会被拒绝。
 `code` 和 `experiment` 类型的任务会自动分到独立的 Git worktree（命令会打印
 接着去哪里干活），两个智能体永远不会在同一个检出里改文件；`docs`、`review`、
 `generic` 类型共用当前检出。
+
+`--done` 和 `--tests-cmd` 是任务的契约：前者用文字说清评审者要核对什么，
+后者是那条必须以 0 退出的命令。它们在干活之前写下，所以结果是对照契约来判，
+而不是对照智能体自己的说法。没有 Definition of Done 的任务不能交评审
+（之后可以用 `agentctl contract --done "..."` 补上）。
 
 **智能体：干活，并留下痕迹。**
 
@@ -85,27 +92,31 @@ agentctl run list
 **智能体：把任务交给评审。**
 
 ```bash
-agentctl finish --summary "..." --tests "pytest -x: 42 passed"
+agentctl finish --summary "..."
 ```
 
-任务进入 `review`。在此之前 Git hooks 一直拒绝推送它的提交；现在分支可以推送、
-可以开 PR，但按套件的规则，要等别人批准之后才能合并。
+`finish` 会自己执行任务的测试命令，退出码不为 0 就拒绝，并把命令、退出码和
+耗时记进任务文档（`--tests-cmd` 可换一条命令；`--tests "..."` 补充命令覆盖不到
+的部分）。任务进入 `review`。在此之前 Git hooks 一直拒绝推送它的提交；现在分支
+可以推送、可以开 PR，但按套件的规则，要等别人批准之后才能合并。
 
 **评审者：由另一个会话批准。** 评审者在每个项目里注册一次，开一个评审任务，
-然后裁决：
+对照 Definition of Done 核对工作，然后裁决：
 
 ```bash
 agentctl agents add --id reviewer --role review
 agentctl work --agent reviewer --auto-create --type review \
     --title "review T-001" --scope ".agent/"
-agentctl gate approve --task T-001 --by reviewer --note "..."
-agentctl finish --summary "approved T-001" --tests "..."   # 关闭评审任务
+agentctl gate approve --task T-001 --by reviewer --rerun-tests --note "..."
+agentctl finish --summary "approved T-001"                # 关闭评审任务
 ```
 
-控制器比对的是运行时指纹，所以一个会话没法批准自己的工作。评审者自己的
-`finish` 会按已记录的裁决直接关闭评审任务，不会再要求“评审的评审”。在 worktree 里
-完成的任务，开 PR 之前先用 `agentctl reconcile merge-back --from-ref <branch>`
-把它的记录搬回主检出（见 `docs/worktree-merge-back.md`）。
+`--rerun-tests` 让评审者在自己的检出里重跑记录下来的测试命令，失败则拒绝批准；
+gate 记录里会留下 Definition of Done、命令和重跑结果。控制器比对的是运行时指纹，
+所以一个会话没法批准自己的工作。评审者自己的 `finish` 会按已记录的裁决直接关闭
+评审任务，不会再要求“评审的评审”。在 worktree 里完成的任务，开 PR 之前先用
+`agentctl reconcile merge-back --from-ref <branch>` 把它的记录搬回主检出
+（见 `docs/worktree-merge-back.md`）。
 
 **你：想看就看。**
 
@@ -132,6 +143,9 @@ flowchart LR
   `agentctl` 更新它们；人直接改计划和规则，智能体继续之前会重新读。
 - **一次认领 = 一个任务 + 一个写范围。** 两个会话不能持有同一个任务，写范围
   不能重叠。hooks 会拒绝范围之外的写入。
+- **任务说清什么叫做完，一条命令来证明。** Definition of Done 和测试命令在干活
+  之前就写进任务文档；`finish` 没有前者就拒绝，会去执行后者；评审者再跑一遍。
+  交付物对照的是契约，永远不是干活者自己的总结。
 - **失联的会话是「过期」，不是「消失」。** 30 分钟没有心跳，它的认领会被标记
   出来。其他人看到警告后照常干活。接管必须显式执行 `sessions release` 并写明
   理由，没有任何东西会被自动重新分配。
@@ -157,9 +171,10 @@ flowchart LR
 |---|---|
 | `agentctl work --agent <name>` | 认领或恢复任务（`--auto-create` 新开一个） |
 | `agentctl note "..."` | 给当前任务记一笔进度 |
-| `agentctl finish --summary ... --tests ...` | 把任务交给评审 |
+| `agentctl contract --done "..." --tests-cmd "..."` | 查看或设置任务的 Definition of Done 和测试命令 |
+| `agentctl finish --summary ...` | 执行测试命令、记录结果、把任务交给评审 |
 | `agentctl run start -- <command>` | 受监管的后台任务；另有 `run list`、`run stop <run-id> --reason "..."` |
-| `agentctl gate approve --task <id> --by <reviewer>` | 独立批准（或 `gate reject`） |
+| `agentctl gate approve --task <id> --by <reviewer> --rerun-tests` | 重跑测试命令后独立批准（或 `gate reject`） |
 | `agentctl board` | 谁在干什么 |
 | `agentctl doctor` | 哪里卡住了、怎么解 |
 | `agentctl sync` | 发布本检出的认领、拉回其他人的（只提交账本，拉取，推送） |
@@ -179,6 +194,7 @@ flowchart LR
 | 某个 run 显示 `exited_unknown` | 监管进程失去了对它的跟踪 | 检查输出，然后 `agentctl run finish <run-id> --status succeeded\|failed --reason "..."` |
 | `gate approve` 说任务不存在或没有运行时证据 | 任务在 worktree 里完成，主检出还不知道 | 在主检出执行 `agentctl reconcile merge-back --from-ref <branch>`，再重试 |
 | 评审任务裁决之后还挂着 | 没人关闭它 | `agentctl reconcile close-decided-reviews` |
+| `finish` 说任务没有 Definition of Done，或测试命令退出码不为 0 | 契约没写完，或工作还没达到契约 | `agentctl contract --done "..."`（或 `finish --done "..."`）；修好工作，或者在命令已经不再描述“做完”时用 `agentctl contract --tests-cmd "..."` 换掉它 |
 | `git pull` 在 `.agent/board.json` 或 `TASKS.md` 上冲突 | 这个克隆没有账本合并驱动（`doctor` 会指出） | `agentctl init .` 会注册驱动并写入 `.gitattributes`；提交 `.gitattributes`，手动解一次后 `git rebase --continue` |
 | `start --task` 说任务按任务板是别人的 `in_progress` | 另一台机器认领了它 | 先看它的笔记；确认已放弃后 `agentctl work --agent <name> --task <id> --takeover --reason "..."` |
 
@@ -193,7 +209,7 @@ hooks 负责协调智能体，不负责隔离不受信任的代码。绕过 `age
 
 ## 现状
 
-272 个回归测试在 Linux 的 CI 上运行，另有一个 Windows job 跑其中涉及 Windows
+288 个回归测试在 Linux 的 CI 上运行，另有一个 Windows job 跑其中涉及 Windows
 进程处理的子集。协调保证也在全新安装上完整
 演练过：并发会话、带着显卡死掉的会话、持有锁时被删除的项目、独立评审者，以及
 针对租约与评审检查的对抗式状态篡改。GPU 监管在共享的 RTX 5090 上实测过。

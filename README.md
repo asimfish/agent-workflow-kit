@@ -63,7 +63,9 @@ task and the paths it will write:
 ```bash
 agentctl work --agent codex                        # take an existing task
 agentctl work --agent codex --auto-create --type code \
-    --title "fix the data loader" --scope "src/data/"   # or open a new one
+    --title "fix the data loader" --scope "src/data/" \
+    --done "shard split is exact for every n" \
+    --tests-cmd "pytest tests/data -q"                  # or open a new one
 ```
 
 A second conversation that asks for the same task, or for a path inside
@@ -71,6 +73,12 @@ A second conversation that asks for the same task, or for a path inside
 Git worktree automatically (the command prints where to continue), so two
 agents never edit the same checkout; `docs`, `review`, and `generic` tasks
 share it.
+
+`--done` and `--tests-cmd` are the task's contract: what a reviewer will
+check, in words, and the one command that has to exit 0. They are written
+before the work, so the result is judged against them rather than against
+the agent's own account. A task cannot be handed to review without a
+Definition of Done (`agentctl contract --done "..."` sets it later).
 
 **Agent: work and leave a trail.**
 
@@ -96,30 +104,38 @@ can declare an exemption.
 **Agent: hand the task to review.**
 
 ```bash
-agentctl finish --summary "..." --tests "pytest -x: 42 passed"
+agentctl finish --summary "..."
 ```
 
-The task is now `review`. Until this point the Git hooks refused to push
-its commits; now the branch can be pushed and a pull request opened, but
-by the kit's rules it merges only after someone else approves.
+`finish` runs the task's tests command itself, refuses if it does not exit
+0, and records the command, exit code, and duration in the task document
+(`--tests-cmd` names a different command; `--tests "..."` adds what a
+command cannot cover). The task is now `review`. Until this point the Git
+hooks refused to push its commits; now the branch can be pushed and a pull
+request opened, but by the kit's rules it merges only after someone else
+approves.
 
 **Reviewer: a different conversation approves.** The reviewer registers
-once per project, opens a review task, and decides:
+once per project, opens a review task, checks the work against the
+Definition of Done, and decides:
 
 ```bash
 agentctl agents add --id reviewer --role review
 agentctl work --agent reviewer --auto-create --type review \
     --title "review T-001" --scope ".agent/"
-agentctl gate approve --task T-001 --by reviewer --note "..."
-agentctl finish --summary "approved T-001" --tests "..."   # closes the review task
+agentctl gate approve --task T-001 --by reviewer --rerun-tests --note "..."
+agentctl finish --summary "approved T-001"                # closes the review task
 ```
 
-The controller compares runtime fingerprints, so a conversation cannot
-approve its own work. The reviewer's own `finish` closes the review task on
-the recorded decision; no second review is asked for. For a task that ran
-in a worktree, bring its records
-back to the main checkout with `agentctl reconcile merge-back --from-ref
-<branch>` before opening the pull request (`docs/worktree-merge-back.md`).
+`--rerun-tests` executes the recorded tests command in the reviewer's own
+checkout and refuses approval if it fails; the gate record keeps the
+Definition of Done, the command, and the rerun result. The controller
+compares runtime fingerprints, so a conversation cannot approve its own
+work. The reviewer's own `finish` closes the review task on the recorded
+decision; no second review is asked for. For a task that ran in a worktree,
+bring its records back to the main checkout with `agentctl reconcile
+merge-back --from-ref <branch>` before opening the pull request
+(`docs/worktree-merge-back.md`).
 
 **You: look whenever you like.**
 
@@ -148,6 +164,11 @@ flowchart LR
 - **A claim is a task plus a write scope.** Two conversations cannot hold
   the same task, and scopes may not overlap. Hooks reject writes outside
   the claimed scope.
+- **A task says what done means, and a command proves it.** The Definition
+  of Done and the tests command are fixed in the task document before the
+  work; `finish` refuses without the former and executes the latter; the
+  reviewer reruns it. The deliverable is judged against the contract, never
+  against the worker's own summary of it.
 - **A silent conversation goes stale, not away.** After 30 minutes without
   a heartbeat its claims are flagged. Others see the warning and keep
   working. Taking over requires an explicit `sessions release` with a
@@ -179,9 +200,10 @@ flowchart LR
 |---|---|
 | `agentctl work --agent <name>` | claim or resume a task (`--auto-create` opens a new one) |
 | `agentctl note "..."` | record progress on the current task |
-| `agentctl finish --summary ... --tests ...` | hand the task to review |
+| `agentctl contract --done "..." --tests-cmd "..."` | show or set the task's Definition of Done and tests command |
+| `agentctl finish --summary ...` | run the tests command, record the result, hand the task to review |
 | `agentctl run start -- <command>` | supervised background job; `run list`, `run stop <run-id> --reason "..."` |
-| `agentctl gate approve --task <id> --by <reviewer>` | independent approval (or `gate reject`) |
+| `agentctl gate approve --task <id> --by <reviewer> --rerun-tests` | independent approval after rerunning the tests command (or `gate reject`) |
 | `agentctl board` | who is doing what |
 | `agentctl doctor` | what is stuck, and how to unstick it |
 | `agentctl sync` | publish this checkout's claims and pick up everyone else's (ledger-only commit, pull, push) |
@@ -203,6 +225,7 @@ cases:
 | a run shows `exited_unknown` | the supervisor lost track of the process | inspect the outputs, then `agentctl run finish <run-id> --status succeeded\|failed --reason "..."` |
 | `gate approve` says the task is unknown or has no runtime evidence | the task finished in a worktree and the main checkout has not heard of it | `agentctl reconcile merge-back --from-ref <branch>` in the main checkout, then retry |
 | a review task is still open after its decision | nobody closed it | `agentctl reconcile close-decided-reviews` |
+| `finish` says the task has no Definition of Done, or the tests command exited non-zero | the contract is incomplete, or the work does not meet it yet | `agentctl contract --done "..."` (or `finish --done "..."`); fix the work, or change the command with `agentctl contract --tests-cmd "..."` if it no longer describes done |
 | `git pull` stops with conflicts in `.agent/board.json` or `TASKS.md` | this clone has no ledger merge driver (`doctor` says so) | `agentctl init .` registers it and writes `.gitattributes`; commit `.gitattributes`, then `git rebase --continue` after resolving once |
 | `start --task` says the task is `in_progress` for someone according to the board | another machine claimed it | check its notes; if it is really abandoned, `agentctl work --agent <name> --task <id> --takeover --reason "..."` |
 
@@ -221,7 +244,7 @@ the board.
 
 ## Status
 
-272 regression tests run on Linux in CI; a Windows job runs the subset that
+288 regression tests run on Linux in CI; a Windows job runs the subset that
 exercises Windows-specific process handling. The coordination guarantees
 were also exercised end to end on a fresh install: concurrent
 conversations, a conversation that died holding a GPU, a project deleted

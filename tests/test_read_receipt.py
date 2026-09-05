@@ -105,7 +105,7 @@ class ReadReceiptRegressionTest(unittest.TestCase):
         note = self.agentctl("note", "must not erase the changed receipt", expect=1)
         self.assertIn("progress blocked", note.stdout + note.stderr)
         finish = self.agentctl(
-            "finish", "--summary", "must not finish", "--tests", "not run",
+            "finish", "--done", "fixture contract", "--summary", "must not finish", "--tests", "not run",
             expect=1,
         )
         self.assertIn("finish blocked", finish.stdout + finish.stderr)
@@ -113,7 +113,7 @@ class ReadReceiptRegressionTest(unittest.TestCase):
         self.agentctl("refresh", expect=0)
         self.agentctl("note", "re-read human direction and refreshed", expect=0)
         finished = self.agentctl(
-            "finish", "--summary", "receipt enforcement verified",
+            "finish", "--done", "fixture contract", "--summary", "receipt enforcement verified",
             "--tests", "read receipt regression",
             expect=0,
         )

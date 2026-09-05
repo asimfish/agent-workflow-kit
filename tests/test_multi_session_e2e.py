@@ -200,7 +200,7 @@ class FourConversationEndToEndTest(unittest.TestCase):
     def test_one_completion_does_not_disturb_the_other_three(self):
         self.claim_all()
         self.agentctl(
-            "complete", "--summary", "pipeline validation finished",
+            "complete", "--done", "fixture contract", "--summary", "pipeline validation finished",
             "--tests", "fixture drill", session="C",
         )
         # The other three conversations keep working with no forced refresh:

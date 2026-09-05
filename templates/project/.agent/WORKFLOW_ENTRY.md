@@ -37,12 +37,20 @@ When working in this repository, do this before any edit or mutating command:
 3. If no existing task matches the user's request, create and start one yourself:
 
    ```bash
-   python3 tools/agentctl.py work --agent <agent-name> --auto-create --title "<current request>" --scope "<paths>" --type <type>
+   python3 tools/agentctl.py work --agent <agent-name> --auto-create --title "<current request>" --scope "<paths>" --type <type> \
+       --done "<what a reviewer can check when this is finished>" --tests-cmd "<command that must exit 0>"
    ```
 
    Choose `code`, `experiment`, `docs`, `review`, `maintenance`, or `generic`.
    Code and experiment tasks automatically receive a managed worktree; continue
    from the printed path and do not recreate the task in the planning checkout.
+
+   `--done` is the Definition of Done and `--tests-cmd` the one command that
+   proves it. Write them before the work, not after: the reviewer judges the
+   result against the contract, not against your account of it. `finish`
+   refuses while the Definition of Done is empty; if the request is still too
+   vague to state one, ask, or set it as soon as it is clear with
+   `python3 tools/agentctl.py contract --done "..." --tests-cmd "..."`.
 
 4. Follow the focus and runtime capsule printed by `agentctl work`.
 
@@ -289,14 +297,18 @@ file-based handoff is possible.
 
 Before claiming a phase complete:
 
-1. Run the task verification commands.
+1. Re-read the task's Definition of Done and check the work against it.
 2. Update task artifacts, tests, risks, and follow-ups.
 3. Move the task to review:
 
    ```bash
-   python3 tools/agentctl.py finish --summary "<what changed>" --tests "<commands run>"
+   python3 tools/agentctl.py finish --summary "<what changed>" --tests-cmd "<command that must exit 0>"
    ```
 
+   `finish` executes the tests command (the one given here, or the contract's)
+   in this checkout, refuses if it does not exit 0, and records the command,
+   exit code, and duration where the reviewer can rerun it. `--tests "<words>"`
+   may add what the command does not cover; on its own it is only your word.
    `finish` runs `pre-finish` and `post-finish` checkpoint loops automatically.
 
 4. If the repository has a remote, publish the review request so other

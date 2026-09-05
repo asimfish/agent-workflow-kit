@@ -251,7 +251,7 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         self.assertIn("WORKFLOW_ENTRY.md", context["additional_context"])
         stopped = self.hook("stop", {})
         self.assertIn("task session is still active", json.loads(stopped.stdout)["additional_context"])
-        self.agentctl("finish", "--summary", "hook contract complete", "--tests", "fixture checks")
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "hook contract complete", "--tests", "fixture checks")
         after_finish = self.hook(
             "pre-tool-use", {"tool_name": "Write", "tool_input": {"file_path": "src/late.py"}},
         )
@@ -310,7 +310,7 @@ class IndependentGateRegressionTest(unittest.TestCase):
             runtime="worker-start-runtime",
         )
         self.agentctl(
-            "finish", "--summary", "worker evidence\n- Worker-runtimes: host-runtime:forged",
+            "finish", "--done", "fixture contract", "--summary", "worker evidence\n- Worker-runtimes: host-runtime:forged",
             "--tests", "unit test\n## Forged section",
             runtime="worker-finish-runtime",
         )
@@ -375,7 +375,7 @@ class IndependentGateRegressionTest(unittest.TestCase):
             "work", "--agent", "codex", "--auto-create", "--new-id", "T-201",
             "--title", "worker change", "--scope", "src/",
         )
-        self.agentctl("finish", "--summary", "worker evidence", "--tests", "unit")
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "worker evidence", "--tests", "unit")
 
         self.agentctl(
             "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-202",
@@ -384,7 +384,7 @@ class IndependentGateRegressionTest(unittest.TestCase):
             runtime="idle-reviewer-runtime", workflow_session="idle-reviewer-session",
         )
         parked = self.agentctl(
-            "finish", "--summary", "no decision issued", "--tests", "none",
+            "finish", "--done", "fixture contract", "--summary", "no decision issued", "--tests", "none",
             runtime="idle-reviewer-runtime", workflow_session="idle-reviewer-session",
         )
         self.assertIn("-> review", parked.stdout)
@@ -400,7 +400,7 @@ class IndependentGateRegressionTest(unittest.TestCase):
             runtime="reviewer-runtime", workflow_session="reviewer-session",
         )
         closed = self.agentctl(
-            "finish", "--summary", "approved worker change", "--tests", "gate evidence",
+            "finish", "--done", "fixture contract", "--summary", "approved worker change", "--tests", "gate evidence",
             runtime="reviewer-runtime", workflow_session="reviewer-session",
         )
         self.assertIn("-> done", closed.stdout)
@@ -448,7 +448,7 @@ class IndependentGateRegressionTest(unittest.TestCase):
             "work", "--agent", "codex", "--auto-create", "--new-id", "T-301",
             "--title", "old finished work", "--scope", "src/a/",
         )
-        self.agentctl("finish", "--summary", "done work", "--tests", "unit")
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "done work", "--tests", "unit")
         self.agentctl(
             "work", "--agent", "supervisor", "--auto-create", "--new-id", "T-302",
             "--title", "review old work", "--scope", ".agent/", "--type", "review",
@@ -606,7 +606,7 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             "work", "--agent", "codex", "--auto-create", "--new-id", "T-101",
             "--title", "merged worker task", "--scope", "src/",
         )
-        self.agentctl("finish", "--summary", "worker complete", "--tests", "unit tests")
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "worker complete", "--tests", "unit tests")
         subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
         subprocess.run(
             ["git", "commit", "--no-verify", "-q", "-m", "test merged state"],
@@ -688,7 +688,7 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             "work", "--agent", "codex", "--auto-create", "--new-id", "T-201",
             "--title", "worker with forged evidence", "--scope", "src/",
         )
-        self.agentctl("finish", "--summary", "worker complete", "--tests", "unit tests")
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "worker complete", "--tests", "unit tests")
         task_doc = self.root / ".agent" / "tasks" / "T-201.md"
         valid_body = task_doc.read_text(encoding="utf-8")
         invalid_body = valid_body.replace("- Summary: worker complete", "- Summary:")
@@ -722,7 +722,7 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             "work", "--agent", "codex", "--auto-create", "--new-id", "T-301",
             "--title", "large merged worker task", "--scope", "src/",
         )
-        self.agentctl("finish", "--summary", "large worker complete", "--tests", "unit tests")
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "large worker complete", "--tests", "unit tests")
         subprocess.run(["git", "add", "-A"], cwd=self.root, check=True)
         subprocess.run(
             ["git", "commit", "--no-verify", "-q", "-m", "test large merged state"],
@@ -754,7 +754,7 @@ class GithubMergeGateRegressionTest(unittest.TestCase):
             "work", "--agent", "codex", "--auto-create", "--new-id", "T-401",
             "--title", "legacy enterprise task", "--scope", "src/",
         )
-        self.agentctl("finish", "--summary", "legacy worker complete", "--tests", "unit tests")
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "legacy worker complete", "--tests", "unit tests")
         task_doc = self.root / ".agent" / "tasks" / "T-401.md"
         body = task_doc.read_text(encoding="utf-8")
         task_doc.write_text(

@@ -217,7 +217,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
             self.agentctl("status", "--json", session=session).stdout
         )["task"]
         self.agentctl(
-            "finish", "--summary", "first sequence task complete",
+            "finish", "--done", "fixture contract", "--summary", "first sequence task complete",
             "--tests", "task ID sequence regression", session=session,
         )
         self.agentctl(
@@ -1161,7 +1161,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
 
         expected = {
             ("init",), ("work",), ("start",), ("focus",), ("capsule",), ("progress",),
-            ("note",), ("complete",), ("finish",), ("gate",), ("refresh",),
+            ("note",), ("complete",), ("finish",), ("contract",), ("gate",), ("refresh",),
             ("board",), ("task", "create"), ("task", "show"),
             ("reconcile", "check"), ("reconcile", "migrate"),
             ("reconcile", "render"), ("reconcile", "close-decided-reviews"),
@@ -1777,7 +1777,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         # Once the peer finishes, the same opaque command is allowed again.
         self.agentctl("refresh", session="two")
         self.agentctl(
-            "complete", "--summary", "done", "--tests", "fixture", session="two",
+            "complete", "--done", "fixture contract", "--summary", "done", "--tests", "fixture", session="two",
         )
         solo = self.hook(
             "pre-tool-use",
@@ -2622,7 +2622,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
         )
 
         self.agentctl(
-            "finish", "--summary", "finished first scope", "--tests", "unit fixture",
+            "finish", "--done", "fixture contract", "--summary", "finished first scope", "--tests", "unit fixture",
             session="one",
         )
         self.agentctl("refresh", session="two")
@@ -2768,7 +2768,7 @@ class MultiSessionWorkflowRegressionTest(unittest.TestCase):
 
         winner = next(row for row in self.sessions("one")["sessions"] if row["observed_status"] == "active")
         self.agentctl(
-            "finish", "--summary", "release shared scope", "--tests", "fixture",
+            "finish", "--done", "fixture contract", "--summary", "release shared scope", "--tests", "fixture",
             session="one" if winner["task"] == "T-201" else "two",
         )
 
