@@ -354,9 +354,59 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("not merged", proc.stderr)
         self.assertEqual((tmp / "ours").read_text(encoding="utf-8"), "{not json")
+        # A collection that is not an object is damage too.
+        with self.assertRaises(ValueError):
+            agentctl._merge_ledger_json(base, json.dumps({"version": 1, "tasks": []}), theirs, "tasks", agentctl._resolve_board_entry)
         # An empty side is a legitimate empty ledger, not damage.
         merged = json.loads(agentctl._merge_ledger_json("", "", theirs, "tasks", agentctl._resolve_board_entry))
         self.assertEqual(set(merged["tasks"]), {"T-1", "T-2"})
+
+    def test_sync_autostashes_unrelated_local_edits(self):
+        # A tracked file edited but not staged used to stall sync at the
+        # pull ("You have unstaged changes") after it had already committed.
+        task_a = self.open_task(self.a, "conv-a", "codex", "collect on 4090", "collect/a/")
+        self.agentctl(self.a, "conv-a", "sync")
+        self.open_task(self.b, "conv-b", "cursor", "collect on 5090", "collect/b/")
+        self.agentctl(self.b, "conv-b", "sync")
+        gitignore = self.a / ".gitignore"
+        gitignore.write_text(gitignore.read_text(encoding="utf-8") + "\n# local note\n", encoding="utf-8")
+        self.agentctl(self.a, "conv-a", "note", "still working")
+        synced = self.agentctl(self.a, "conv-a", "sync")
+        self.assertIn("pulled origin/main", synced.stdout)
+        self.assertIn("pushed main to origin", synced.stdout)
+        self.assertIn("# local note", gitignore.read_text(encoding="utf-8"))
+        self.assertIn("M .gitignore", self.git(self.a, "status", "--porcelain"))
+        shown = self.git(self.a, "show", "--name-only", "--format=", "HEAD")
+        self.assertNotIn(".gitignore", shown)
+        self.assertIn(task_a, self.board(self.a))
+
+    def test_board_and_doctor_show_claims_made_elsewhere(self):
+        task = self.open_task(self.a, "conv-a", "codex", "collect on 4090", "collect/a/")
+        self.agentctl(self.a, "conv-a", "sync")
+        self.git(self.b, "pull", "-q", "--rebase", "origin", "main")
+
+        board_a = self.agentctl(self.a, "conv-a", "board").stdout
+        self.assertNotIn("[elsewhere", board_a.split(task)[1].splitlines()[0])
+        board_b = self.agentctl(self.b, "conv-b", "board").stdout
+        line_b = next(line for line in board_b.splitlines() if task in line)
+        self.assertIn("[elsewhere, updated", line_b)
+
+        report = json.loads(self.agentctl(self.b, "conv-b", "doctor", "--json").stdout)
+        check = next(c for c in report["checks"] if c["name"] == "claims from other checkouts")
+        self.assertEqual(check["status"], "ok")
+        self.assertIn("1 in_progress elsewhere", check["detail"])
+
+        # Two days of silence on the board: doctor asks for a look, never acts.
+        board_path = self.b / ".agent" / "board.json"
+        board = json.loads(board_path.read_text(encoding="utf-8"))
+        board["tasks"][task]["updated_at"] = "2020-01-01 00:00:00"
+        board_path.write_text(json.dumps(board, indent=2), encoding="utf-8")
+        report = json.loads(self.agentctl(self.b, "conv-b", "doctor", "--json").stdout)
+        check = next(c for c in report["checks"] if c["name"] == "claims from other checkouts")
+        self.assertEqual(check["status"], "warn")
+        hit = next(w for w in report["warnings"] if task in w and "has not changed" in w)
+        self.assertIn("--takeover --reason", hit)
+        self.assertEqual(self.board(self.b)[task]["owner"], "codex", "doctor must not take over")
 
     def test_loop_run_reports_do_not_collide_across_checkouts(self):
         # Two checkouts running the same loop in the same second must not

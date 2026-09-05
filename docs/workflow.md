@@ -90,9 +90,11 @@ Each worker writes only its scope. The supervisor owns manifest merge and final 
 
 When workers sit on different machines, each claims in its own clone and
 publishes the claim with `agentctl sync` (ledger-only commit, pull with the
-ledger merge driver, push). Other clones see the task as `in_progress` after
-their next pull and can only take it with `--takeover --reason`. See
-"Several Machines, One Remote" in `docs/multi-session-execution.md`.
+ledger merge driver, push); `work` and `finish` remind them when a remote is
+configured. Other clones see the task as `in_progress` after their next pull
+(`board` marks it `[elsewhere, ...]`) and can only take it with `--takeover
+--reason`. See "Several Machines, One Remote" in
+`docs/multi-session-execution.md`.
 
 ## Supervisor To Codex Dispatch
 

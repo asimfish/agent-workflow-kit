@@ -596,6 +596,107 @@ class ExecutionLeaseWorkflowRegressionTest(unittest.TestCase):
             session="owner", expect=1,
         )
 
+    def test_stop_right_after_start_cancels_the_run(self):
+        # No sleep between start and stop: on a loaded machine this lands in
+        # the window where the supervisor has claimed the lease but not yet
+        # registered the payload, which used to be refused as "not alive".
+        self.start("one", "T-343", "outputs/T-343/")
+        started = self.agentctl(
+            "run", "start", "--output", "outputs/T-343/result.txt", "--",
+            sys.executable, "-c", "import time; time.sleep(60)",
+        )
+        run_id = self.lease_id(started.stdout, "run")
+        stopped = self.agentctl("run", "stop", run_id, "--reason", "wrong arguments")
+        self.assertRegex(stopped.stdout, r"stop requested|stopped before its process launched|stop recorded")
+        waited = self.agentctl("run", "wait", run_id, "--timeout", "30", expect=1)
+        self.assertIn("cancelled", waited.stdout)
+        shown = json.loads(self.agentctl("run", "show", run_id, "--json").stdout)["runs"][0]
+        self.assertEqual(shown["status"], "cancelled")
+        from tools import agentctl as workflow
+        for process in shown.get("processes") or []:
+            self.assertFalse(workflow._runtime_process_alive(process))
+
+    def test_stop_in_the_launch_window_waits_for_the_payload(self):
+        # Deterministic version of the window: a lease whose supervisor is a
+        # live process and whose payload has not been registered. The stop
+        # must record the request, wait, then signal the payload the moment
+        # it appears.
+        from tools import agentctl as workflow
+
+        self.start("one", "T-344", "outputs/T-344/")
+        session_key = json.loads(
+            self.agentctl("sessions", "list", "--json").stdout
+        )["current"]
+        supervisor = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(supervisor.kill)
+        run_id = "run-launchwindow001"
+        workflow._update_runtime_leases(self.root, lambda data: data.setdefault("leases", []).append({
+            "id": run_id, "kind": "run", "mode": "supervised", "status": "running",
+            "task": "T-344", "holder": {"type": "conversation", "id": session_key},
+            "checkout": str(self.root), "scope": ["outputs/T-344/"], "outputs": [], "resources": [],
+            "processes": [],
+            "supervisor_process": {
+                "role": "supervisor", "pid": supervisor.pid,
+                "birth_marker": workflow._process_birth_marker(supervisor.pid),
+            },
+            "created_at": workflow._now(), "heartbeat_at": workflow._now(),
+        }))
+        stopper = subprocess.Popen(
+            [sys.executable, "tools/agentctl.py", "run", "stop", run_id,
+             "--reason", "operator", "--wait-seconds", "20"],
+            cwd=self.root, env=self.env("one"), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        # The stop is recorded before any payload exists...
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            lease = workflow._runtime_lease(self.root, run_id) or {}
+            if lease.get("status") == "stopping":
+                break
+            time.sleep(0.05)
+        self.assertEqual((workflow._runtime_lease(self.root, run_id) or {}).get("status"), "stopping")
+        # ...and the payload is signalled as soon as it is registered.
+        payload = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+        self.addCleanup(payload.kill)
+        record = {
+            "role": "command", "pid": payload.pid,
+            "birth_marker": workflow._process_birth_marker(payload.pid),
+            "process_group": None,
+        }
+        workflow._run_update(self.root, run_id, lambda item: item.update({"processes": [record]}))
+        out, err = stopper.communicate(timeout=60)
+        self.assertEqual(stopper.returncode, 0, out + err)
+        self.assertIn("stop requested", out)
+        try:
+            payload.wait(timeout=15)
+        except subprocess.TimeoutExpired:
+            self.fail("payload was not terminated after registration")
+        supervisor.kill()
+
+    @unittest.skipIf(os.name == "nt", "SIGTERM handling is POSIX-specific")
+    def test_stop_escalates_to_kill_for_a_payload_that_ignores_sigterm(self):
+        # Without a watchdog there used to be no escalation at all: a payload
+        # that ignored SIGTERM could not be stopped through the kit.
+        self.start("one", "T-345", "outputs/T-345/")
+        started = self.agentctl(
+            "run", "start", "--output", "outputs/T-345/result.txt", "--",
+            sys.executable, "-c",
+            "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(120)",
+        )
+        run_id = self.lease_id(started.stdout, "run")
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            shown = json.loads(self.agentctl("run", "show", run_id, "--json").stdout)["runs"][0]
+            if shown.get("processes"):
+                break
+            time.sleep(0.1)
+        self.agentctl("run", "stop", run_id, "--reason", "hung", "--kill-seconds", "1")
+        waited = self.agentctl("run", "wait", run_id, "--timeout", "30", expect=1)
+        self.assertIn("cancelled", waited.stdout)
+        shown = json.loads(self.agentctl("run", "show", run_id, "--json").stdout)["runs"][0]
+        self.assertEqual(shown["status"], "cancelled")
+        self.assertTrue(shown.get("supervisor_kill_sent_at_ns"), shown)
+
     def test_supervisor_entrypoint_is_single_use(self):
         self.start("one", "T-351", "outputs/T-351/")
         command = (

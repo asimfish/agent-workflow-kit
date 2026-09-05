@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-05 05:20:49",
+  "updated_at": "2026-09-05 17:02:00",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -356,6 +356,25 @@
       "deps": [],
       "created_at": "2026-09-05 05:18:52",
       "updated_at": "2026-09-05 05:20:49"
+    },
+    "TA08B0CC413F151F5-035": {
+      "title": "multi-machine day to day: sync in the agent loop with hints, run stop during the launch window and supervisor-side stop escalation, sync autostash, foreign-claim age on board and doctor",
+      "type": "code",
+      "status": "review",
+      "owner": "cursor",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/test_execution_lease_workflow.py",
+        "tests/test_multi_checkout_sync.py",
+        "templates/project/.agent/WORKFLOW_ENTRY.md",
+        ".agent/WORKFLOW_ENTRY.md",
+        "docs/workflow.md",
+        "docs/multi-session-execution.md",
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 16:28:08",
+      "updated_at": "2026-09-05 17:02:00"
     }
   },
   "updated": ""

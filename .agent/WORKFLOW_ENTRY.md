@@ -195,6 +195,34 @@ the sole bootstrap exception because it installs the identity hook itself.
 
   Releasing presence does not erase the task, plan, notes, or working files.
 
+## Other Checkouts And Machines
+
+Sessions and locks never leave this machine; other checkouts learn what is
+claimed here only through the Git ledger. When the repository has a remote:
+
+- After `work` claims or creates a task, and after `finish`, publish the
+  ledger from the planning checkout:
+
+  ```bash
+  python3 tools/agentctl.py sync
+  ```
+
+  `sync` commits only ledger data under `.agent/`, pulls with the ledger
+  merge driver, and pushes. Never commit code the same way; code waits for
+  review.
+- A task the board shows `in_progress` while no session in this checkout has
+  ever held it was claimed elsewhere. `start`/`work --task` refuse it. Treat
+  it as live. Only after reading its notes and confirming the work is
+  abandoned, take it over explicitly and say why:
+
+  ```bash
+  python3 tools/agentctl.py work --agent <agent-name> --task <task> --takeover --reason "<why>"
+  ```
+
+  The takeover is recorded in the task document, the progress log, and the
+  board. `board` marks such claims `[elsewhere, updated <age> ago]` and
+  `doctor` flags ones that have been quiet for a day.
+
 ## Supervisor Dispatch
 
 When the human names this agent as a supervisor and provides a Codex session ID:
@@ -270,6 +298,9 @@ Before claiming a phase complete:
    ```
 
    `finish` runs `pre-finish` and `post-finish` checkpoint loops automatically.
+
+4. If the repository has a remote, publish the review request so other
+   checkouts and the reviewer see it: `python3 tools/agentctl.py sync`.
 
 GitHub commits and pushes must obey `.agent/rules/github-standards.md`.
 Git hooks enforce Conventional Commits, task IDs, staged workflow docs, and
