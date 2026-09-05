@@ -36,8 +36,9 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] T4C1BFE6624636614-001 - re-review run stop fixes TA08B0CC413F151F5-035 (owner: independent-reviewer-035b)
 - [x] T3C559BCE606C5AE3-001 - review run stop and agent-loop sync TA08B0CC413F151F5-035 (owner: independent-reviewer-035)
-- [ ] TA08B0CC413F151F5-035 - multi-machine day to day: sync in the agent loop with hints, run stop during the launch window and supervisor-side stop escalation, sync autostash, foreign-claim age on board and doctor (owner: cursor)
+- [x] TA08B0CC413F151F5-035 - multi-machine day to day: sync in the agent loop with hints, run stop during the launch window and supervisor-side stop escalation, sync autostash, foreign-claim age on board and doctor (owner: cursor)
 - [x] T3BEB219C89F9854B-001 - review kit gitattributes TA08B0CC413F151F5-034 (owner: independent-reviewer-034)
 - [x] TA08B0CC413F151F5-034 - kit repository: adopt the ledger merge driver (.gitattributes) so its own worktree rebases stop conflicting on the board (owner: cursor)
 - [x] TB024B152CAB8BC86-001 - review loop report nonce TA08B0CC413F151F5-033 (owner: independent-reviewer-033)
