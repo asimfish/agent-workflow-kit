@@ -441,6 +441,47 @@ def _ledger_merge_driver_configured(root: Path) -> bool:
     return _git(root, "config", "--get", f"merge.{LEDGER_MERGE_DRIVER}.driver").strip() != ""
 
 
+def _wire_clone(root: Path) -> list[str]:
+    """Give this clone the Git config the kit's hooks and merge driver need.
+
+    `core.hooksPath` and `merge.<driver>.driver` live in the clone's config,
+    which `git clone` does not copy: a second machine checks out `.githooks/`
+    and `.gitattributes` and then works with no enforcement at all. When the
+    tree carries the kit's hooks and nothing else claims the setting, set
+    both the way `init` does. A `core.hooksPath` that points elsewhere is a
+    real conflict; it is reported, not overridden, so the caller can refuse.
+    """
+    if not (root / ".git").exists():
+        return []
+    problems: list[str] = []
+    if (root / ".githooks" / "pre-commit").is_file():
+        hooks_path = _git(root, "config", "--get", "core.hooksPath")
+        if not hooks_path:
+            _git(root, "config", "core.hooksPath", ".githooks")
+            print("agentctl: wired this clone's git hooks (core.hooksPath -> .githooks)")
+        elif hooks_path != ".githooks":
+            problems.append(
+                f"git core.hooksPath is '{hooks_path}', expected '.githooks'; the kit's "
+                "hooks are not active in this clone. Chain the current hooks from "
+                ".githooks/* if you need them, then run 'agentctl init .'"
+            )
+    if (
+        f"merge={LEDGER_MERGE_DRIVER}" in _read(root / ".gitattributes")
+        and not _ledger_merge_driver_configured(root)
+    ):
+        _configure_ledger_merge_driver(root)
+        print(f"agentctl: registered the '{LEDGER_MERGE_DRIVER}' merge driver for this clone")
+    return problems
+
+
+def _wire_clone_or_report(root: Path) -> list[str]:
+    """Wire the clone before a session starts writing; print what could not be wired."""
+    problems = _wire_clone(root)
+    for problem in problems:
+        print(f"agentctl: {problem}", file=sys.stderr)
+    return problems
+
+
 def _three_way_entries(base: dict, ours: dict, theirs: dict, resolve,
                        deletion_wins=None) -> dict:
     """Merge dicts keyed by id, one entry at a time.
@@ -2439,6 +2480,22 @@ def _sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+# What `init` tells the operator to stage for the adoption commit. Files are
+# named individually outside .agent/ and .githooks/ so a project's own
+# untracked files in shared directories are not swept in; the pre-commit
+# check refuses anything the installer did not write, so a slip is caught
+# rather than committed.
+ADOPTION_COMMIT_ADD_PATHS = (
+    f"{WORKFLOW_DIR}", ".githooks", "tools/agentctl.py",
+    "tools/agent_workflow_hook.py", ".github/workflows/agent-workflow-check.yml",
+    ".github/PULL_REQUEST_TEMPLATE.md", ".codex/hooks.json",
+    ".claude/settings.json", ".cursor/hooks.json",
+    ".cursor/rules/agent-workflow.mdc", ".gitattributes", ".gitignore",
+    "AGENTS.md",
+)
+ADOPTION_COMMIT_MESSAGE = "chore(agent): adopt agent-workflow-kit"
+
+
 def _managed_markdown_text(existing: str, desired: str, start: str, end: str) -> str:
     block = f"{start}\n{desired.strip()}\n{end}"
     pattern = re.compile(
@@ -2743,6 +2800,13 @@ def cmd_init(args: argparse.Namespace) -> int:
     if wired:
         print("agentctl: git core.hooksPath -> .githooks")
         print(f"agentctl: git merge driver '{LEDGER_MERGE_DRIVER}' -> ledger files under .agent/")
+        if not _git(root, "ls-files", "--", f"{WORKFLOW_DIR}/{INSTALL_MANIFEST_FILE}"):
+            print(
+                "agentctl: next, commit the installation on its own; this one commit "
+                "needs no task, the rules start with the next one:"
+            )
+            print(f"    git add {' '.join(ADOPTION_COMMIT_ADD_PATHS)}")
+            print(f'    git commit -m "{ADOPTION_COMMIT_MESSAGE}"')
     elif installed:
         print("agentctl: NOTE not a git repo; after 'git init' run: git config core.hooksPath .githooks")
     _finish_install_upgrade(root, upgrade_context)
@@ -2894,6 +2958,10 @@ def cmd_work(args: argparse.Namespace) -> int:
     identity_error = _workflow_session_identity_error()
     if identity_error:
         print(f"agentctl: {identity_error}", file=sys.stderr)
+        return 2
+    # Before any task state is written: a session that starts in a clone whose
+    # config does not point at the kit's hooks would work unguarded.
+    if _wire_clone_or_report(root):
         return 2
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
     if args.task:
@@ -3345,6 +3413,8 @@ def cmd_start(
         return 2
     if not (root / WORKFLOW_DIR / PLAN_FILE).is_file():
         print(f"agentctl: missing {WORKFLOW_DIR}/{PLAN_FILE}. run 'agentctl init' first.", file=sys.stderr)
+        return 2
+    if _wire_clone_or_report(root):
         return 2
     task = args.task
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
@@ -6053,9 +6123,22 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
         print(f"agentctl: unable to inspect planning checkout: {dirty.stderr.strip()}", file=sys.stderr)
         return 2
     if dirty.stdout.strip():
+        # Porcelain rows are "XY path" (renames "XY old -> new").
+        dirty_paths = [
+            line[3:].split(" -> ")[-1].strip()
+            for line in dirty.stdout.splitlines() if len(line) > 3
+        ]
+        non_ledger = sorted(p for p in dirty_paths if not _is_ledger_data_path(p))
+        if non_ledger:
+            shown = ", ".join(non_ledger[:8]) + (" ..." if len(non_ledger) > 8 else "")
+            hint = f"preserve or commit these first: {shown}"
+        else:
+            # The usual case: another conversation claimed or finished
+            # something here and has not published the ledger yet.
+            hint = "only ledger data is uncommitted; run 'agentctl sync' and retry"
         print(
             "agentctl: automatic worktree creation requires a clean planning checkout; "
-            "preserve or commit its current changes first",
+            f"{hint}",
             file=sys.stderr,
         )
         return 1
@@ -12704,6 +12787,11 @@ def _check_precommit(root: Path) -> list:
     p = _check_git_exclusive(root)
     st = _load_session(root)
     staged = [f for f in _git(root, "diff", "--cached", "--name-only").splitlines() if f.strip()]
+    adoption = _adoption_commit_problems(root)
+    if adoption is not None:
+        # The commit that installs the kit exists before any task it could be
+        # claimed under, so it is judged by its contents instead.
+        return p + adoption + _scan_secrets_staged(root, staged)
     if staged and not st.get("task"):
         p.append("staged changes but no active task (run agentctl work --agent <name>)")
     if staged:
@@ -12736,7 +12824,7 @@ def _check_commit_msg(root: Path, msg_file: str | None) -> list:
     p = []
     if not CONVENTIONAL_RE.match(subject.strip()):
         p.append(f"subject not Conventional Commits: '{subject.strip()}' (want 'type(scope): summary')")
-    if not TASK_ID_RE.search("\n".join(lines)):
+    if not TASK_ID_RE.search("\n".join(lines)) and _adoption_commit_problems(root) != []:
         p.append("commit message missing task ID (e.g. add 'Refs: T-001')")
     return p
 
@@ -12777,6 +12865,98 @@ def _commit_is_ledger_only(root: Path, sha: str) -> bool:
     listing = _git(root, "diff-tree", "--no-commit-id", "--name-only", "-r", "--root", sha)
     paths = [line.strip() for line in listing.splitlines() if line.strip()]
     return bool(paths) and all(_is_ledger_data_path(path) for path in paths)
+
+
+def _git_blob_text(root: Path, spec: str) -> str | None:
+    """Content of `<rev>:<path>` (or `:<path>` for the index), newline-normalized like _read."""
+    try:
+        raw = subprocess.check_output(
+            ["git", "-C", str(root), "show", spec], stderr=subprocess.DEVNULL,
+        )
+    except Exception:
+        return None
+    return raw.decode("utf-8", "replace").replace("\r\n", "\n")
+
+
+def _commit_changes(root: Path, sha: str | None) -> dict[str, str]:
+    """Path -> git status letter for the index (sha None) or for one commit."""
+    if sha is None:
+        listing = _git(root, "diff", "--cached", "--name-status", "--no-renames")
+    else:
+        listing = _git(
+            root, "diff-tree", "--no-commit-id", "--no-renames", "--name-status",
+            "-r", "--root", sha,
+        )
+    changes: dict[str, str] = {}
+    for line in listing.splitlines():
+        parts = line.split("\t", 1)
+        if len(parts) == 2 and parts[1].strip():
+            changes[parts[1].strip()] = parts[0].strip()[:1]
+    return changes
+
+
+def _adoption_commit_problems(root: Path, sha: str | None = None) -> list[str] | None:
+    """Judge the commit that adds the kit to a repository.
+
+    Returns None when the index (sha None) or the commit does not add
+    `.agent/install-manifest.json`, i.e. it is an ordinary commit. Otherwise
+    returns the reasons it is not a clean installation: an empty list means
+    every changed path is something `agentctl init` writes or merges and every
+    managed file matches the hash the manifest records for it. Such a commit
+    predates the task board it would have to be claimed against, so the hooks
+    accept it without a task; anything else bundled into it is refused.
+
+    The kit's own source tree is never an installed target and has no
+    manifest, so there the exemption does not exist at all: a manifest staged
+    in a source checkout is ordinary work under the ordinary rules.
+    """
+    if _is_kit_source_checkout(root):
+        return None
+    manifest_rel = f"{WORKFLOW_DIR}/{INSTALL_MANIFEST_FILE}"
+    changes = _commit_changes(root, sha)
+    if changes.get(manifest_rel) != "A":
+        return None
+    spec_prefix = f"{sha}:" if sha else ":"
+    manifest_text = _git_blob_text(root, spec_prefix + manifest_rel)
+    try:
+        manifest = json.loads(manifest_text or "")
+    except json.JSONDecodeError:
+        manifest = None
+    if not isinstance(manifest, dict):
+        return [f"{manifest_rel} is not a JSON object; rerun agentctl init"]
+    managed = manifest.get("managed_files")
+    if not isinstance(managed, dict):
+        managed = {}
+    hooks = manifest.get("managed_hooks")
+    installer_paths = set(managed) | set(hooks if isinstance(hooks, dict) else {})
+    installer_paths |= _MERGED_TEMPLATE_PATHS | {".gitattributes"}
+    where = "staged" if sha is None else f"in {sha[:12]}"
+    problems: list[str] = []
+    extra = sorted(
+        path for path in changes
+        if not (path.startswith(f"{WORKFLOW_DIR}/") or path in installer_paths)
+    )
+    if extra:
+        problems.append(
+            "the commit that adds the kit may contain only files agentctl init wrote; "
+            f"also {where}: {', '.join(extra)} -- commit those separately under a task"
+        )
+    deleted = sorted(path for path, status in changes.items() if status == "D")
+    if deleted:
+        problems.append(
+            f"the commit that adds the kit deletes {', '.join(deleted)}; "
+            "agentctl init never deletes, so commit that separately under a task"
+        )
+    for rel, digest in sorted(managed.items()):
+        if rel not in changes:
+            continue
+        text = _git_blob_text(root, spec_prefix + rel)
+        if text is None or _sha256_text(text) != str(digest):
+            problems.append(
+                f"{rel} differs from the version agentctl init installed; "
+                "rerun init, or commit the change under a task"
+            )
+    return problems
 
 
 def _refs_trailer_task_ids(body: str) -> list[str]:
@@ -12827,6 +13007,12 @@ def _check_prepush(
         body = parts[2] if len(parts) > 2 else ""
         if not CONVENTIONAL_RE.match(subject.strip()):
             p.append(f"commit not Conventional: '{subject.strip()}'")
+        adoption = _adoption_commit_problems(root, sha)
+        if adoption is not None:
+            # Installing the kit is the adoption baseline's last step; the
+            # task rules start with the next commit.
+            p.extend(adoption)
+            continue
         ids = TASK_ID_RE.findall(subject + " " + body)
         if not ids:
             p.append(f"commit missing task ID: '{subject.strip()}'")

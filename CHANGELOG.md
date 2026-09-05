@@ -182,3 +182,32 @@ the lease, and the payload could receive a second SIGTERM from the
 supervisor; the claim now accepts a lease that is already stopping and every
 stop path records that it signalled before it signals. `sync` warns when
 git kept an autostash it could not re-apply.
+
+Replaying the README install on a blank project as a person in a plain
+terminal found that the kit's first commit could not pass the kit's own
+hooks: pre-commit wanted an active task, which a terminal without a
+conversation identity cannot claim; pre-push wanted a task id; the only way
+through was `--no-verify` twice, which is what every deployment so far had
+quietly done. The commit that first adds `.agent/install-manifest.json` is
+now the adoption commit and the hooks accept it without a task, provided it
+contains nothing but what `init` wrote (managed files are checked against
+the manifest hashes, extra paths and deletions are refused by name, and
+pre-push decides from the commit content so skipped local hooks change
+nothing). The kit's own source checkout, which has no manifest, gets no
+such exemption. `init` prints the exact `git add` and `git commit` lines on
+a first install.
+
+The same replay continued onto a second machine and found the mirror image:
+a fresh clone of an adopted project has `.githooks/` and `.gitattributes` in
+its tree but `core.hooksPath` and the merge driver are clone-local config
+that `git clone` does not carry, so the first agent there worked with no
+hooks active and nothing said so. `work` and `start` now wire both before
+any task state is written when the setting is free, and refuse when
+`core.hooksPath` already points elsewhere, naming the fix. The READMEs also
+gained the reviewer's own `finish` (which closes the review task on the
+recorded decision and which the walkthrough had left out), `--type code`
+on the claim example so the worktree sentence next to it is true of it,
+the `--reason` that `run stop` requires, and the real test count. When a
+code task cannot get its worktree because the planning checkout is dirty,
+the refusal now names the paths, or says `agentctl sync` when all of them
+are ledger data another conversation has not published yet.

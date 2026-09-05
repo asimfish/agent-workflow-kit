@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-05 18:50:50",
+  "updated_at": "2026-09-05 21:10:14",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -399,6 +399,23 @@
       "deps": [],
       "created_at": "2026-09-05 18:31:06",
       "updated_at": "2026-09-05 18:50:50"
+    },
+    "TA08B0CC413F151F5-036": {
+      "title": "adoption commit: the commit that installs the kit passes the kit's own hooks",
+      "type": "code",
+      "status": "in_progress",
+      "owner": "cursor",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/test_day_one_walkthrough.py",
+        "README.md",
+        "README_CN.md",
+        "docs/install-and-upgrade.md",
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-09-05 19:52:02",
+      "updated_at": "2026-09-05 21:10:14"
     }
   },
   "updated": ""

@@ -38,6 +38,11 @@ Nothing goes on your `PATH`: `agentctl` in this document means
 `python3 tools/agentctl.py`, run from the project root. Agents already use
 the long form because `.agent/WORKFLOW_ENTRY.md` tells them to.
 
+Then commit the installation on its own, with the `git add` and `git commit`
+lines the installer prints. That one commit needs no task: the hooks
+recognize the commit that adds the kit and accept it as long as it contains
+nothing but what the installer wrote. The rules start with the next commit.
+
 From then on the only thing you need to say to an agent is:
 
 > Follow .agent and start work.
@@ -57,13 +62,15 @@ task and the paths it will write:
 
 ```bash
 agentctl work --agent codex                        # take an existing task
-agentctl work --agent codex --auto-create \
+agentctl work --agent codex --auto-create --type code \
     --title "fix the data loader" --scope "src/data/"   # or open a new one
 ```
 
 A second conversation that asks for the same task, or for a path inside
-`src/data/`, is refused. Code and experiment tasks get their own Git
-worktree automatically, so two agents never edit the same checkout.
+`src/data/`, is refused. Tasks of type `code` and `experiment` get their own
+Git worktree automatically (the command prints where to continue), so two
+agents never edit the same checkout; `docs`, `review`, and `generic` tasks
+share it.
 
 **Agent: work and leave a trail.**
 
@@ -104,10 +111,13 @@ agentctl agents add --id reviewer --role review
 agentctl work --agent reviewer --auto-create --type review \
     --title "review T-001" --scope ".agent/"
 agentctl gate approve --task T-001 --by reviewer --note "..."
+agentctl finish --summary "approved T-001" --tests "..."   # closes the review task
 ```
 
 The controller compares runtime fingerprints, so a conversation cannot
-approve its own work. For a task that ran in a worktree, bring its records
+approve its own work. The reviewer's own `finish` closes the review task on
+the recorded decision; no second review is asked for. For a task that ran
+in a worktree, bring its records
 back to the main checkout with `agentctl reconcile merge-back --from-ref
 <branch>` before opening the pull request (`docs/worktree-merge-back.md`).
 
@@ -158,6 +168,10 @@ flowchart LR
   changes agent behavior cannot), the ledger
   files merge per task instead of conflicting per line, and a task that
   another machine has claimed can only be taken with `--takeover --reason`.
+  A fresh clone has the hooks in its tree but not in its Git config; the
+  first `agentctl work` there wires them (and the merge driver) before any
+  task state is written, and refuses if `core.hooksPath` already points
+  somewhere else.
 
 ## Everyday commands
 
@@ -166,7 +180,7 @@ flowchart LR
 | `agentctl work --agent <name>` | claim or resume a task (`--auto-create` opens a new one) |
 | `agentctl note "..."` | record progress on the current task |
 | `agentctl finish --summary ... --tests ...` | hand the task to review |
-| `agentctl run start -- <command>` | supervised background job; `run list`, `run stop` |
+| `agentctl run start -- <command>` | supervised background job; `run list`, `run stop <run-id> --reason "..."` |
 | `agentctl gate approve --task <id> --by <reviewer>` | independent approval (or `gate reject`) |
 | `agentctl board` | who is doing what |
 | `agentctl doctor` | what is stuck, and how to unstick it |
@@ -207,7 +221,7 @@ the board.
 
 ## Status
 
-236 regression tests run on Linux in CI; a Windows job runs the subset that
+272 regression tests run on Linux in CI; a Windows job runs the subset that
 exercises Windows-specific process handling. The coordination guarantees
 were also exercised end to end on a fresh install: concurrent
 conversations, a conversation that died holding a GPU, a project deleted
