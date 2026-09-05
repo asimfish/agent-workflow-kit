@@ -144,8 +144,15 @@ becomes `exited_unknown`, never success; a worker must reconcile it with
 `run finish`. Local resources use atomic filesystem locks. Remote resources use
 an atomic directory on the named SSH host. Completion releases resources only
 after the result is known. Only the holder conversation may stop or finish a
-run. A supervised run claims a private single-use launch token atomically, so
-replaying the hidden supervisor entrypoint cannot create a second child.
+run. `run stop` works from the moment `run start` returns: if it lands before
+the supervisor has registered the payload, the stop is recorded, the
+supervisor cancels the launch (or the stop signals the payload as soon as it
+appears), and the run ends `cancelled`. The supervisor also escalates a
+requested stop to a kill after `--kill-seconds` (default: the watchdog's
+`kill_seconds`, else 30), so a payload that ignores SIGTERM can still be
+stopped through the kit. A supervised run claims a private single-use launch
+token atomically, so replaying the hidden supervisor entrypoint cannot create
+a second child.
 There is no public force-release override: conversation resources require the
 matching conversation holder, while run cleanup presents the matching
 `run:<lease-id>` holder.
@@ -327,6 +334,15 @@ it anyway and records `taken over from <owner> by <agent>: <reason>` in
 the task document, the progress log, and the board entry
 (`taken_over_from`, `takeover_reason`). Auto-selection never picks an
 `in_progress` task, so this only ever applies to an explicit `--task`.
+
+`agentctl work` and `agentctl finish` print a one-line reminder to `sync`
+when the repository has a remote; `.agent/WORKFLOW_ENTRY.md` tells agents to
+do so after claiming, creating, or finishing a task. `sync` autostashes
+unrelated local edits around the pull, so a dirty tree does not stall the
+round trip. `board` marks a task claimed from another checkout as
+`[elsewhere, updated <age> ago]`, and `doctor` warns when such a claim's
+board entry has not changed for a day -- a request to look, never an
+automatic takeover.
 
 What still does not cross machines: session liveness (a machine cannot tell
 whether another machine's conversation is alive, only that its claim is on

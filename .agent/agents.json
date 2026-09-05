@@ -270,6 +270,24 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-reviewer-035": {
+      "role": "independent review",
+      "backend": "cursor",
+      "write_scope": [],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
+    },
+    "independent-reviewer-035b": {
+      "role": "independent review",
+      "backend": "cursor",
+      "write_scope": [],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

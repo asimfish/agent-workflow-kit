@@ -64,6 +64,9 @@ SESSION_RUNTIME_DIR = "sessions"
 SESSION_COORDINATION_LOCK = "sessions.lock"
 SESSION_VIEW_FILE = "SESSIONS.md"
 SESSION_STALE_SECONDS = 30 * 60
+# A task claimed from another checkout whose board entry has not changed for
+# this long is flagged by doctor as worth checking (never taken over on its own).
+FOREIGN_CLAIM_QUIET_HOURS = 24
 SESSION_ID_ENV = "AGENT_WORKFLOW_SESSION_ID"
 SESSION_OWNER_RUNTIME_ENV = "AGENT_WORKFLOW_SESSION_OWNER_RUNTIME"
 SESSION_INSTANCE_ENV = "AGENT_WORKFLOW_SESSION_INSTANCE_ID"
@@ -520,6 +523,9 @@ def _merge_ledger_json(base_text: str, ours_text: str, theirs_text: str,
         return data
 
     base, ours, theirs = load("base", base_text), load("ours", ours_text), load("theirs", theirs_text)
+    for label, side in (("base", base), ("ours", ours), ("theirs", theirs)):
+        if collection in side and not isinstance(side[collection], dict):
+            raise ValueError(f"{label} side: {collection} is not a JSON object")
     merged = {**theirs, **ours}  # top-level fields: ours wins, theirs-only keys survive
     merged[collection] = _three_way_entries(
         base.get(collection) or {}, ours.get(collection) or {}, theirs.get(collection) or {},
@@ -637,12 +643,13 @@ def _git_run(root: Path, *args: str) -> subprocess.CompletedProcess:
 def cmd_sync(args: argparse.Namespace) -> int:
     """Publish this checkout's ledger and pick up everyone else's.
 
-    Stages only `.agent/`, commits with a `Refs:` trailer for the active
-    task, makes sure the ledger merge driver is registered, pulls with
-    rebase, re-renders the views if the merge left them behind the board,
-    and pushes. Code changes are never swept in: a staged path outside
-    `.agent/` is refused so an unreviewed edit cannot ride along with a
-    claim.
+    Stages only ledger data (LEDGER_DATA_PATHS), commits with a `Refs:`
+    trailer for the active task, makes sure the ledger merge driver is
+    registered, pulls with rebase (autostashing unrelated local edits so a
+    dirty tree does not stall the round trip), re-renders the views if the
+    merge left them behind the board, and pushes. Code never rides along:
+    a staged path that is not ledger data is refused, and non-data changes
+    under .agent/ are named and left unstaged.
     """
     root = _repo_root()
     if not (root / ".git").exists():
@@ -735,7 +742,7 @@ def cmd_sync(args: argparse.Namespace) -> int:
     else:
         print("agentctl: sync found no ledger changes to commit")
 
-    pull = _git_run(root, "pull", "--rebase", "--quiet", args.remote, branch)
+    pull = _git_run(root, "pull", "--rebase", "--autostash", "--quiet", args.remote, branch)
     if pull.returncode:
         conflicted = [
             line.strip() for line in _git(root, "diff", "--name-only", "--diff-filter=U").splitlines()
@@ -755,6 +762,17 @@ def cmd_sync(args: argparse.Namespace) -> int:
             print("  " + (pull.stderr.strip() or pull.stdout.strip()), file=sys.stderr)
         return 1
     print(f"agentctl: sync pulled {args.remote}/{branch}")
+    # git exits 0 when the autostash could not be re-applied cleanly and only
+    # warns; the edits then sit in the stash list. Say so instead of hiding it.
+    pull_output = (pull.stdout or "") + (pull.stderr or "")
+    leftover_stash = any("autostash" in line for line in _git(root, "stash", "list").splitlines())
+    if leftover_stash or "autostash resulted in conflicts" in pull_output:
+        print(
+            "agentctl: WARNING your unrelated local edits could not be re-applied after the "
+            "pull and were kept in the stash; run 'git stash list' and 'git stash pop' to "
+            "resolve them by hand",
+            file=sys.stderr,
+        )
 
     # A merge that combined two boards can leave the rendered views a step
     # behind (ordering, a title edited on one side); the board is canonical.
@@ -3243,6 +3261,33 @@ def cmd_work(args: argparse.Namespace) -> int:
     return cmd_start(start_args)
 
 
+def _print_sync_hint(root: Path, what: str) -> None:
+    """One line, only when the repository has a remote: ledger state travels by `sync`."""
+    if not (root / ".git").exists() or not _git(root, "remote").strip():
+        return
+    print(
+        f"agentctl: other checkouts learn about {what} only after 'agentctl sync' "
+        "(ledger-only commit, pull, push)",
+        file=sys.stderr,
+    )
+
+
+def _foreign_claim_age(entry: dict) -> _dt.timedelta | None:
+    stamp = _parse_workflow_timestamp(entry.get("updated_at") or entry.get("created_at"))
+    if stamp is None:
+        return None
+    return _dt.datetime.now() - stamp
+
+
+def _format_age(delta: _dt.timedelta) -> str:
+    seconds = int(max(0, delta.total_seconds()))
+    if seconds < 3600:
+        return f"{max(1, seconds // 60)}m"
+    if seconds < 86400:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
+
+
 def _foreign_claim_holder(root: Path, task: str, entry: dict) -> str:
     """Owner of a task the board shows in_progress that no session here ever held.
 
@@ -3476,6 +3521,7 @@ def cmd_start(
     if meta["session_id"]:
         label += f" session={meta['session_id']}"
     print(f"agentctl: started {task} ({label}) -> in_progress")
+    _print_sync_hint(root, "this claim")
     _print_focus(
         root, task, agent, session_id=meta["session_id"], model=meta["model"],
         reasoning_effort=meta["reasoning_effort"],
@@ -3772,6 +3818,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
             f"--role review'), start a separate review task, then run "
             f"agentctl gate approve --task {task} --by <reviewer>"
         )
+        _print_sync_hint(root, "this review request")
     _run_loop_checkpoint(root, "post-finish", once=True, trigger="post-finish", strict=False)
     return 0
 
@@ -4155,11 +4202,21 @@ def cmd_board(args: argparse.Namespace) -> int:
         print("agentctl: board is empty")
         return 0
     print(f"Task Board (updated {board.get('updated_at', '')}):")
+    local_tasks = {
+        str(row.get("task") or "") for row in _session_rows_unlocked(root)
+    } if (root / ".git").exists() else set()
     for tid in sorted(tasks):
         t = tasks[tid]
         owner = t.get("owner") or "-"
         scope = ",".join(t.get("scope") or []) or "-"
-        print(f"  {tid:<10} {t.get('status', '?'):<12} owner={owner:<12} scope={scope:<24} {t.get('title', '')}")
+        marker = ""
+        if t.get("status") == "in_progress" and tid not in local_tasks:
+            # Claimed from another checkout or machine: this checkout cannot
+            # see that conversation's heartbeat, only when the board entry
+            # last changed.
+            age = _foreign_claim_age(t)
+            marker = f"  [elsewhere, updated {_format_age(age) if age else '?'} ago]"
+        print(f"  {tid:<10} {t.get('status', '?'):<12} owner={owner:<12} scope={scope:<24} {t.get('title', '')}{marker}")
     return 0
 
 
@@ -8178,7 +8235,11 @@ def _run_supervisor_claim(root: Path, lease_id: str, token: str) -> tuple[dict |
             expected_hash = str(lease.get("supervisor_token_sha256") or "")
             if lease.get("kind") != "run" or lease.get("mode") != "supervised":
                 found["error"] = "lease is not a supervised run"
-            elif lease.get("status") != "starting" or lease.get("supervisor_claimed_at"):
+            elif lease.get("supervisor_claimed_at") or lease.get("status") not in {"starting", "stopping"}:
+                # A `run stop` that lands before this claim leaves the lease
+                # `stopping`; the claim must still succeed so the supervisor
+                # can finalize the cancellation instead of exiting and
+                # stranding the lease as exited_unknown.
                 found["error"] = "supervisor was already claimed"
             elif not expected_hash or not hmac.compare_digest(expected_hash, supplied_hash):
                 found["error"] = "supervisor token does not match"
@@ -8243,6 +8304,29 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
         if failed:
             _run_release_resources(root, failed, "run payload invalid")
         return 2
+    if _run_stop_requested_before_launch(root, lease_id):
+        # `run stop` arrived while the payload was still being prepared:
+        # do not launch it at all.
+        try:
+            cancelled = _run_update_with_retry(root, lease_id, lambda lease: lease.update({
+                "status": "cancelled",
+                "returncode": None,
+                "finished_at": _now(),
+                "heartbeat_at": _now(),
+            }))
+        except TimeoutError:
+            print(
+                f"agentctl: unable to persist cancellation for {lease_id}: "
+                "lease registry lock timed out",
+                file=sys.stderr,
+            )
+            return 2
+        if cancelled:
+            try:
+                _run_release_resources(root, cancelled, "run cancelled before launch")
+            except TimeoutError:
+                pass
+        return 0
     stdout_path, stderr_path = _run_log_paths(root, lease_id)
     try:
         with stdout_path.open("ab", buffering=0) as stdout, stderr_path.open("ab", buffering=0) as stderr:
@@ -8267,11 +8351,17 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
                 "birth_marker": _process_birth_marker(child.pid),
                 "process_group": child.pid if os.name == "posix" else None,
             }
-            _run_update_with_retry(root, lease_id, lambda lease: lease.update({
-                "status": "running",
-                "processes": [child_record],
-                "heartbeat_at": _now(),
-            }))
+
+            def register_child(lease: dict) -> None:
+                # A stop recorded between the claim and this registration
+                # must survive; the loop below honors it.
+                if str(lease.get("status") or "") != "stopping":
+                    lease["status"] = "running"
+                lease["processes"] = [child_record]
+                lease["heartbeat_at"] = _now()
+
+            _run_update_with_retry(root, lease_id, register_child)
+            supervisor_stop_sent_ns = 0
 
             def tolerate_lock_timeout(operation) -> bool:
                 # Heartbeats and telemetry snapshots are periodic; skipping
@@ -8285,6 +8375,39 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
 
             while child.poll() is None:
                 current = _runtime_lease(root, lease_id) or {}
+                if str(current.get("status") or "") == "stopping" and not (
+                    current.get("watchdog") or {}
+                ).get("auto_termination_at_ns"):
+                    # The supervisor is the one process guaranteed to see a
+                    # stop request and to be able to signal the payload: it
+                    # terminates once (unless `run stop` already did) and
+                    # escalates to a kill when the deadline passes -- also
+                    # for runs without a watchdog, which previously had no
+                    # escalation at all. A stop the watchdog itself issued is
+                    # left to the watchdog's own kill deadline.
+                    now_ns = time.time_ns()
+                    deadline_ns = int(current.get("termination_deadline_ns") or 0)
+                    if not supervisor_stop_sent_ns:
+                        if current.get("stop_signal_sent_at_ns"):
+                            supervisor_stop_sent_ns = int(current["stop_signal_sent_at_ns"])
+                        else:
+                            try:
+                                _signal_run_process(child_record, signal.SIGTERM)
+                            except OSError:
+                                pass
+                            supervisor_stop_sent_ns = now_ns
+                    elif deadline_ns and now_ns >= deadline_ns and not current.get("supervisor_kill_sent_at_ns"):
+                        try:
+                            _signal_run_process(child_record, PORTABLE_SIGKILL)
+                        except OSError:
+                            pass
+                        try:
+                            _run_update(root, lease_id, lambda lease: lease.update({
+                                "supervisor_kill_sent_at_ns": now_ns,
+                                "heartbeat_at": _now(),
+                            }))
+                        except TimeoutError:
+                            pass
                 watchdog = dict(current.get("watchdog") or {})
                 policy = watchdog.get("policy") or {}
                 if watchdog.get("enabled"):
@@ -8918,6 +9041,67 @@ def _run_finish(root: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_stop_requested_before_launch(root: Path, lease_id: str) -> bool:
+    current = _runtime_lease(root, lease_id) or {}
+    return str(current.get("status") or "") == "stopping"
+
+
+def _run_stop_before_payload(root: Path, args: argparse.Namespace, kill_seconds: float) -> int:
+    """Stop a run whose supervisor is up but whose payload has not been registered yet."""
+    _run_update(root, args.lease, lambda item: item.update({
+        "status": "stopping",
+        "stop_reason": args.reason,
+        "termination_deadline_ns": time.time_ns() + int(kill_seconds * 1_000_000_000),
+        "heartbeat_at": _now(),
+    }))
+    deadline = time.monotonic() + max(0.0, float(getattr(args, "wait_seconds", 15.0) or 0.0))
+    while True:
+        current = _runtime_lease(root, args.lease) or {}
+        status = str(current.get("status") or "")
+        if status in {"cancelled", "failed", "succeeded"}:
+            print(f"agentctl: run {args.lease} stopped before its process launched ({status})")
+            return 0
+        processes = current.get("processes") or []
+        child = processes[-1] if processes else None
+        if child is not None:
+            if _runtime_process_alive(child):
+                # Record before signalling so the supervisor, which may
+                # observe the registered payload at the same moment, does
+                # not send a second SIGTERM; if the signal fails it still
+                # escalates to a kill after the deadline.
+                try:
+                    _run_update(root, args.lease, lambda item: item.update({
+                        "stop_signal_sent_at_ns": time.time_ns(),
+                    }))
+                except TimeoutError:
+                    pass
+                try:
+                    _signal_run_process(child, signal.SIGTERM)
+                except OSError as exc:
+                    print(
+                        f"agentctl: stop recorded for run {args.lease}; the supervisor will "
+                        f"terminate the process (direct signal failed: {exc})",
+                        file=sys.stderr,
+                    )
+                    return 0
+            print(f"agentctl: stop requested for run {args.lease}")
+            return 0
+        if not _runtime_process_alive(current.get("supervisor_process")):
+            print(
+                f"agentctl: run {args.lease} supervisor exited before launching the process; "
+                "inspect and finish/reconcile it",
+                file=sys.stderr,
+            )
+            return 1
+        if time.monotonic() >= deadline:
+            print(
+                f"agentctl: stop recorded for run {args.lease}; the supervisor cancels the "
+                "launch or terminates the process once it is registered"
+            )
+            return 0
+        time.sleep(0.1)
+
+
 def _run_stop(root: Path, args: argparse.Namespace) -> int:
     lease = _runtime_lease(root, args.lease)
     if not lease or lease.get("kind") != "run":
@@ -8929,15 +9113,30 @@ def _run_stop(root: Path, args: argparse.Namespace) -> int:
         return 1
     processes = lease.get("processes") or []
     child = processes[-1] if processes else None
+    watchdog_policy = (lease.get("watchdog") or {}).get("policy") or {}
+    kill_seconds = float(
+        getattr(args, "kill_seconds", None) or watchdog_policy.get("kill_seconds") or 30.0
+    )
     if not _runtime_process_alive(child):
+        if child is None and _runtime_process_alive(lease.get("supervisor_process")) and str(
+            lease.get("status") or ""
+        ) in {"starting", "running"}:
+            # `run start` returns as soon as the supervisor claims the
+            # lease; the payload is registered a moment later. A stop that
+            # lands in that window used to be refused as "not alive". Record
+            # the stop first -- the supervisor cancels the launch if it has
+            # not happened yet -- then wait for the payload to appear and
+            # signal it.
+            return _run_stop_before_payload(root, args, kill_seconds)
         print("agentctl: run process is not alive; inspect and finish/reconcile it", file=sys.stderr)
         return 1
-    watchdog_policy = (lease.get("watchdog") or {}).get("policy") or {}
-    kill_seconds = float(watchdog_policy.get("kill_seconds") or 30.0)
     _run_update(root, args.lease, lambda item: item.update({
         "status": "stopping",
         "stop_reason": args.reason,
         "termination_deadline_ns": time.time_ns() + int(kill_seconds * 1_000_000_000),
+        # Recorded before the signal: the supervisor sends its own SIGTERM
+        # only when nobody else did, and escalates to a kill regardless.
+        "stop_signal_sent_at_ns": time.time_ns(),
         "heartbeat_at": _now(),
     }))
     try:
@@ -8948,6 +9147,7 @@ def _run_stop(root: Path, args: argparse.Namespace) -> int:
                 item["status"] = "running"
                 item.pop("stop_reason", None)
                 item.pop("termination_deadline_ns", None)
+                item.pop("stop_signal_sent_at_ns", None)
                 item["heartbeat_at"] = _now()
 
         _run_update(root, args.lease, rollback)
@@ -13451,6 +13651,35 @@ def _doctor_report(root: Path) -> dict:
         ),
     })
 
+    # Claims made from other checkouts or machines: no heartbeat is visible
+    # here, so the board entry's own age is the only signal. Quiet for a day
+    # is worth a look, never an automatic takeover.
+    known_tasks = {str(row.get("task") or "") for row in _session_rows_unlocked(root)}
+    foreign_claims = [
+        (tid, entry) for tid, entry in (_load_board(root).get("tasks") or {}).items()
+        if isinstance(entry, dict) and entry.get("status") == "in_progress" and tid not in known_tasks
+    ]
+    quiet_claims = []
+    for tid, entry in foreign_claims:
+        age = _foreign_claim_age(entry)
+        if age is not None and age >= _dt.timedelta(hours=FOREIGN_CLAIM_QUIET_HOURS):
+            quiet_claims.append((tid, entry, age))
+    for tid, entry, age in quiet_claims:
+        warnings.append(
+            f"task {tid} is in_progress for {entry.get('owner') or 'another agent'} in another "
+            f"checkout and its board entry has not changed for {_format_age(age)}; check that "
+            f"machine's notes, then 'agentctl work --agent <name> --task {tid} --takeover "
+            f"--reason <why>' if the work is abandoned"
+        )
+    checks.append({
+        "name": "claims from other checkouts",
+        "status": "warn" if quiet_claims else "ok",
+        "detail": (
+            f"{len(foreign_claims)} in_progress elsewhere, {len(quiet_claims)} quiet for "
+            f">= {FOREIGN_CLAIM_QUIET_HOURS}h"
+        ),
+    })
+
     return {
         "root": str(root),
         "ok": not problems,
@@ -14234,6 +14463,16 @@ def build_parser() -> argparse.ArgumentParser:
     rstop = rsub.add_parser("stop")
     rstop.add_argument("lease")
     rstop.add_argument("--reason", required=True)
+    rstop.add_argument(
+        "--kill-seconds", dest="kill_seconds", type=float, default=None,
+        help="Grace period before the supervisor escalates SIGTERM to a kill "
+             "(default: the run's watchdog kill_seconds, else 30)",
+    )
+    rstop.add_argument(
+        "--wait-seconds", dest="wait_seconds", type=float, default=15.0,
+        help="How long to wait for a just-started run to register its process "
+             "before leaving the stop to the supervisor (default 15)",
+    )
     sp.set_defaults(func=cmd_run)
 
     sp = sub.add_parser("resource")

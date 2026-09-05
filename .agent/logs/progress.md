@@ -269,3 +269,5 @@ Append-only human-readable progress log. Use task docs for durable task facts.
 - 2026-09-05 04:00:44 [TA08B0CC413F151F5-032] fixture: bare origin HEAD -> main; clone -b main
 - 2026-09-05 04:43:06 [TA08B0CC413F151F5-033] nonce in loop report names; docs + tests updated
 - 2026-09-05 05:16:55 [TA08B0CC413F151F5-034] gitattributes + driver config applied to the kit repo
+- 2026-09-05 16:46:57 [TA08B0CC413F151F5-035] stop window + escalation, sync autostash, hints, board/doctor foreign-claim age, WORKFLOW_ENTRY guidance; tests green so far
+- 2026-09-05 18:11:54 [TA08B0CC413F151F5-035] review 035 findings fixed: pre-claim stop claim, SIGTERM once, autostash warning

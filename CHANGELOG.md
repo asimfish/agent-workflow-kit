@@ -162,3 +162,23 @@ an add/add conflict. Report names now carry a six-character nonce derived
 from the host and the checkout path. The kit's own repository now carries
 the `.gitattributes` block too, so its worktree rebases merge the board
 instead of stopping on it.
+
+Day-to-day follow-through on the multi-machine work. `.agent/WORKFLOW_ENTRY.md`
+now tells agents to `sync` after claiming, creating, or finishing a task and
+how to take over a task claimed elsewhere; `work` and `finish` print the
+reminder when a remote exists; `board` marks claims from other checkouts
+with their age and `doctor` flags ones quiet for a day. `sync` autostashes
+unrelated local edits so a dirty tree no longer stalls the pull after the
+ledger was committed, and a ledger whose `tasks` is not an object is a
+conflict, not a merge. `run stop` now works from the moment `run start`
+returns: a stop that lands before the supervisor registered the payload is
+recorded and the supervisor cancels the launch or the stop signals the
+payload as it appears, instead of the old "run process is not alive"
+refusal; the supervisor also escalates a requested stop to a kill after
+`--kill-seconds`, so a payload that ignores SIGTERM can be stopped without
+a watchdog -- a gap Windows CI had already brushed against. Review of this change found and fixed two more: a stop that
+landed before the supervisor's claim used to make the claim fail and strand
+the lease, and the payload could receive a second SIGTERM from the
+supervisor; the claim now accepts a lease that is already stopping and every
+stop path records that it signalled before it signals. `sync` warns when
+git kept an autostash it could not re-apply.
