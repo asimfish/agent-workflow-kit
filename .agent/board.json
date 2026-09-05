@@ -444,7 +444,7 @@
     "TA08B0CC413F151F5-037": {
       "title": "task contract as the audit surface: Definition of Done required at finish, tests as a re-runnable command",
       "type": "code",
-      "status": "in_progress",
+      "status": "review",
       "owner": "cursor",
       "scope": [
         "tools/agentctl.py",
@@ -459,7 +459,7 @@
       ],
       "deps": [],
       "created_at": "2026-09-06 02:43:47",
-      "updated_at": "2026-09-06 04:20:22"
+      "updated_at": "2026-09-06 06:47:35"
     }
   },
   "updated": ""
