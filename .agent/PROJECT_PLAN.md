@@ -70,6 +70,7 @@ instead of relying on chat memory or repeated human prompts.
 - [x] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) (owner: cursor)
 - [ ] TA08B0CC413F151F5-037 - task contract as the audit surface: Definition of Done required at finish, tests as a re-runnable command (owner: cursor)
 - [x] T0211939C246A038C-001 - review task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037)
+- [x] TF7A384C463E709BB-001 - re-review task contract fixes TA08B0CC413F151F5-037 (owner: independent-reviewer-037b)
 
 ## Agent Allocation
 
