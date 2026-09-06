@@ -2222,11 +2222,29 @@ def _hash_docs(root: Path, task: str | None) -> dict:
     return hashes
 
 
+# A record field or a shell command is one physical line. These are the
+# characters some line-oriented reader would treat as a boundary (everything
+# str.splitlines() splits on) plus the remaining C0 controls and DEL; any of
+# them inside a field is a second line hiding in the first, so writers
+# collapse them and the tests command refuses them outright.
+RECORD_CONTROL_RE = re.compile(r"[\x00-\x08\x0a-\x1f\x7f\x85\u2028\u2029]")
+
+
+def _record_line(value) -> str:
+    """One physical line: every control or line-boundary character becomes a space; spacing otherwise kept."""
+    return RECORD_CONTROL_RE.sub(" ", str(value or "")).strip()
+
+
+def _doc_lines(text: str) -> list[str]:
+    """Physical lines only. splitlines() would also break on form feeds and
+    Unicode separators, which a human reading the file never sees as lines."""
+    return text.split("\n")
+
+
 def _extract_section(text: str, header: str) -> str:
-    lines = text.splitlines()
     out = []
     capturing = False
-    for ln in lines:
+    for ln in _doc_lines(text):
         if ln.strip().startswith("## "):
             if capturing:
                 break
@@ -2235,6 +2253,38 @@ def _extract_section(text: str, header: str) -> str:
         if capturing:
             out.append(ln)
     return "\n".join(out).strip()
+
+
+COMPLETION_SECTION = "## Completion Record"
+
+
+def _completion_record_header_index(lines: list[str]) -> int | None:
+    """Index of the first physical line that is the Completion Record header, or None."""
+    for index, line in enumerate(lines):
+        if line.strip() == COMPLETION_SECTION:
+            return index
+    return None
+
+
+def _completion_record_problem(body: str) -> str:
+    """Why a task document's completion record cannot be trusted as written, or "".
+
+    `finish` writes the record as the document's last section, exactly once.
+    A second header, or any section after it, means the text was edited by
+    hand around the record -- the way a forged `## Notes` line would end the
+    record early and hide the real `Worker-runtimes` line from the gate.
+    """
+    lines = _doc_lines(body)
+    headers = [index for index, line in enumerate(lines) if line.strip().startswith("## ")]
+    record_headers = [index for index in headers if lines[index].strip() == COMPLETION_SECTION]
+    if not record_headers:
+        return ""
+    if len(record_headers) > 1:
+        return f"the task document has {len(record_headers)} Completion Record sections"
+    if headers[-1] != record_headers[0]:
+        following = lines[headers[headers.index(record_headers[0]) + 1]].strip()
+        return f"the Completion Record is not the last section of the task document ('{following}' follows it)"
+    return ""
 
 
 # The task contract is the part of a task document a reviewer judges the
@@ -2260,7 +2310,7 @@ def _task_doc_field(body: str, header: str, label: str) -> str:
     nested list, a wrapped sentence); those lines belong to the field.
     """
     section = _extract_section(body, header)
-    lines = section.splitlines()
+    lines = _doc_lines(section)
     pattern = re.compile(rf"^-\s*{re.escape(label)}:[ \t]*(.*)$", flags=re.I)
     for index, line in enumerate(lines):
         match = pattern.match(line)
@@ -2282,18 +2332,22 @@ def _tests_cmd_problem(command: str) -> str:
 
     The command is stored as one line of a Markdown record whose other lines
     carry the gate's evidence, so a second line is not a command: it is a
-    forged record entry.
+    forged record entry. Every character a line-oriented reader might split
+    on counts, not just newline.
     """
-    if re.search(r"[\r\n]", command):
-        return "a tests command must be a single line; chain steps with '&&' or ';' or put them in a script"
+    if RECORD_CONTROL_RE.search(command):
+        return (
+            "a tests command must be a single line with no control characters; "
+            "chain steps with '&&' or ';' or put them in a script"
+        )
     return ""
 
 
 def _set_task_doc_field(body: str, header: str, label: str, value: str) -> str:
     """Set the `- <label>:` bullet in a section, adding the bullet or the section when missing."""
-    # One Markdown line; internal spacing is kept because a shell command may depend on it.
-    value = re.sub(r"[ \t]*[\r\n]+[ \t]*", " ", str(value)).strip()
-    lines = body.splitlines()
+    # One physical line; internal spacing is kept because a shell command may depend on it.
+    value = _record_line(value)
+    lines = _doc_lines(body.rstrip("\n"))
     start = next(
         (i for i, ln in enumerate(lines) if ln.strip().lower() == header.lower()), None,
     )
@@ -3279,6 +3333,12 @@ def cmd_work(args: argparse.Namespace) -> int:
             if not args.scope:
                 print("agentctl: --scope is required with --auto-create so the task has a safe write boundary", file=sys.stderr)
                 return 2
+            requested_tests_cmd = str(getattr(args, "tests_cmd", None) or "").strip()
+            if requested_tests_cmd and _tests_cmd_problem(requested_tests_cmd):
+                # Before the worktree bootstrap: a refusal inside it would
+                # leave a lease, a branch, and a directory behind.
+                print(f"agentctl: {_tests_cmd_problem(requested_tests_cmd)}", file=sys.stderr)
+                return 2
             request_token = (getattr(args, "request_id", "") or "").strip()
             request_fd = None
             if request_token:
@@ -3887,12 +3947,12 @@ def cmd_note(args: argparse.Namespace) -> int:
 
 def _completion_record_value(value: str) -> str:
     """Keep worker-provided completion text inside one Markdown field."""
-    return " ".join(str(value or "").split())
+    return " ".join(_record_line(value).split())
 
 
 def _completion_record_line(value: str) -> str:
-    """One record line, spacing preserved: line breaks become spaces, nothing else changes."""
-    return re.sub(r"[ \t]*[\r\n]+[ \t]*", " ", str(value or "")).strip()
+    """One record line, spacing preserved: control and boundary characters become spaces, nothing else changes."""
+    return _record_line(value)
 
 
 def _task_output_requirement_error(root: Path, task: str) -> str | None:
@@ -4094,7 +4154,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
             return 1
         _print_tests_result(tests_result, stream=sys.stdout)
         if not tests:
-            tests = tests_result["last_line"] or f"{tests_cmd} exited 0"
+            tests = _completion_record_value(tests_result["last_line"]) or f"{tests_cmd} exited 0"
     ack = bool(getattr(args, "ack_escalations", False))
     escalated = _escalated_follow_ups(root, task)
     if escalated and not ack:
@@ -4163,11 +4223,15 @@ def cmd_complete(args: argparse.Namespace) -> int:
                 record += f"- Worker-runtimes: {', '.join(worker_runtimes)}\n"
             record += f"- Completed-at: {ts}\n"
             record += f"- Completed-at-ns: {time.time_ns()}\n"
-            i = body.find("## Completion Record")
-            if i >= 0:
-                body = body[:i] + "## Completion Record\n" + record
+            # The record is the last section, rewritten whole from its header
+            # line; the header is matched as a line so the words inside a
+            # field cannot pass for it.
+            lines = _doc_lines(body)
+            header_index = _completion_record_header_index(lines)
+            if header_index is not None:
+                body = "\n".join(lines[:header_index]).rstrip("\n") + f"\n\n{COMPLETION_SECTION}\n\n" + record
             else:
-                body += "\n## Completion Record\n" + record
+                body = body.rstrip("\n") + f"\n\n{COMPLETION_SECTION}\n\n" + record
             body = re.sub(r"^Status: .*$", f"Status: {final_status}", body, count=1, flags=re.M)
             _write(task_doc, body)
         if t:
@@ -4416,7 +4480,7 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
         f"- By: {merged_by}\n- Recorded-by: {recorder}\n- Recorder task: {recorder_task}\n"
         f"- Pull request: {evidence.get('url') or ''}\n- Base branch: {evidence.get('baseRefName') or ''}\n"
         f"- Merge commit: {merge_oid}\n- Merged at: {evidence.get('mergedAt') or ''}\n"
-        f"- Reconciled at: {ts}\n- Note: {args.note or 'none'}\n",
+        f"- Reconciled at: {ts}\n- Note: {_completion_record_value(args.note) or 'none'}\n",
     )
     recorder_session["last_gate"] = {
         "task": task, "decision": "approved", "source": "github-merge", "at": ts,
@@ -4526,11 +4590,23 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace, rerun: dict | None 
     legacy_session_runtime = str(reviewer_session.get("runtime_identity") or "")
     if legacy_session_runtime:
         session_runtimes.add(legacy_session_runtime)
-    completion = _extract_section(
-        _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"), "## Completion Record",
-    )
+    task_body = _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md")
+    completion = _extract_section(task_body, COMPLETION_SECTION)
     worker_runtimes = _worker_runtimes_recorded(completion)
+    # This checkout's own session records for the task name the runtimes
+    # that actually worked it; they can only widen the worker set, so a
+    # record edited to forget one of them still cannot pass as independent.
+    for row in _session_rows_unlocked(root):
+        if str(row.get("task") or "") == task:
+            worker_runtimes.update(
+                str(item) for item in row.get("runtime_identities") or [] if str(item).strip()
+            )
     review_problems = []
+    record_problem = _completion_record_problem(task_body)
+    if record_problem:
+        review_problems.append(
+            f"{record_problem}; the record looks edited by hand, have the worker finish again"
+        )
     if reviewer_session.get("agent") != reviewer:
         review_problems.append(
             f"active reviewer session is {reviewer_session.get('agent') or 'missing'}, expected {reviewer}"
@@ -4614,7 +4690,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace, rerun: dict | None 
             f"- Definition of Done: {contract['done'] or 'none recorded'}\n"
             f"- Tests command: {recorded_cmd or 'none recorded'}\n"
             f"- Tests rerun: {rerun_line}\n"
-            f"- At: {ts}\n- Note: {args.note or 'none'}\n",
+            f"- At: {ts}\n- Note: {_completion_record_value(args.note) or 'none'}\n",
         )
         st = _load_session(root)
         st["last_gate"] = {"task": task, "decision": "approved", "at": ts}
@@ -4633,7 +4709,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace, rerun: dict | None 
         f"- Reviewer task: {reviewer_task}\n- Reviewer session started: "
         f"{reviewer_session.get('started_at') or ''}\n- Reviewer runtime: {reviewer_runtime}\n"
         f"- Worker runtimes: {', '.join(sorted(worker_runtimes))}\n"
-        f"- At: {ts}\n- Note: {args.note or 'none'}\n",
+        f"- At: {ts}\n- Note: {_completion_record_value(args.note) or 'none'}\n",
     )
     st = _load_session(root)
     st["last_gate"] = {"task": task, "decision": "rejected", "at": ts}
@@ -5422,7 +5498,10 @@ def _completion_evidence_problems(
             f"task {task} document status is {doc_status or 'missing'}, "
             f"board status is {status or 'missing'}"
         )
-    section = _extract_section(body, "## Completion Record")
+    record_problem = _completion_record_problem(body)
+    if record_problem:
+        problems.append(f"task completion record is not trustworthy: {record_problem}")
+    section = _extract_section(body, COMPLETION_SECTION)
     summary = re.search(r"^- Summary:[ \t]*(.+)$", section, flags=re.M)
     tests = re.search(r"^- Tests:[ \t]*(.+)$", section, flags=re.M)
     completed = re.search(r"^- Completed-at:[ \t]*(.+)$", section, flags=re.M)

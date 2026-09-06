@@ -254,3 +254,19 @@ are stored verbatim (backticks used to be rewritten to quotes, so the
 reviewer reran a different command than the worker), a timeout kills the
 command's whole process group rather than just the shell in front of it,
 and a Definition of Done written as an indented list is read as filled.
+
+A second review found the same hole one character wider: the single-line
+rule refused only `\r` and `\n`, but `str.splitlines()` -- which every
+reader of the task document used -- also breaks on form feed, vertical tab,
+the C1 and Unicode separators, so a form feed reproduced the forgery, and
+a hand-inserted `## Notes` line inside the record ended the section early
+and hid the real `Worker-runtimes` line even without any control character.
+The fix closes the class rather than the character: one predicate covers
+every control and boundary character (writers collapse them, the tests
+command refuses them), task documents are read as physical lines only, the
+completion record must be the document's last and only such section or the
+gate and the evidence check refuse it as edited by hand, `finish` finds the
+record header as a line rather than as a substring, the gate widens the
+worker set with this checkout's own session records for the task, the
+gate note is one line, and a bad tests command is refused before any
+worktree is created rather than inside the bootstrap.
