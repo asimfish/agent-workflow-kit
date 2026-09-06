@@ -282,9 +282,22 @@ CLI writes into a task document is one physical line (agent ids are names:
 letters, digits, `_`, `.`, `-`), `## Stage Log` is located as a line, and
 `finish` refuses instead of rewriting when the document already has a
 misplaced or duplicated record. The same review pinned down what the
-runtime check can promise: inside one repository the gate reads the
-worker's own session records and a same-conversation self-review is
-refused whatever the committed text says; in another clone the check is
-exactly as trustworthy as the checkout that wrote the record, and the
-READMEs now say so instead of implying more (`docs/enforcement.md`
+runtime check can promise: inside one repository a same-conversation
+self-review is refused whatever the committed text says; in another clone
+the check is exactly as trustworthy as the checkout that wrote the record,
+and the READMEs now say so instead of implying more (`docs/enforcement.md`
 follows in its own docs task).
+
+A fourth review showed the first half of that promise resting on too thin
+a base: the gate learned the worker's runtimes from session records, and a
+session record is one file per session key that the next `work` of the same
+key overwrites -- so a conversation that finished a task, edited only the
+runtime value in the record, and then opened a review task under the same
+session id left no record naming it, and approved its own work on the same
+checkout. `finish` now also writes the worker's runtimes to a task-keyed
+record under the Git common dir, which no later `work` touches, and the
+gate unions it with the committed text and any live session record.
+Alongside: plain `work --agent <id> --task` validates the agent name like
+`agents add` does, the plan bullet is rendered from flattened board fields,
+and `finish` re-checks the record's structure under the lock, after the
+tests command has run, before it writes.

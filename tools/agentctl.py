@@ -1019,6 +1019,39 @@ def _session_runtime_dir(root: Path) -> Path:
     return _state_dir(root) / SESSION_RUNTIME_DIR
 
 
+TASK_RUNTIMES_DIR = "task-runtimes"
+
+
+def _task_runtimes_path(root: Path, task: str) -> Path:
+    """Local, task-keyed record of every runtime that finished the task.
+
+    A session record is one file per session key and is overwritten when
+    that key moves on to another task -- including a review task for the
+    work it just finished. This record is keyed by the task instead, so the
+    gate on this repository still knows who worked it after that.
+    """
+    common = _git_common_dir(root)
+    base = (common / WORKTREE_LEASES_DIR) if common is not None else _state_dir(root)
+    return base / TASK_RUNTIMES_DIR / f"{_safe_segment(task)}.json"
+
+
+def _record_task_runtimes(root: Path, task: str, runtimes) -> None:
+    path = _task_runtimes_path(root, task)
+    existing = _load_json(path, {})
+    known = existing.get("runtimes") if isinstance(existing, dict) else None
+    merged = [str(item) for item in (known or []) if str(item).strip()]
+    for item in runtimes or []:
+        if str(item).strip() and str(item) not in merged:
+            merged.append(str(item))
+    _save_json(path, {"task": task, "runtimes": merged, "recorded_at": _now()})
+
+
+def _recorded_task_runtimes(root: Path, task: str) -> set[str]:
+    data = _load_json(_task_runtimes_path(root, task), {})
+    items = data.get("runtimes") if isinstance(data, dict) else None
+    return {str(item) for item in (items or []) if str(item).strip()}
+
+
 def _session_coordination_lock_path(root: Path) -> Path:
     common = _git_common_dir(root)
     if common is not None:
@@ -2248,7 +2281,7 @@ def _extract_section(text: str, header: str) -> str:
         if ln.strip().startswith("## "):
             if capturing:
                 break
-            capturing = ln.strip().lower() == header.lower()
+            capturing = _is_section_header(ln, header)
             continue
         if capturing:
             out.append(ln)
@@ -2386,7 +2419,7 @@ def _set_task_doc_field(body: str, header: str, label: str, value: str) -> str:
     value = _record_line(value)
     lines = _doc_lines(body.rstrip("\n"))
     start = next(
-        (i for i, ln in enumerate(lines) if ln.strip().lower() == header.lower()), None,
+        (i for i, ln in enumerate(lines) if _is_section_header(ln, header)), None,
     )
     if start is None:
         tail = [header, "", f"- {label}: {value}"]
@@ -3725,6 +3758,9 @@ def cmd_start(
         return 2
     task = args.task
     agent = args.agent or os.environ.get("AGENT_NAME", "unknown")
+    if _agent_id_problem(agent):
+        print(f"agentctl: {_agent_id_problem(agent)}", file=sys.stderr)
+        return 2
     meta = _resolve_worker_metadata(root, agent, args)
     coordination_fd = _coordination_fd
     if coordination_fd is None:
@@ -4256,6 +4292,17 @@ def cmd_complete(args: argparse.Namespace) -> int:
         task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
         if task_doc.is_file():
             body = _read(task_doc)
+            # The tests command ran between the first structure check and
+            # here; it could have edited the document. Check again before
+            # rewriting anything.
+            structure_problem = _completion_record_problem(body)
+            if structure_problem:
+                print(
+                    f"agentctl: finish refused: {structure_problem} (the document changed "
+                    "while the tests command ran). Restore it, then finish again.",
+                    file=sys.stderr,
+                )
+                return 1
             record = f"- Summary: {summary}\n"
             if tests:
                 record += f"- Tests: {tests}\n"
@@ -4268,6 +4315,10 @@ def cmd_complete(args: argparse.Namespace) -> int:
             worker_runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item)]
             if worker_runtimes:
                 record += f"- Worker-runtimes: {', '.join(worker_runtimes)}\n"
+                # Kept locally under the task's own key, where the next `work`
+                # of this session cannot overwrite it; the gate on this
+                # repository unions it with the committed text.
+                _record_task_runtimes(root, task, worker_runtimes)
             record += f"- Completed-at: {ts}\n"
             record += f"- Completed-at-ns: {time.time_ns()}\n"
             # The record is the last section, rewritten whole from its header
@@ -4640,9 +4691,11 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace, rerun: dict | None 
     task_body = _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md")
     completion = _extract_section(task_body, COMPLETION_SECTION)
     worker_runtimes = _worker_runtimes_recorded(completion)
-    # This checkout's own session records for the task name the runtimes
-    # that actually worked it; they can only widen the worker set, so a
-    # record edited to forget one of them still cannot pass as independent.
+    # This repository's own records of who worked the task -- the task-keyed
+    # runtime record written at finish, and any session record still bound
+    # to the task -- can only widen the worker set, so a committed record
+    # edited to forget a runtime still cannot pass as independent here.
+    worker_runtimes.update(_recorded_task_runtimes(root, task))
     for row in _session_rows_unlocked(root):
         if str(row.get("task") or "") == task:
             worker_runtimes.update(
@@ -11006,11 +11059,12 @@ def _render_task_views(root: Path, board: dict) -> None:
     plan_lines = [heading]
     for task, entry in reversed(list(tasks.items())):
         checked = "x" if entry.get("status") == "done" else " "
-        owner = entry.get("owner") or ""
+        # Board entries written before titles were flattened may still hold
+        # line breaks; a bullet is one line.
+        owner = _completion_record_value(entry.get("owner") or "")
+        title = _completion_record_value(entry.get("title") or "") or task
         suffix = f" (owner: {owner})" if owner else ""
-        plan_lines.append(
-            f"- [{checked}] {task} - {entry.get('title') or task}{suffix}"
-        )
+        plan_lines.append(f"- [{checked}] {task} - {title}{suffix}")
     replacement = "\n".join(plan_lines) + "\n\n"
     rendered_plan = plan[:start] + replacement + plan[content_end:].lstrip("\n")
     _write_atomic_text(plan_path, rendered_plan)

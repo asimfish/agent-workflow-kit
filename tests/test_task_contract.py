@@ -619,6 +619,53 @@ class RecordIntegrityTest(_ContractTestCase):
         self.assertIn("looks edited by hand", refused.stderr)
         self.assertFalse((clone / ".agent" / "gates" / f"{task}.md").exists())
 
+    def test_the_same_session_cannot_review_its_own_task_after_editing_the_value(self):
+        # The fourth reviewer's case: one session id finishes the task, edits
+        # only the runtime VALUE in the record, then starts a review task with
+        # the SAME session id. That overwrites its session file, so no session
+        # record names the worker task any more; the task-keyed runtime record
+        # written at finish is what still does.
+        task = self.open_task("worker", "real work", "src/r/", "--done", "it works")
+        self.agentctl("finish", "--summary", "did it", "--tests", "unit", session="worker")
+        recorded = agentctl._recorded_task_runtimes(self.root, task)
+        self.assertEqual(len(recorded), 1, recorded)
+        path = self.root / ".agent" / "tasks" / f"{task}.md"
+        body = path.read_text(encoding="utf-8")
+        real = next(iter(recorded))
+        self.assertIn(f"- Worker-runtimes: {real}", body)
+        path.write_text(body.replace(real, "host-runtime:forged"), encoding="utf-8")
+        self.assertEqual(agentctl._completion_record_problem(path.read_text(encoding="utf-8")), "")
+
+        self.agentctl("agents", "add", "--id", "poser", "--role", "review", session="worker")
+        self.agentctl(
+            "work", "--agent", "poser", "--auto-create", "--type", "review",
+            "--title", f"review {task}", "--scope", ".agent/gates/", session="worker",
+        )
+        self.agentctl("refresh", session="worker")
+        refused = self.agentctl(
+            "gate", "approve", "--task", task, "--by", "poser", "--note", "self",
+            expect=1, session="worker",
+        )
+        self.assertIn("participated in the worker task and is not independent", refused.stderr)
+        self.assertEqual(self.status(task), "review")
+        self.assertFalse((self.root / ".agent" / "gates" / f"{task}.md").exists())
+
+        # A genuinely different conversation still approves the same record.
+        self.register_reviewer("reviewer")
+        self.agentctl(
+            "work", "--agent", "reviewer", "--auto-create", "--type", "review",
+            "--title", f"review {task} properly", "--scope", ".agent/handoffs/", session="reviewer",
+        )
+        self.agentctl("refresh", session="reviewer")
+        self.agentctl("gate", "approve", "--task", task, "--by", "reviewer", "--note", "ok", session="reviewer")
+
+    def test_plain_claims_validate_the_agent_name_too(self):
+        refused = self.agentctl(
+            "work", "--agent", "codex\n- Reviewer task: T-X", "--task", "T-000",
+            expect=2, session="worker",
+        )
+        self.assertIn("agent id", refused.stderr)
+
     def test_every_worker_runtimes_line_counts_at_the_gate(self):
         self.assertEqual(
             agentctl._worker_runtimes_recorded(
