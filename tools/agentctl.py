@@ -2256,27 +2256,42 @@ def _extract_section(text: str, header: str) -> str:
 
 
 COMPLETION_SECTION = "## Completion Record"
+STAGE_LOG_SECTION = "## Stage Log"
+
+
+def _is_section_header(line: str, header: str) -> bool:
+    """The one way a physical line is recognised as a given `## ` header, everywhere.
+
+    Case-insensitive, as `_extract_section` has always been; every check that
+    reasons about sections must agree with the reader, or a differently cased
+    header is a section for the reader and invisible to the check.
+    """
+    return line.strip().lower() == header.lower()
+
+
+def _section_header_index(lines: list[str], header: str) -> int | None:
+    """Index of the first physical line that is the header, or None."""
+    for index, line in enumerate(lines):
+        if _is_section_header(line, header):
+            return index
+    return None
 
 
 def _completion_record_header_index(lines: list[str]) -> int | None:
-    """Index of the first physical line that is the Completion Record header, or None."""
-    for index, line in enumerate(lines):
-        if line.strip() == COMPLETION_SECTION:
-            return index
-    return None
+    return _section_header_index(lines, COMPLETION_SECTION)
 
 
 def _completion_record_problem(body: str) -> str:
     """Why a task document's completion record cannot be trusted as written, or "".
 
     `finish` writes the record as the document's last section, exactly once.
-    A second header, or any section after it, means the text was edited by
-    hand around the record -- the way a forged `## Notes` line would end the
+    A second header, or any section after it, means the text was edited
+    around the record -- the way a forged `## Notes` line would end the
     record early and hide the real `Worker-runtimes` line from the gate.
     """
     lines = _doc_lines(body)
     headers = [index for index, line in enumerate(lines) if line.strip().startswith("## ")]
-    record_headers = [index for index in headers if lines[index].strip() == COMPLETION_SECTION]
+    record_headers = [index for index in headers if _is_section_header(lines[index], COMPLETION_SECTION)]
     if not record_headers:
         return ""
     if len(record_headers) > 1:
@@ -2285,6 +2300,28 @@ def _completion_record_problem(body: str) -> str:
         following = lines[headers[headers.index(record_headers[0]) + 1]].strip()
         return f"the Completion Record is not the last section of the task document ('{following}' follows it)"
     return ""
+
+
+def _append_stage_log_line(body: str, text: str) -> str:
+    """Add one `- <text>` bullet at the top of `## Stage Log`, as one physical line.
+
+    Text is flattened first: a note is a log line, and a line break inside it
+    would be a new line of the document that could begin a header or a bullet
+    some reader trusts.
+    """
+    lines = _doc_lines(body)
+    index = _section_header_index(lines, STAGE_LOG_SECTION)
+    if index is None:
+        return body
+    placeholder = next(
+        (i for i in range(index + 1, len(lines))
+         if lines[i].strip() == "- No updates yet." or lines[i].strip().startswith("## ")),
+        None,
+    )
+    if placeholder is not None and lines[placeholder].strip() == "- No updates yet.":
+        del lines[placeholder]
+    lines.insert(index + 1, f"- {_record_line(text)}")
+    return "\n".join(lines)
 
 
 # The task contract is the part of a task document a reviewer judges the
@@ -3661,17 +3698,15 @@ def _foreign_claim_error(task: str, entry: dict, holder: str, args: argparse.Nam
 
 def _record_takeover(root: Path, task: str, agent: str, holder: str, reason: str) -> None:
     ts = _now()
-    line = f"taken over from {holder} by {agent}: {reason}"
+    line = _record_line(f"taken over from {holder} by {agent}: {reason}")
     log = root / WORKFLOW_DIR / LOG_DIR / PROGRESS_LOG
     _write(log, _read(log) + f"- {ts} [{task}] {line}\n")
     task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
     if task_doc.is_file():
-        body = _read(task_doc).replace("- No updates yet.\n", "", 1)
-        i = body.find("## Stage Log")
-        if i >= 0:
-            j = body.find("\n", i) + 1
-            body = body[:j] + f"- {ts} {line}\n" + body[j:]
-            _write(task_doc, body)
+        body = _read(task_doc)
+        updated = _append_stage_log_line(body, f"{ts} {line}")
+        if updated != body:
+            _write(task_doc, updated)
     print(f"agentctl: {task} {line}", file=sys.stderr)
 
 
@@ -3914,16 +3949,15 @@ def cmd_progress(args: argparse.Namespace) -> int:
                 print(f"  - {problem}", file=sys.stderr)
             return 1
         ts = _now()
+        # A note is one log line in two files a reviewer reads; a line break
+        # inside it would be a new physical line that could begin a header.
+        note = _record_line(note)
         log = root / WORKFLOW_DIR / LOG_DIR / PROGRESS_LOG
         _write(log, _read(log) + f"- {ts} [{st['task']}] {note}\n")
         task_doc = root / WORKFLOW_DIR / TASKS_DIR / f"{st['task']}.md"
         if task_doc.is_file():
-            body = _read(task_doc).replace("- No updates yet.\n", "", 1)
-            i = body.find("## Stage Log")
-            if i >= 0:
-                j = body.find("\n", i) + 1
-                body = body[:j] + f"- {ts} {note}\n" + body[j:]
-            _write(task_doc, body)
+            body = _read(task_doc)
+            _write(task_doc, _append_stage_log_line(body, f"{ts} {note}"))
         board = _load_board(root)
         t = board.get("tasks", {}).get(st["task"])
         if t:
@@ -4133,6 +4167,19 @@ def cmd_complete(args: argparse.Namespace) -> int:
         print("agentctl: finish blocked; incorporate the supervisor guidance and acknowledge it before finishing.", file=sys.stderr)
         return 1
     tests = _completion_record_value(args.tests)
+    # finish rewrites the record from its header line. If the document already
+    # has two such headers or a section after the record, rewriting would
+    # silently keep one planted by hand and drop real sections; refuse instead.
+    structure_problem = _completion_record_problem(
+        _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"),
+    )
+    if structure_problem:
+        print(
+            f"agentctl: finish refused: {structure_problem}. Restore the task document "
+            "so that '## Completion Record' is its last and only such section, then finish again.",
+            file=sys.stderr,
+        )
+        return 1
     board_entry = (_load_board(root).get("tasks") or {}).get(task) or {}
     contract_problem = _finish_contract_problem(root, task, board_entry, args)
     if contract_problem:
@@ -4780,8 +4827,14 @@ def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
-    title = args.title or task
-    owner = args.owner or ""
+    # Title and owner are written into the task heading, the board views, and
+    # the plan bullet: one line each, so they cannot begin a section or a
+    # bullet of their own in any of them.
+    title = _completion_record_value(args.title) or task
+    owner = _completion_record_value(args.owner)
+    if owner and _agent_id_problem(owner):
+        print(f"agentctl: {_agent_id_problem(owner)}", file=sys.stderr)
+        return 2
     scope = [s.strip() for s in (args.scope or "").split(",") if s.strip()]
     scope_problems = _scope_errors(scope)
     if scope_problems:
@@ -4917,6 +4970,10 @@ def cmd_agents(args: argparse.Namespace) -> int:
             )
         return 0
     if args.agents_action == "add":
+        problem = _agent_id_problem(args.id)
+        if problem:
+            print(f"agentctl: {problem}", file=sys.stderr)
+            return 2
         data.setdefault("agents", {})[args.id] = {
             "role": args.role or "",
             "backend": args.backend or "any",
@@ -4936,6 +4993,20 @@ def cmd_agents(args: argparse.Namespace) -> int:
 def _safe_segment(value: str) -> str:
     value = value.strip() or "unknown"
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "unknown"
+
+
+# An agent id is written into `Owner:` lines, gate files (`- By:`), the board
+# views, and lock records; it is a name, not text.
+AGENT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+
+
+def _agent_id_problem(agent_id: str) -> str:
+    if not AGENT_ID_RE.fullmatch(str(agent_id or "")):
+        return (
+            f"agent id {str(agent_id)!r} must be 1-64 letters, digits, '_', '.', or '-' "
+            "and start with a letter or digit"
+        )
+    return ""
 
 
 def _guidance_packet_paths(root: Path, packet: dict) -> tuple[Path, Path]:

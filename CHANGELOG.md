@@ -270,3 +270,20 @@ record header as a line rather than as a substring, the gate widens the
 worker set with this checkout's own session records for the task, the
 gate note is one line, and a bad tests command is refused before any
 worktree is created rather than inside the bootstrap.
+
+A third review found the last open door: the kit's own `note`, `--title`,
+`--takeover --reason`, and `agents add` wrote their text into the task
+document verbatim, so a note containing real line breaks became new lines
+of the document; and the section reader matched headers case-insensitively
+while the tamper check compared exact case, so a planted `## completion
+record` was the record for every reader and invisible to the check. Now
+one header predicate serves reader and checks alike, every prose field the
+CLI writes into a task document is one physical line (agent ids are names:
+letters, digits, `_`, `.`, `-`), `## Stage Log` is located as a line, and
+`finish` refuses instead of rewriting when the document already has a
+misplaced or duplicated record. The same review pinned down what the
+runtime check can promise: inside one repository the gate reads the
+worker's own session records and a same-conversation self-review is
+refused whatever the committed text says; in another clone the check is
+exactly as trustworthy as the checkout that wrote the record, and the
+README and `docs/enforcement.md` now say so instead of implying more.
