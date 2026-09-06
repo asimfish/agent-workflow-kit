@@ -2254,12 +2254,39 @@ TESTS_OUTPUT_TAIL_LINES = 30
 
 
 def _task_doc_field(body: str, header: str, label: str) -> str:
-    """Value of a `- <label>: <value>` bullet inside one `## ` section ("" when absent or empty)."""
+    """Value of a `- <label>: <value>` bullet inside one `## ` section ("" when absent or empty).
+
+    A human may continue the value on indented lines below the bullet (a
+    nested list, a wrapped sentence); those lines belong to the field.
+    """
     section = _extract_section(body, header)
-    match = re.search(
-        rf"^-\s*{re.escape(label)}:[ \t]*(.*)$", section, flags=re.M | re.I,
-    )
-    return match.group(1).strip() if match else ""
+    lines = section.splitlines()
+    pattern = re.compile(rf"^-\s*{re.escape(label)}:[ \t]*(.*)$", flags=re.I)
+    for index, line in enumerate(lines):
+        match = pattern.match(line)
+        if not match:
+            continue
+        parts = [match.group(1).strip()]
+        for continuation in lines[index + 1:]:
+            if not continuation.strip():
+                break
+            if not continuation[0].isspace():
+                break
+            parts.append(re.sub(r"^\s*[-*]\s*", "", continuation).strip())
+        return " ".join(part for part in parts if part)
+    return ""
+
+
+def _tests_cmd_problem(command: str) -> str:
+    """Why a tests command cannot be recorded, or "".
+
+    The command is stored as one line of a Markdown record whose other lines
+    carry the gate's evidence, so a second line is not a command: it is a
+    forged record entry.
+    """
+    if re.search(r"[\r\n]", command):
+        return "a tests command must be a single line; chain steps with '&&' or ';' or put them in a script"
+    return ""
 
 
 def _set_task_doc_field(body: str, header: str, label: str, value: str) -> str:
@@ -2292,7 +2319,12 @@ def _set_task_doc_field(body: str, header: str, label: str, value: str) -> str:
 def _task_contract(root: Path, task: str) -> dict:
     body = _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md")
     tests_cmd = _task_doc_field(body, VERIFICATION_SECTION, VERIFICATION_TESTS_CMD)
-    if tests_cmd.startswith("`") and tests_cmd.endswith("`") and len(tests_cmd) >= 2:
+    # A hand-written value may be wrapped in Markdown backticks; the command
+    # itself is stored verbatim, so only strip a pair that encloses the whole.
+    if (
+        len(tests_cmd) >= 2 and tests_cmd.startswith("`") and tests_cmd.endswith("`")
+        and "`" not in tests_cmd[1:-1]
+    ):
         tests_cmd = tests_cmd[1:-1]
     return {
         "goal": _task_doc_field(body, CONTRACT_SECTION, CONTRACT_GOAL),
@@ -2316,9 +2348,11 @@ def _write_task_contract(
     if done is not None and done.strip():
         new = _set_task_doc_field(new, CONTRACT_SECTION, CONTRACT_DONE, done)
     if tests_cmd is not None and tests_cmd.strip():
+        # Verbatim: what finish runs and what the reviewer reruns must be the
+        # same bytes the worker wrote, so no Markdown dressing that a shell
+        # would read differently.
         new = _set_task_doc_field(
-            new, VERIFICATION_SECTION, VERIFICATION_TESTS_CMD,
-            "`" + tests_cmd.strip().replace("`", "'") + "`",
+            new, VERIFICATION_SECTION, VERIFICATION_TESTS_CMD, tests_cmd.strip(),
         )
     if new != body:
         _write(path, new)
@@ -2335,6 +2369,22 @@ def _tests_timeout_seconds() -> float:
     return value if value > 0 else TESTS_TIMEOUT_DEFAULT
 
 
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 def _run_tests_command(root: Path, command: str) -> dict:
     """Run the task's tests command in the checkout and return exit, duration, output tail.
 
@@ -2343,20 +2393,29 @@ def _run_tests_command(root: Path, command: str) -> dict:
     """
     started = time.monotonic()
     timeout = _tests_timeout_seconds()
+    # Own process group (POSIX), so a timeout kills `sleep` behind `a; b` too,
+    # not just the shell in front of it.
+    popen_kwargs: dict = {}
+    if os.name != "nt":
+        popen_kwargs["start_new_session"] = True
+    proc = subprocess.Popen(
+        command, shell=True, cwd=str(root), text=True, encoding="utf-8",
+        errors="replace", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL, **popen_kwargs,
+    )
+    timed_out = False
     try:
-        proc = subprocess.run(
-            command, shell=True, cwd=str(root), text=True, encoding="utf-8",
-            errors="replace", stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            timeout=timeout,
-        )
-        output = proc.stdout or ""
+        output, _ = proc.communicate(timeout=timeout)
         exit_code: int | None = proc.returncode
-        timed_out = False
-    except subprocess.TimeoutExpired as exc:
-        raw = exc.stdout
-        output = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else (raw or "")
-        exit_code = None
+    except subprocess.TimeoutExpired:
         timed_out = True
+        exit_code = None
+        _kill_process_group(proc)
+        try:
+            output, _ = proc.communicate(timeout=5)
+        except (subprocess.TimeoutExpired, OSError, ValueError):
+            output = ""
+    output = output or ""
     duration = time.monotonic() - started
     lines = [ln for ln in output.splitlines() if ln.strip()]
     return {
@@ -3831,6 +3890,11 @@ def _completion_record_value(value: str) -> str:
     return " ".join(str(value or "").split())
 
 
+def _completion_record_line(value: str) -> str:
+    """One record line, spacing preserved: line breaks become spaces, nothing else changes."""
+    return re.sub(r"[ \t]*[\r\n]+[ \t]*", " ", str(value or "")).strip()
+
+
 def _task_output_requirement_error(root: Path, task: str) -> str | None:
     entry = (_load_board(root).get("tasks") or {}).get(task) or {}
     task_type = str(entry.get("type") or "generic")
@@ -3910,6 +3974,8 @@ def _finish_contract_problem(
     """
     done = _completion_record_value(getattr(args, "done", None))
     tests_cmd = str(getattr(args, "tests_cmd", None) or "").strip()
+    if tests_cmd and _tests_cmd_problem(tests_cmd):
+        return _tests_cmd_problem(tests_cmd)
     if done or tests_cmd:
         if _write_task_contract(root, task, done=done or None, tests_cmd=tests_cmd or None):
             st = _load_session(root)
@@ -3936,7 +4002,18 @@ def cmd_contract(args: argparse.Namespace) -> int:
     goal = _completion_record_value(args.goal)
     done = _completion_record_value(args.done)
     tests_cmd = str(args.tests_cmd or "").strip()
+    if tests_cmd and _tests_cmd_problem(tests_cmd):
+        print(f"agentctl: {_tests_cmd_problem(tests_cmd)}", file=sys.stderr)
+        return 2
     if goal or done or tests_cmd:
+        # Writing refreshes the read receipt, so a human's unread edit must
+        # be caught here first, exactly as `note` does.
+        changed = _check_receipt(root)
+        if changed:
+            print("agentctl: contract blocked because required workflow documents changed:", file=sys.stderr)
+            for problem in changed:
+                print(f"  - {problem}", file=sys.stderr)
+            return 1
         if _write_task_contract(root, task, goal=goal or None, done=done or None,
                                 tests_cmd=tests_cmd or None):
             st["doc_hashes"] = _hash_docs(root, task)
@@ -4076,7 +4153,9 @@ def cmd_complete(args: argparse.Namespace) -> int:
             if tests:
                 record += f"- Tests: {tests}\n"
             if tests_result is not None:
-                record += f"- Tests-command: {tests_result['command']}\n"
+                # One record line per field, whatever the command contains:
+                # the lines below it are the gate's evidence.
+                record += f"- Tests-command: {_completion_record_line(tests_result['command'])}\n"
                 record += f"- Tests-exit: {tests_result['exit']}\n"
                 record += f"- Tests-duration: {tests_result['duration']:.1f}s\n"
             worker_runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item)]
@@ -4348,20 +4427,69 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
     return 0
 
 
+def _recorded_tests_command(root: Path, task: str) -> str:
+    completion = _extract_section(
+        _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"), "## Completion Record",
+    )
+    match = re.search(r"^- Tests-command:\s*(.+)$", completion, flags=re.M)
+    return match.group(1).strip() if match else _task_contract(root, task)["tests_cmd"]
+
+
+def _worker_runtimes_recorded(completion: str) -> set[str]:
+    """Every runtime named on any `Worker-runtimes:` line of a completion record.
+
+    All lines count, not the first: a forged extra line can then only widen
+    the worker set, which only makes the independence check stricter.
+    """
+    runtimes: set[str] = set()
+    for match in re.finditer(r"^- Worker-runtimes:\s*(.+)$", completion, flags=re.M):
+        runtimes.update(item.strip() for item in match.group(1).split(",") if item.strip())
+    return runtimes
+
+
 def cmd_gate(args: argparse.Namespace) -> int:
     root = _repo_root()
+    rerun: dict | None = None
+    if args.action == "approve" and getattr(args, "rerun_tests", False):
+        # The rerun can take as long as the project's test suite; it must not
+        # hold the coordination lock every other session's ledger command
+        # waits on. Run first, then decide under the lock, checking that the
+        # recorded command is still the one that ran.
+        if not (_load_board(root).get("tasks") or {}).get(args.task):
+            print(f"agentctl: task {args.task} not found on board", file=sys.stderr)
+            return 2
+        command = _recorded_tests_command(root, args.task)
+        if not command:
+            print(
+                f"agentctl: --rerun-tests: {args.task} recorded no tests command; "
+                "there is nothing to rerun, decide on the evidence you gathered yourself",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"agentctl: rerunning the tests command here: {command}")
+        rerun = _run_tests_command(root, command)
+        if rerun["timed_out"] or rerun["exit"] != 0:
+            _print_tests_result(rerun, stream=sys.stderr)
+            print(
+                "agentctl: approval refused; the recorded tests command does not pass "
+                "in this checkout. Reject with the output above, or investigate "
+                "the difference between the checkouts first.",
+                file=sys.stderr,
+            )
+            return 1
+        _print_tests_result(rerun, stream=sys.stdout)
     try:
         coordination_fd = _acquire_lock_file(_session_coordination_lock_path(root))
     except TimeoutError as exc:
         print(f"agentctl: {exc}", file=sys.stderr)
         return 2
     try:
-        return _cmd_gate_unlocked(root, args)
+        return _cmd_gate_unlocked(root, args, rerun=rerun)
     finally:
         _release_lock_file(_session_coordination_lock_path(root), coordination_fd)
 
 
-def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
+def _cmd_gate_unlocked(root: Path, args: argparse.Namespace, rerun: dict | None = None) -> int:
     changed = _check_receipt(root)
     if changed:
         print("agentctl: gate blocked because required workflow documents changed:", file=sys.stderr)
@@ -4401,11 +4529,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
     completion = _extract_section(
         _read(root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"), "## Completion Record",
     )
-    worker_runtime_match = re.search(r"^- Worker-runtimes:\s*(.+)$", completion, flags=re.M)
-    worker_runtimes = {
-        item.strip() for item in (worker_runtime_match.group(1).split(",") if worker_runtime_match else [])
-        if item.strip()
-    }
+    worker_runtimes = _worker_runtimes_recorded(completion)
     review_problems = []
     if reviewer_session.get("agent") != reviewer:
         review_problems.append(
@@ -4461,28 +4585,15 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace) -> int:
         print(f"agentctl: Definition of Done: {contract['done'] or '(none recorded)'}")
         if recorded_cmd:
             print(f"agentctl: worker's tests command: {recorded_cmd} (exit {recorded_exit or '?'})")
-        if getattr(args, "rerun_tests", False):
-            command = recorded_cmd or contract["tests_cmd"]
-            if not command:
+        if rerun is not None:
+            if rerun["command"] != (recorded_cmd or contract["tests_cmd"]):
                 print(
-                    f"agentctl: --rerun-tests: {task} recorded no tests command; "
-                    "there is nothing to rerun, decide on the evidence you gathered yourself",
+                    "agentctl: approval refused; the recorded tests command changed while "
+                    "the rerun was in progress. Rerun against the current record.",
                     file=sys.stderr,
                 )
                 return 1
-            print(f"agentctl: rerunning the tests command here: {command}")
-            result = _run_tests_command(root, command)
-            if result["timed_out"] or result["exit"] != 0:
-                _print_tests_result(result, stream=sys.stderr)
-                print(
-                    f"agentctl: approval refused; the recorded tests command does not pass "
-                    f"in this checkout. Reject with the output above, or investigate "
-                    f"the difference between the checkouts first.",
-                    file=sys.stderr,
-                )
-                return 1
-            _print_tests_result(result, stream=sys.stdout)
-            rerun_line = f"passed (exit 0 in {result['duration']:.1f}s, runtime {reviewer_runtime})"
+            rerun_line = f"passed (exit 0 in {rerun['duration']:.1f}s, runtime {reviewer_runtime})"
         elif recorded_cmd:
             print(
                 "agentctl: note: approving on the worker's record; add --rerun-tests "
@@ -4612,6 +4723,10 @@ def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
     task_type = str(getattr(args, "task_type", None) or "generic")
     if task_type not in TASK_TYPES:
         print(f"agentctl: unsupported task type: {task_type}", file=sys.stderr)
+        return 2
+    requested_tests_cmd = str(getattr(args, "tests_cmd", None) or "").strip()
+    if requested_tests_cmd and _tests_cmd_problem(requested_tests_cmd):
+        print(f"agentctl: {_tests_cmd_problem(requested_tests_cmd)}", file=sys.stderr)
         return 2
     now = _now()
     board = _load_board(root)

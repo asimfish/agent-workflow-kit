@@ -234,3 +234,23 @@ both READMEs, and `docs/workflow.md` say to write the contract before the
 work, because a Definition of Done written at `finish` is a claim and one
 written at creation is a specification. A recorded `Tests-exit: 0` counts as
 verification evidence wherever completion records are judged.
+
+Review of this change rejected the first version and found three real
+defects. The tests command was written into the completion record
+unsanitized, so a command containing a newline could plant a forged
+`Worker-runtimes:` line ahead of the real one, and the gate -- which read
+only the first such line -- let a session on the same host runtime approve
+its own task; a tests command must now be a single line (refused at every
+entry point), the record line is guaranteed single-line regardless, and the
+gate reads every `Worker-runtimes:` line so a forged one can only widen the
+worker set. `agentctl contract` refreshed the read receipt without checking
+it first, so a human's unread edit to the task document was silently
+absorbed; it now blocks like `note` does. `gate approve --rerun-tests` ran
+the command while holding the coordination lock, so every other session's
+ledger command in the repository timed out for the duration; the rerun now
+happens before the lock and the gate re-checks under it that the recorded
+command is still the one that ran. Also from that review: tests commands
+are stored verbatim (backticks used to be rewritten to quotes, so the
+reviewer reran a different command than the worker), a timeout kills the
+command's whole process group rather than just the shell in front of it,
+and a Definition of Done written as an indented list is read as filled.
