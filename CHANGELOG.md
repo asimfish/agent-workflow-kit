@@ -286,4 +286,5 @@ runtime check can promise: inside one repository the gate reads the
 worker's own session records and a same-conversation self-review is
 refused whatever the committed text says; in another clone the check is
 exactly as trustworthy as the checkout that wrote the record, and the
-README and `docs/enforcement.md` now say so instead of implying more.
+READMEs now say so instead of implying more (`docs/enforcement.md`
+follows in its own docs task).

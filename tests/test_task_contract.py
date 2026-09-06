@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -720,7 +721,15 @@ class RecordIntegrityTest(_ContractTestCase):
             expect=1, session="worker", AGENT_WORKFLOW_TESTS_TIMEOUT="2",
         )
         self.assertIn("timed out after 2s", refused.stderr)
-        alive = subprocess.run(["pgrep", "-f", "sleep 45"], text=True, capture_output=True).stdout.split()
+        # SIGKILL to the process group is immediate; on a loaded machine the
+        # kernel may take a moment to tear the processes down, so poll briefly
+        # rather than read the process table once.
+        deadline = time.monotonic() + 5.0
+        while True:
+            alive = subprocess.run(["pgrep", "-f", "sleep 45"], text=True, capture_output=True).stdout.split()
+            if not alive or time.monotonic() > deadline:
+                break
+            time.sleep(0.2)
         self.assertEqual(alive, [], f"grandchild survived the timeout: {alive}")
         self.assertEqual(self.status(task), "in_progress")
 
