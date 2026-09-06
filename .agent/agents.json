@@ -324,6 +324,15 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-reviewer-037c": {
+      "role": "review",
+      "backend": "any",
+      "write_scope": [],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }
