@@ -294,9 +294,17 @@ session record is one file per session key that the next `work` of the same
 key overwrites -- so a conversation that finished a task, edited only the
 runtime value in the record, and then opened a review task under the same
 session id left no record naming it, and approved its own work on the same
-checkout. `finish` now also writes the worker's runtimes to a task-keyed
-record under the Git common dir, which no later `work` touches, and the
-gate unions it with the committed text and any live session record.
+checkout. A fifth review then showed that recording those runtimes at
+`finish` alone was not enough either: a conversation that never finishes --
+it writes the record by hand and releases its session -- left nothing local,
+and the starter of a handed-off task could review what its successor
+finished. Every save of a task-bound session (claim, note, refresh,
+release, finish) now appends the session's runtimes to a task-keyed record
+under the Git common dir, which no later `work` of the same key touches,
+and the gate unions that record with the committed text and any live
+session record. So inside one repository every runtime that ever held a
+session on the task is refused as its reviewer, whatever the committed
+record says; in another clone only the committed record exists.
 Alongside: plain `work --agent <id> --task` validates the agent name like
 `agents add` does, the plan bullet is rendered from flattened board fields,
 and `finish` re-checks the record's structure under the lock, after the

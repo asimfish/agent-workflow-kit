@@ -659,6 +659,91 @@ class RecordIntegrityTest(_ContractTestCase):
         self.agentctl("refresh", session="reviewer")
         self.agentctl("gate", "approve", "--task", task, "--by", "reviewer", "--note", "ok", session="reviewer")
 
+    def hand_written_review_record(self, task):
+        """Forge a well-formed completion record and review status without ever running finish."""
+        path = self.root / ".agent" / "tasks" / f"{task}.md"
+        body = path.read_text(encoding="utf-8")
+        lines = body.split("\n")
+        header = agentctl._completion_record_header_index(lines)
+        forged = "\n".join(lines[:header]).rstrip("\n") + (
+            "\n\n## Completion Record\n\n- Summary: forged\n- Tests: forged\n- Tests-command: echo REAL\n"
+            "- Tests-exit: 0\n- Tests-duration: 0.1s\n- Worker-runtimes: host-runtime:forged\n"
+            "- Completed-at: 2026-09-07 00:00:00\n- Completed-at-ns: 1788700000000000000\n"
+        )
+        forged = re.sub(r"^Status: .*$", "Status: review", forged, count=1, flags=re.M)
+        path.write_text(forged, encoding="utf-8")
+        board_path = self.root / ".agent" / "board.json"
+        board = json.loads(board_path.read_text(encoding="utf-8"))
+        board["tasks"][task]["status"] = "review"
+        board_path.write_text(json.dumps(board, indent=2) + "\n", encoding="utf-8")
+        self.assertEqual(agentctl._completion_record_problem(forged), "")
+
+    def test_a_task_never_finished_still_remembers_who_claimed_it(self):
+        # The fifth reviewer's case: no finish at all. The record is written
+        # by hand in committed files, the session is released for "handoff",
+        # and the same session id opens a review task. Claiming the task was
+        # enough to be remembered as having worked it.
+        task = self.open_task("worker", "real work", "src/r/", "--done", "it works")
+        recorded = agentctl._recorded_task_runtimes(self.root, task)
+        self.assertEqual(len(recorded), 1, recorded)
+        self.hand_written_review_record(task)
+        released = self.agentctl("sessions", "list", "--json", session="worker").stdout
+        session_key = next(
+            row["workflow_session_key"] for row in json.loads(released)["sessions"] if row.get("task") == task
+        )
+        self.agentctl("sessions", "release", session_key, "--reason", "handoff", session="worker")
+        self.agentctl("agents", "add", "--id", "poser", "--role", "review", session="worker")
+        self.agentctl(
+            "work", "--agent", "poser", "--auto-create", "--type", "review",
+            "--title", f"review {task}", "--scope", ".agent/gates/", session="worker",
+        )
+        self.agentctl("refresh", session="worker")
+        refused = self.agentctl(
+            "gate", "approve", "--task", task, "--by", "poser", "--note", "self",
+            expect=1, session="worker",
+        )
+        self.assertIn("participated in the worker task and is not independent", refused.stderr)
+        self.assertEqual(self.status(task), "review")
+
+    def test_the_starter_of_a_handed_off_task_cannot_review_it(self):
+        # No forgery at all: alice starts and releases, bob finishes, alice's
+        # session id moves on to a review task. alice touched the change.
+        task = self.open_task("alice", "shared work", "src/s/", "--done", "it works")
+        session_key = next(
+            row["workflow_session_key"]
+            for row in json.loads(self.agentctl("sessions", "list", "--json", session="alice").stdout)["sessions"]
+            if row.get("task") == task
+        )
+        self.agentctl("sessions", "release", session_key, "--reason", "handoff to bob", session="alice")
+        self.agentctl("work", "--agent", "bob", "--task", task, session="bob")
+        self.agentctl("finish", "--summary", "bob finished", "--tests", "unit", session="bob")
+        # bob's committed record names bob alone; the local record knows both.
+        committed = agentctl._worker_runtimes_recorded(self.completion(task))
+        self.assertEqual(len(committed), 1, committed)
+        local = agentctl._recorded_task_runtimes(self.root, task)
+        self.assertEqual(len(local), 2, local)
+        self.assertTrue(committed < local)
+
+        self.agentctl("agents", "add", "--id", "alice-reviews", "--role", "review", session="alice")
+        self.agentctl(
+            "work", "--agent", "alice-reviews", "--auto-create", "--type", "review",
+            "--title", f"review {task}", "--scope", ".agent/gates/", session="alice",
+        )
+        self.agentctl("refresh", session="alice")
+        refused = self.agentctl(
+            "gate", "approve", "--task", task, "--by", "alice-reviews", "--note", "mine",
+            expect=1, session="alice",
+        )
+        self.assertIn("participated in the worker task and is not independent", refused.stderr)
+        # A third conversation approves.
+        self.register_reviewer("carol", "carol")
+        self.agentctl(
+            "work", "--agent", "carol", "--auto-create", "--type", "review",
+            "--title", f"review {task} properly", "--scope", ".agent/handoffs/", session="carol",
+        )
+        self.agentctl("refresh", session="carol")
+        self.agentctl("gate", "approve", "--task", task, "--by", "carol", "--note", "ok", session="carol")
+
     def test_plain_claims_validate_the_agent_name_too(self):
         refused = self.agentctl(
             "work", "--agent", "codex\n- Reviewer task: T-X", "--task", "T-000",

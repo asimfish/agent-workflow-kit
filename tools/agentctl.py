@@ -1023,12 +1023,14 @@ TASK_RUNTIMES_DIR = "task-runtimes"
 
 
 def _task_runtimes_path(root: Path, task: str) -> Path:
-    """Local, task-keyed record of every runtime that finished the task.
+    """Local, task-keyed record of every runtime that ever held a session on the task.
 
     A session record is one file per session key and is overwritten when
     that key moves on to another task -- including a review task for the
-    work it just finished. This record is keyed by the task instead, so the
-    gate on this repository still knows who worked it after that.
+    work it just touched. This record is keyed by the task instead and is
+    appended on every save of a task-bound session (claim, note, refresh,
+    release, finish), so the gate on this repository still knows who worked
+    it after that, whether or not the work was ever finished.
     """
     common = _git_common_dir(root)
     base = (common / WORKTREE_LEASES_DIR) if common is not None else _state_dir(root)
@@ -1138,6 +1140,14 @@ def _save_session(root: Path, st: dict) -> None:
     else:
         st["presence_status"] = "working"
     _save_json(_session_path(root, key), st)
+    # Every save of a task-bound session also lands in the task-keyed runtime
+    # record, which this key's next task cannot overwrite: whoever claimed,
+    # noted, refreshed, released, or finished the task on this repository is
+    # remembered as having worked it, finish or no finish.
+    task = str(st.get("task") or "")
+    runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item).strip()]
+    if task and runtimes:
+        _record_task_runtimes(root, task, runtimes)
     _render_sessions_view(root)
 
 
@@ -4315,10 +4325,6 @@ def cmd_complete(args: argparse.Namespace) -> int:
             worker_runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item)]
             if worker_runtimes:
                 record += f"- Worker-runtimes: {', '.join(worker_runtimes)}\n"
-                # Kept locally under the task's own key, where the next `work`
-                # of this session cannot overwrite it; the gate on this
-                # repository unions it with the committed text.
-                _record_task_runtimes(root, task, worker_runtimes)
             record += f"- Completed-at: {ts}\n"
             record += f"- Completed-at-ns: {time.time_ns()}\n"
             # The record is the last section, rewritten whole from its header

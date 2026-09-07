@@ -178,13 +178,13 @@ flowchart LR
   Dead jobs release their GPU; the optional watchdog reclaims cards that are
   held but idle. Telemetry failures never kill anything.
 - **Review is enforced, not requested.** Merging needs green CI and an
-  approval from a conversation whose runtime never touched the change. The
-  runtime check is authoritative inside one repository: `finish` also
-  records the worker's runtimes locally under the task's own key, and the
-  gate reads that record, so a self-review is refused there even after the
-  committed text was edited. In another clone only the committed record
-  exists, so cross-machine review still rests on the reviewer being a
-  different person or conversation.
+  approval from a conversation whose runtime never touched the change.
+  Inside one repository that check is authoritative: every claim, note,
+  release, or finish of a task also records the session's runtime locally
+  under the task's own key, and the gate refuses any of those runtimes as a
+  reviewer, whatever the committed record says. In another clone only the
+  committed record exists, so cross-machine review still rests on the
+  reviewer being a different person or conversation.
 - **GPU locks are machine-wide.** A card claimed by one project is
   unavailable to every other project on the host until released. The lock
   records who holds it, so any project can tell a live holder from a dead
@@ -250,7 +250,7 @@ the board.
 
 ## Status
 
-307 regression tests run on Linux in CI; a Windows job runs the subset that
+309 regression tests run on Linux in CI; a Windows job runs the subset that
 exercises Windows-specific process handling. The coordination guarantees
 were also exercised end to end on a fresh install: concurrent
 conversations, a conversation that died holding a GPU, a project deleted
