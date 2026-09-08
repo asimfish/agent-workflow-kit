@@ -1038,14 +1038,26 @@ def _task_runtimes_path(root: Path, task: str) -> Path:
 
 
 def _record_task_runtimes(root: Path, task: str, runtimes) -> None:
+    """Append runtimes to the task's record; never drop one.
+
+    Callers hold different locks (heartbeat and release the coordination
+    lock, refresh and contract none), so the read-modify-write takes its own
+    lock beside the record: two sessions recording the same task at once
+    must both end up in it.
+    """
     path = _task_runtimes_path(root, task)
-    existing = _load_json(path, {})
-    known = existing.get("runtimes") if isinstance(existing, dict) else None
-    merged = [str(item) for item in (known or []) if str(item).strip()]
-    for item in runtimes or []:
-        if str(item).strip() and str(item) not in merged:
-            merged.append(str(item))
-    _save_json(path, {"task": task, "runtimes": merged, "recorded_at": _now()})
+    lock = path.with_suffix(".lock")
+    fd = _acquire_lock_file(lock)
+    try:
+        existing = _load_json(path, {})
+        known = existing.get("runtimes") if isinstance(existing, dict) else None
+        merged = [str(item) for item in (known or []) if str(item).strip()]
+        for item in runtimes or []:
+            if str(item).strip() and str(item) not in merged:
+                merged.append(str(item))
+        _save_json(path, {"task": task, "runtimes": merged, "recorded_at": _now()})
+    finally:
+        _release_lock_file(lock, fd)
 
 
 def _recorded_task_runtimes(root: Path, task: str) -> set[str]:

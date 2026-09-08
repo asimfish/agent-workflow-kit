@@ -793,6 +793,19 @@ class RecordIntegrityTest(_ContractTestCase):
         )
         self.assertIn("participated in the worker task and is not independent", refused.stderr)
 
+    def test_concurrent_recorders_lose_no_runtime(self):
+        # refresh/contract record without the coordination lock while a
+        # heartbeat records under it; the record has its own lock, so a
+        # read-modify-write race cannot drop a runtime the gate would need.
+        import concurrent.futures
+
+        task = self.open_task("worker", "real work", "src/r/", "--done", "it works")
+        names = [f"host-runtime:conc{i:02d}" for i in range(24)]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+            list(pool.map(lambda name: agentctl._record_task_runtimes(self.root, task, [name]), names))
+        recorded = agentctl._recorded_task_runtimes(self.root, task)
+        self.assertTrue(set(names) <= recorded, sorted(set(names) - recorded))
+
     def test_plain_claims_validate_the_agent_name_too(self):
         refused = self.agentctl(
             "work", "--agent", "codex\n- Reviewer task: T-X", "--task", "T-000",
