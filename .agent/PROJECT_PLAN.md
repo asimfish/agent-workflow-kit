@@ -68,13 +68,14 @@ instead of relying on chat memory or repeated human prompts.
 - [x] TA08B0CC413F151F5-025 - add a day-one quick start walkthrough to both READMEs (owner: cursor)
 - [x] TA08B0CC413F151F5-024 - refresh README for real-world use and document the worktree merge-back path (owner: cursor)
 - [x] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) (owner: cursor)
-- [ ] TA08B0CC413F151F5-037 - task contract as the audit surface: Definition of Done required at finish, tests as a re-runnable command (owner: cursor)
+- [x] TA08B0CC413F151F5-037 - task contract as the audit surface: Definition of Done required at finish, tests as a re-runnable command (owner: cursor)
 - [x] T0211939C246A038C-001 - review task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037)
 - [x] TF7A384C463E709BB-001 - re-review task contract fixes TA08B0CC413F151F5-037 (owner: independent-reviewer-037b)
 - [x] TC76ABAFE731B5690-001 - third review of task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037c)
 - [x] TBEF663A7F4F4F28D-001 - fourth review of task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037e)
 - [x] T07C23F24446DE56B-001 - fifth review of task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037f)
 - [x] T3304B5F437A610F6-001 - sixth review of task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037h)
+- [x] TE832D810384C4321-001 - eighth review of task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037j)
 
 ## Agent Allocation
 
