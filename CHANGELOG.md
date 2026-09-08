@@ -310,7 +310,11 @@ recording -- the heartbeat the read-only hook runs on every tool call, and
 `sessions release` -- so a conversation that joined a session by heartbeat
 alone was known to the live row but never to the task-keyed record. Every
 session row now reaches disk through one writer that records, so the list
-in this entry is true of the code. Alongside: plain `work --agent <id>
+in this entry is true of the code. The record's read-modify-write also
+takes a lock of its own, because its writers hold different locks --
+heartbeat and release the coordination lock, refresh and contract none --
+and two sessions recording the same task at once could otherwise drop a
+runtime the gate was about to need. Alongside: plain `work --agent <id>
 --task` validates the agent name like `agents add` does, the plan bullet is
 rendered from flattened board fields, and `finish` re-checks the record's
 structure under the lock, after the tests command has run, before it

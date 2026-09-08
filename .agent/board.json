@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-08 20:50:40",
+  "updated_at": "2026-09-09 00:24:26",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -459,7 +459,7 @@
       ],
       "deps": [],
       "created_at": "2026-09-06 02:43:47",
-      "updated_at": "2026-09-08 20:50:40"
+      "updated_at": "2026-09-09 00:24:26"
     },
     "T0211939C246A038C-001": {
       "title": "review task contract TA08B0CC413F151F5-037",
