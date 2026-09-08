@@ -186,7 +186,7 @@ if os.environ.get("FAKE_CODEX_ACK") == "1":
         raise SystemExit(acknowledged.returncode)
 if os.environ.get("FAKE_CODEX_FINISH") == "1":
     finished = subprocess.run(
-        [sys.executable, "tools/agentctl.py", "finish",
+        [sys.executable, "tools/agentctl.py", "finish", "--done", "fixture contract",
          "--summary", "fake Codex completed the bounded worker phase",
          "--tests", "fake worker acceptance verification"],
         text=True,
@@ -269,7 +269,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.assertIn("Required before finish", combined)
 
         blocked = self.agentctl(
-            "finish", "--summary", "should be blocked",
+            "finish", "--done", "fixture contract", "--summary", "should be blocked",
             "--tests", "not run",
             expect=1)
         self.assertIn("pending supervisor guidance", blocked.stdout + blocked.stderr)
@@ -285,7 +285,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             [])
 
         finished = self.agentctl(
-            "finish", "--summary", "guided work complete",
+            "finish", "--done", "fixture contract", "--summary", "guided work complete",
             "--tests", "guidance regression",
             expect=0)
         self.assertIn("T-101 -> review", finished.stdout + finished.stderr)
@@ -361,7 +361,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.agentctl("check", "--mode", "manual", expect=0)
 
         finished = self.agentctl(
-            "finish",
+            "finish", "--done", "fixture contract",
             "--summary", "session scoped guidance complete",
             "--tests", "session routing regression",
             expect=0)
@@ -444,7 +444,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         self.assertEqual(state["reasoning_effort"], "high")
         self.agentctl("check", "--mode", "manual", expect=1)
         self.agentctl(
-            "finish", "--summary", "must remain blocked", "--tests", "none", expect=1)
+            "finish", "--done", "fixture contract", "--summary", "must remain blocked", "--tests", "none", expect=1)
         self.agentctl("guidance", "ack", packet_id, "--by", "codex", expect=0)
         self.agentctl("check", "--mode", "manual", expect=0)
 
@@ -1048,7 +1048,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
             "--reasoning-effort", "xhigh",
             expect=0, env=worker_env)
         self.agentctl(
-            "finish",
+            "finish", "--done", "fixture contract",
             "--summary", "completion created before guidance",
             "--tests", "old verification",
             expect=0, env=worker_env)

@@ -284,7 +284,7 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
         task_b = self.open_task(self.b, "conv-b", "cursor", "collect on 5090", "collect/b/")
         for root, session, task in ((self.a, "conv-a", task_a), (self.b, "conv-b", task_b)):
             self.agentctl(root, session, "note", f"working on {task}")
-        self.agentctl(self.a, "conv-a", "finish", "--summary", "a done", "--tests", "n/a")
+        self.agentctl(self.a, "conv-a", "finish", "--done", "fixture contract", "--summary", "a done", "--tests", "n/a")
         # A publishes first; B's push is rejected and its rebase must merge the ledgers.
         self.git_as(self.a, "conv-a", "add", "--", ".agent")
         self.git_as(self.a, "conv-a", "commit", "-q", "-m", f"chore(ledger): {task_a} to review\n\nRefs: {task_a}")

@@ -297,7 +297,7 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
             any("escalated loop follow-up" in problem for problem in doctor_report["problems"]),
             doctor_report["problems"])
 
-        blocked = self.agentctl("complete", "--summary", "should block",
+        blocked = self.agentctl("complete", "--done", "fixture contract", "--summary", "should block",
                                 "--tests", "n/a", expect=1)
         self.assertIn("finish blocked", blocked.stdout + blocked.stderr)
 
@@ -313,7 +313,7 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
         self.assertTrue(done.get("escalated"))
 
         self.agentctl("check", "--mode", "manual", expect=0)
-        self.agentctl("finish", "--summary", "loop regression passed",
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "loop regression passed",
                       "--tests", "fail/escalate/block/fix/auto-close", expect=0)
 
     def test_ack_escalations_records_override(self):
@@ -326,7 +326,7 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
                               "--trigger", "fail", expect=1)
         self.assertIn("escalated", (first.stdout + first.stderr).lower())
 
-        acked = self.agentctl("complete", "--summary", "ack allowed",
+        acked = self.agentctl("complete", "--done", "fixture contract", "--summary", "ack allowed",
                               "--tests", "n/a", "--ack-escalations", expect=0)
         self.assertIn("escalation acknowledged", acked.stdout + acked.stderr)
         packets = self.inbox_packets()
@@ -1221,7 +1221,7 @@ module._update_loop_state(root, increment)
 
         check = self.agentctl("check", "--mode", "manual", expect=1)
         self.assertIn("pending supervisor guidance", check.stdout + check.stderr)
-        blocked = self.agentctl("finish", "--summary", "should block",
+        blocked = self.agentctl("finish", "--done", "fixture contract", "--summary", "should block",
                                 "--tests", "n/a", expect=1)
         self.assertIn("finish blocked", blocked.stdout + blocked.stderr)
 
@@ -1234,7 +1234,7 @@ module._update_loop_state(root, increment)
         self.assertEqual(done[0]["acknowledged_by"], "codex")
 
         self.agentctl("check", "--mode", "manual", expect=0)
-        self.agentctl("finish", "--summary", "guidance workflow passed",
+        self.agentctl("finish", "--done", "fixture contract", "--summary", "guidance workflow passed",
                       "--tests", "guidance create/focus/block/ack", expect=0)
 
 

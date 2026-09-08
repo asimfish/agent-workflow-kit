@@ -459,7 +459,7 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             cwd=worker, env=env, expect=0,
         )
         blocked = self.agentctl(
-            "finish", "--summary", "no output yet", "--tests", "none",
+            "finish", "--done", "fixture contract", "--summary", "no output yet", "--tests", "none",
             cwd=worker, env=env, expect=1,
         )
         self.assertIn("successful run with existing declared output", blocked.stderr)
@@ -477,7 +477,7 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             cwd=worker, env=env, expect=0,
         )
         self.agentctl(
-            "finish", "--summary", "experiment output captured",
+            "finish", "--done", "fixture contract", "--summary", "experiment output captured",
             "--tests", "run succeeded", cwd=worker, env=env, expect=0,
         )
 

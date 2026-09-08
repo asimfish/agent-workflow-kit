@@ -7,9 +7,9 @@
       "last_report": ".agent/loops/runs/20260906-070913-daily-plan-triage-3b703a.md"
     },
     "doc-hygiene": {
-      "last_run_at": "2026-09-06 07:09:44",
+      "last_run_at": "2026-09-09 00:24:26",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260906-070944-doc-hygiene-3b703a.md"
+      "last_report": ".agent/loops/runs/20260909-002426-doc-hygiene-454346-2.md"
     },
     "experiment-monitor": {
       "last_run_at": "2026-07-01 18:47:12",
@@ -35,12 +35,12 @@
       "open_follow_up": null
     },
     "pre-finish": {
-      "last_run_at": "2026-09-06 07:09:43",
+      "last_run_at": "2026-09-09 00:24:26",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260906-070943-doc-hygiene-3b703a.md"
+        ".agent/loops/runs/20260909-002426-doc-hygiene-454346.md"
       ],
-      "last_input_hash": "5d9580bedcfa06cf",
+      "last_input_hash": "1434d6112654217f",
       "strict": true,
       "trigger": "pre-finish",
       "open_follow_up": null
@@ -55,12 +55,12 @@
       "trigger": "manual"
     },
     "post-finish": {
-      "last_run_at": "2026-09-06 07:09:44",
+      "last_run_at": "2026-09-09 00:24:26",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260906-070944-doc-hygiene-3b703a.md"
+        ".agent/loops/runs/20260909-002426-doc-hygiene-454346-2.md"
       ],
-      "last_input_hash": "417a9e5f0bb6ed1a",
+      "last_input_hash": "14d797569ed2525e",
       "strict": false,
       "trigger": "post-finish",
       "open_follow_up": null

@@ -211,3 +211,111 @@ the `--reason` that `run stop` requires, and the real test count. When a
 code task cannot get its worktree because the planning checkout is dirty,
 the refusal now names the paths, or says `agentctl sync` when all of them
 are ledger data another conversation has not published yet.
+
+The task contract becomes the audit surface. Reading Prove2Me (Chen et al.,
+2026), the platform behind the Fermat's Last Theorem formalization, made
+one gap obvious: there, a proof is checked against a statement fixed before
+anyone proves it, and humans audit only the statements; here, the `Task
+Contract` section of every task document had been empty since the kit
+began, and `finish --tests` was a sentence the worker typed. Now the
+Definition of Done is required -- `finish` refuses without it, a review
+task's recorded gate decision standing in for one -- and the tests command
+is executed rather than transcribed: `finish` runs it from the checkout
+root, refuses on a non-zero exit or a timeout (`AGENT_WORKFLOW_TESTS_TIMEOUT`,
+default 1800s), and records `Tests-command`, `Tests-exit`, and
+`Tests-duration`; `gate approve --rerun-tests` runs it again on the
+reviewer's side and refuses approval if it fails, and the gate record keeps
+the Definition of Done, the command, and the rerun result. Both fields are
+accepted at creation (`--goal`, `--done`, `--tests-cmd` on `task create` and
+`work --auto-create`, forwarded through the worktree bootstrap), by the new
+`agentctl contract`, and by `finish` as a last resort; writing them through
+the tool refreshes the read receipt. The task template, `WORKFLOW_ENTRY.md`,
+both READMEs, and `docs/workflow.md` say to write the contract before the
+work, because a Definition of Done written at `finish` is a claim and one
+written at creation is a specification. A recorded `Tests-exit: 0` counts as
+verification evidence wherever completion records are judged.
+
+Review of this change rejected the first version and found three real
+defects. The tests command was written into the completion record
+unsanitized, so a command containing a newline could plant a forged
+`Worker-runtimes:` line ahead of the real one, and the gate -- which read
+only the first such line -- let a session on the same host runtime approve
+its own task; a tests command must now be a single line (refused at every
+entry point), the record line is guaranteed single-line regardless, and the
+gate reads every `Worker-runtimes:` line so a forged one can only widen the
+worker set. `agentctl contract` refreshed the read receipt without checking
+it first, so a human's unread edit to the task document was silently
+absorbed; it now blocks like `note` does. `gate approve --rerun-tests` ran
+the command while holding the coordination lock, so every other session's
+ledger command in the repository timed out for the duration; the rerun now
+happens before the lock and the gate re-checks under it that the recorded
+command is still the one that ran. Also from that review: tests commands
+are stored verbatim (backticks used to be rewritten to quotes, so the
+reviewer reran a different command than the worker), a timeout kills the
+command's whole process group rather than just the shell in front of it,
+and a Definition of Done written as an indented list is read as filled.
+
+A second review found the same hole one character wider: the single-line
+rule refused only `\r` and `\n`, but `str.splitlines()` -- which every
+reader of the task document used -- also breaks on form feed, vertical tab,
+the C1 and Unicode separators, so a form feed reproduced the forgery, and
+a hand-inserted `## Notes` line inside the record ended the section early
+and hid the real `Worker-runtimes` line even without any control character.
+The fix closes the class rather than the character: one predicate covers
+every control and boundary character (writers collapse them, the tests
+command refuses them), task documents are read as physical lines only, the
+completion record must be the document's last and only such section or the
+gate and the evidence check refuse it as edited by hand, `finish` finds the
+record header as a line rather than as a substring, the gate widens the
+worker set with this checkout's own session records for the task, the
+gate note is one line, and a bad tests command is refused before any
+worktree is created rather than inside the bootstrap.
+
+A third review found the last open door: the kit's own `note`, `--title`,
+`--takeover --reason`, and `agents add` wrote their text into the task
+document verbatim, so a note containing real line breaks became new lines
+of the document; and the section reader matched headers case-insensitively
+while the tamper check compared exact case, so a planted `## completion
+record` was the record for every reader and invisible to the check. Now
+one header predicate serves reader and checks alike, every prose field the
+CLI writes into a task document is one physical line (agent ids are names:
+letters, digits, `_`, `.`, `-`), `## Stage Log` is located as a line, and
+`finish` refuses instead of rewriting when the document already has a
+misplaced or duplicated record. The same review pinned down what the
+runtime check can promise: inside one repository a same-conversation
+self-review is refused whatever the committed text says; in another clone
+the check is exactly as trustworthy as the checkout that wrote the record,
+and the READMEs now say so instead of implying more (`docs/enforcement.md`
+follows in its own docs task).
+
+A fourth review showed the first half of that promise resting on too thin
+a base: the gate learned the worker's runtimes from session records, and a
+session record is one file per session key that the next `work` of the same
+key overwrites -- so a conversation that finished a task, edited only the
+runtime value in the record, and then opened a review task under the same
+session id left no record naming it, and approved its own work on the same
+checkout. A fifth review then showed that recording those runtimes at
+`finish` alone was not enough either: a conversation that never finishes --
+it writes the record by hand and releases its session -- left nothing local,
+and the starter of a handed-off task could review what its successor
+finished. Every save of a task-bound session (claim, note, refresh,
+release, finish) now appends the session's runtimes to a task-keyed record
+under the Git common dir, which no later `work` of the same key touches,
+and the gate unions that record with the committed text and any live
+session record. So inside one repository every runtime that ever held a
+session on the task is refused as its reviewer, whatever the committed
+record says; in another clone only the committed record exists.
+A sixth review found two writers of the session row that bypassed that
+recording -- the heartbeat the read-only hook runs on every tool call, and
+`sessions release` -- so a conversation that joined a session by heartbeat
+alone was known to the live row but never to the task-keyed record. Every
+session row now reaches disk through one writer that records, so the list
+in this entry is true of the code. The record's read-modify-write also
+takes a lock of its own, because its writers hold different locks --
+heartbeat and release the coordination lock, refresh and contract none --
+and two sessions recording the same task at once could otherwise drop a
+runtime the gate was about to need. Alongside: plain `work --agent <id>
+--task` validates the agent name like `agents add` does, the plan bullet is
+rendered from flattened board fields, and `finish` re-checks the record's
+structure under the lock, after the tests command has run, before it
+writes.

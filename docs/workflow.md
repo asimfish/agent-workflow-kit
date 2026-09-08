@@ -5,7 +5,7 @@
 1. Human or supervisor agent keeps `.agent/PROJECT_PLAN.md` and task docs directionally correct.
 2. Human starts a worker with `按 .agent 规范开始工作。` or an equivalent task request.
 3. Worker reads `.agent/WORKFLOW_ENTRY.md` and runs `agentctl work --agent <name>` before editing. The command also runs the `work-start` checkpoint loop.
-4. If no task exists for the current request, the worker runs `agentctl work --agent <name> --auto-create --title "..." --scope "..."`.
+4. If no task exists for the current request, the worker runs `agentctl work --agent <name> --auto-create --title "..." --scope "..." --done "..." --tests-cmd "..."`.
 5. Worker records phase progress with `agentctl note`.
 6. `agentctl finish` runs `pre-finish` and `post-finish` checkpoint loops for
    document hygiene. Experiment tasks can run `agentctl loop auto --checkpoint
@@ -39,6 +39,38 @@ Harness and workflow changes add one supervisor-owned evaluation step before the
 ordinary review gate. The same suite runs against clean baseline and candidate
 worktrees, and both held-in and held-out scores must avoid regression. See
 `docs/harness-evaluation.md`.
+
+## Task Contract
+
+The `## Task Contract` section of a task document is what the reviewer judges
+the work against, the way a proof is checked against its statement rather than
+against the prover's account of it. Two fields carry that weight and the tool
+enforces both:
+
+- **Definition of Done** (`--done`): what a reviewer can check, in words.
+  `finish` refuses while it is empty. A `review`-type task is exempt once it
+  has a recorded gate decision, because the decision is its deliverable.
+- **Tests command** (`--tests-cmd`, stored under `## Verification`): one shell
+  command that must exit 0. `finish` executes it from the checkout root
+  (`AGENT_WORKFLOW_TESTS_TIMEOUT`, default 1800s), refuses on a non-zero exit
+  or a timeout, and writes `Tests-command`, `Tests-exit`, and `Tests-duration`
+  into the completion record. `gate approve --rerun-tests` executes the
+  recorded command again in the reviewer's checkout and refuses approval if it
+  fails; the gate record carries the Definition of Done, the command, and
+  whether it was rerun. Without a command, `finish` records `--tests "<words>"`
+  as the worker's word and says so.
+
+Both fields can be given when the task is created (`task create`, `work
+--auto-create`; the worktree bootstrap forwards them), changed while it is
+open with `agentctl contract --goal/--done/--tests-cmd`, or supplied to `finish`
+as a last resort. `agentctl contract` alone prints the current contract.
+Writing them through the tool refreshes the session's read receipt, so no
+`refresh` is needed afterwards.
+
+Write the contract before the work. A Definition of Done written at `finish`
+is the worker's claim; one written at creation is the task's specification,
+and only the second lets a reviewer notice that the work solved a different
+problem than the one asked.
 
 ## Loop Contract
 
@@ -275,9 +307,10 @@ Agents then run the short loop themselves:
 ```bash
 agentctl work --agent codex
 # If no assigned task exists:
-agentctl work --agent codex --auto-create --title "current request" --scope "paths/"
+agentctl work --agent codex --auto-create --title "current request" --scope "paths/" \
+    --done "what a reviewer can check" --tests-cmd "command that must exit 0"
 agentctl note "short factual progress update"
-agentctl finish --summary "what changed" --tests "commands run"
+agentctl finish --summary "what changed"        # runs the tests command, records the result
 git commit -m "feat(scope): summary" -m "Refs: T-101"
 git push
 ```
@@ -330,8 +363,11 @@ The packet references artifacts by path. It should not copy large outputs.
 
 A task is not done until:
 
-- Its task doc has a completion record.
-- Verification commands have been run or explicitly marked unavailable.
+- Its task doc has a Definition of Done and a completion record.
+- The tests command has been run by `finish` and exited 0, or the completion
+  record says in words what was verified and that no command covers it.
 - Artifacts are listed.
 - Follow-ups are recorded.
 - The project plan task board is updated.
+- An independent reviewer has approved it against the Definition of Done,
+  rerunning the tests command where one is recorded.
