@@ -305,7 +305,13 @@ and the gate unions that record with the committed text and any live
 session record. So inside one repository every runtime that ever held a
 session on the task is refused as its reviewer, whatever the committed
 record says; in another clone only the committed record exists.
-Alongside: plain `work --agent <id> --task` validates the agent name like
-`agents add` does, the plan bullet is rendered from flattened board fields,
-and `finish` re-checks the record's structure under the lock, after the
-tests command has run, before it writes.
+A sixth review found two writers of the session row that bypassed that
+recording -- the heartbeat the read-only hook runs on every tool call, and
+`sessions release` -- so a conversation that joined a session by heartbeat
+alone was known to the live row but never to the task-keyed record. Every
+session row now reaches disk through one writer that records, so the list
+in this entry is true of the code. Alongside: plain `work --agent <id>
+--task` validates the agent name like `agents add` does, the plan bullet is
+rendered from flattened board fields, and `finish` re-checks the record's
+structure under the lock, after the tests command has run, before it
+writes.

@@ -179,10 +179,11 @@ flowchart LR
   held but idle. Telemetry failures never kill anything.
 - **Review is enforced, not requested.** Merging needs green CI and an
   approval from a conversation whose runtime never touched the change.
-  Inside one repository that check is authoritative: every claim, note,
-  release, or finish of a task also records the session's runtime locally
-  under the task's own key, and the gate refuses any of those runtimes as a
-  reviewer, whatever the committed record says. In another clone only the
+  Inside one repository that check is authoritative: every write of a
+  session bound to a task (claim, heartbeat, note, refresh, release, finish)
+  also records the session's runtimes locally under the task's own key, and
+  the gate refuses any of those runtimes as a reviewer, whatever the
+  committed record says. In another clone only the
   committed record exists, so cross-machine review still rests on the
   reviewer being a different person or conversation.
 - **GPU locks are machine-wide.** A card claimed by one project is
@@ -250,7 +251,7 @@ the board.
 
 ## Status
 
-309 regression tests run on Linux in CI; a Windows job runs the subset that
+311 regression tests run on Linux in CI; a Windows job runs the subset that
 exercises Windows-specific process handling. The coordination guarantees
 were also exercised end to end on a fresh install: concurrent
 conversations, a conversation that died holding a GPU, a project deleted

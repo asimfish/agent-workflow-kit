@@ -1139,16 +1139,23 @@ def _save_session(root: Path, st: dict) -> None:
         st["presence_status"] = st.get("status")
     else:
         st["presence_status"] = "working"
+    _write_session_row(root, key, st)
+    _render_sessions_view(root)
+
+
+def _write_session_row(root: Path, key: str, st: dict) -> None:
+    """The one way a session row reaches disk.
+
+    Every write of a task-bound row also lands in the task-keyed runtime
+    record, which this key's next task cannot overwrite: whoever claimed,
+    heartbeat, noted, refreshed, released, or finished the task on this
+    repository is remembered as having worked it, finish or no finish.
+    """
     _save_json(_session_path(root, key), st)
-    # Every save of a task-bound session also lands in the task-keyed runtime
-    # record, which this key's next task cannot overwrite: whoever claimed,
-    # noted, refreshed, released, or finished the task on this repository is
-    # remembered as having worked it, finish or no finish.
     task = str(st.get("task") or "")
     runtimes = [str(item) for item in st.get("runtime_identities") or [] if str(item).strip()]
     if task and runtimes:
         _record_task_runtimes(root, task, runtimes)
-    _render_sessions_view(root)
 
 
 def _clear_session(root: Path) -> None:
@@ -14625,7 +14632,7 @@ def _sessions_heartbeat(root: Path) -> int:
             st["presence_status"] = st.get("status")
         else:
             st["presence_status"] = "working"
-        _save_json(_session_path(root, session_key), st)
+        _write_session_row(root, session_key, st)
     finally:
         _release_lock_file(lock, fd)
     return 0
@@ -14816,7 +14823,7 @@ def _sessions_release(root: Path, args: argparse.Namespace) -> int:
         row["heartbeat_at"] = _now()
         row["heartbeat_ns"] = time.time_ns()
         row["revision"] = int(row.get("revision") or 0) + 1
-        _save_json(_session_path(root, target), row)
+        _write_session_row(root, target, row)
         task_lock = _lock_path(root, str(row.get("task") or ""))
         lock_record = _load_json(task_lock, {})
         if lock_record.get("workflow_session_key") == target:

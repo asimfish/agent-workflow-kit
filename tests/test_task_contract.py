@@ -744,6 +744,55 @@ class RecordIntegrityTest(_ContractTestCase):
         self.agentctl("refresh", session="carol")
         self.agentctl("gate", "approve", "--task", task, "--by", "carol", "--note", "ok", session="carol")
 
+    def session_key_for(self, task, session):
+        rows = json.loads(self.agentctl("sessions", "list", "--json", session=session).stdout)["sessions"]
+        return next(row["workflow_session_key"] for row in rows if row.get("task") == task)
+
+    def test_a_runtime_that_only_heartbeat_under_the_session_is_remembered(self):
+        # The sixth reviewer's case: a second conversation joins the worker's
+        # session through `sessions heartbeat` alone (what the read-only hook
+        # runs), never notes or finishes, and the session is released. The
+        # heartbeat and the release used to write the row directly, bypassing
+        # the task-keyed record.
+        task = self.open_task("worker", "real work", "src/r/", "--done", "it works")
+        self.agentctl("sessions", "heartbeat", session="worker", CODEX_THREAD_ID="thread-joiner")
+        recorded = agentctl._recorded_task_runtimes(self.root, task)
+        self.assertEqual(len(recorded), 2, recorded)
+        self.hand_written_review_record(task)
+        key = self.session_key_for(task, "worker")
+        self.agentctl("sessions", "release", key, "--reason", "handoff", session="worker", CODEX_THREAD_ID="thread-joiner")
+        self.agentctl("agents", "add", "--id", "poser", "--role", "review", session="worker", CODEX_THREAD_ID="thread-joiner")
+        self.agentctl(
+            "work", "--agent", "poser", "--auto-create", "--type", "review",
+            "--title", f"review {task}", "--scope", ".agent/gates/", session="worker", CODEX_THREAD_ID="thread-joiner",
+        )
+        self.agentctl("refresh", session="worker", CODEX_THREAD_ID="thread-joiner")
+        refused = self.agentctl(
+            "gate", "approve", "--task", task, "--by", "poser", "--note", "self",
+            expect=1, session="worker", CODEX_THREAD_ID="thread-joiner",
+        )
+        self.assertIn("participated in the worker task and is not independent", refused.stderr)
+
+    def test_a_heartbeat_joiner_of_a_handed_off_task_cannot_review_it(self):
+        task = self.open_task("alice", "shared work", "src/s/", "--done", "it works")
+        self.agentctl("sessions", "heartbeat", session="alice", CODEX_THREAD_ID="thread-joiner")
+        key = self.session_key_for(task, "alice")
+        self.agentctl("sessions", "release", key, "--reason", "handoff to bob", session="alice")
+        self.agentctl("work", "--agent", "bob", "--task", task, session="bob")
+        self.agentctl("finish", "--summary", "bob finished", "--tests", "unit", session="bob")
+        self.assertEqual(len(agentctl._recorded_task_runtimes(self.root, task)), 3)
+        self.agentctl("agents", "add", "--id", "joiner", "--role", "review", session="alice", CODEX_THREAD_ID="thread-joiner")
+        self.agentctl(
+            "work", "--agent", "joiner", "--auto-create", "--type", "review",
+            "--title", f"review {task}", "--scope", ".agent/gates/", session="alice", CODEX_THREAD_ID="thread-joiner",
+        )
+        self.agentctl("refresh", session="alice", CODEX_THREAD_ID="thread-joiner")
+        refused = self.agentctl(
+            "gate", "approve", "--task", task, "--by", "joiner", "--note", "mine",
+            expect=1, session="alice", CODEX_THREAD_ID="thread-joiner",
+        )
+        self.assertIn("participated in the worker task and is not independent", refused.stderr)
+
     def test_plain_claims_validate_the_agent_name_too(self):
         refused = self.agentctl(
             "work", "--agent", "codex\n- Reviewer task: T-X", "--task", "T-000",
