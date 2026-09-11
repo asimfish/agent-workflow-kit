@@ -72,6 +72,35 @@ is the worker's claim; one written at creation is the task's specification,
 and only the second lets a reviewer notice that the work solved a different
 problem than the one asked.
 
+## Milestones
+
+A request too large for one contract is a `milestone`: a task of type
+`milestone` whose Definition of Done is "every task it depends on is done".
+It is a node of the plan, not a piece of work, and the tool treats it that way:
+
+- **Shape.** `task create --type milestone` (scope defaults to `.agent/`).
+  Children are ordinary tasks created with `--parent <milestone>` (also
+  through `work --auto-create`; the worktree bootstrap forwards it), which
+  appends the child to the milestone's `deps`. `--parent` must name an open
+  milestone; a `deps` edge that would close a cycle -- directly or through
+  `--parent` -- is refused with the cycle spelled out, because a plan that
+  waits on itself never closes. A task may sit under several milestones.
+- **Never worked.** `start`/`work` refuse a milestone and print its open and
+  done children; `work` without `--task` never selects one.
+- **Upward cascade.** Whenever a task reaches `done` -- `gate approve`, a
+  review task finishing with a decision, the closed-review sweep, `reconcile
+  merge-back`, `reconcile github`, or `sync` pulling another machine's
+  approval -- the tool closes every milestone whose children are now all
+  done, repeating until nothing moves so a milestone of milestones closes in
+  the same step. Closing writes a completion record to the milestone's task
+  document naming the children, updates the task index, and ticks the plan
+  box; `sync` commits it as `chore(ledger): close milestone(s) ...`. A milestone
+  with no children never closes.
+- **View.** `board --tree` prints milestones at the root with children
+  indented (a child under two milestones appears under both), then the tasks
+  no milestone depends on, so nothing on the board is hidden. The flat `board`
+  marks each milestone with `[milestone: k/n children done]`.
+
 ## Loop Contract
 
 Every loop in `.agent/loops/` must close six links:

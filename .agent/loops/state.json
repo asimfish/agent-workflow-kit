@@ -2,9 +2,9 @@
   "version": 1,
   "loops": {
     "daily-plan-triage": {
-      "last_run_at": "2026-09-06 07:09:13",
+      "last_run_at": "2026-09-09 01:50:16",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20260906-070913-daily-plan-triage-3b703a.md"
+      "last_report": ".agent/loops/runs/20260909-015016-daily-plan-triage-111cb9.md"
     },
     "doc-hygiene": {
       "last_run_at": "2026-09-09 00:24:26",
@@ -24,12 +24,12 @@
   },
   "checkpoints": {
     "work-start": {
-      "last_run_at": "2026-09-06 07:09:13",
+      "last_run_at": "2026-09-09 01:50:16",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20260906-070913-daily-plan-triage-3b703a.md"
+        ".agent/loops/runs/20260909-015016-daily-plan-triage-111cb9.md"
       ],
-      "last_input_hash": "5d9580bedcfa06cf",
+      "last_input_hash": "a71871bdd071697d",
       "strict": false,
       "trigger": "work-start",
       "open_follow_up": null

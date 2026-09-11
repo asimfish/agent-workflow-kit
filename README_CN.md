@@ -146,6 +146,10 @@ flowchart LR
 - **任务说清什么叫做完，一条命令来证明。** Definition of Done 和测试命令在干活
   之前就写进任务文档；`finish` 没有前者就拒绝，会去执行后者；评审者再跑一遍。
   交付物对照的是契约，永远不是干活者自己的总结。
+- **大需求是里程碑，干活的只有它的子任务。** `milestone` 类型的任务是计划里的
+  一个节点：不能被认领，子任务用 `--parent` 挂在它下面，最后一个子任务通过评审
+  的那一刻它自动关闭，并把是哪些子任务记进完成记录。创建时就拒绝依赖成环。
+  `board --tree` 按里程碑展开，能看到每项工作离它服务的目标还有多远。
 - **失联的会话是「过期」，不是「消失」。** 30 分钟没有心跳，它的认领会被标记
   出来。其他人看到警告后照常干活。接管必须显式执行 `sessions release` 并写明
   理由，没有任何东西会被自动重新分配。
@@ -179,7 +183,8 @@ flowchart LR
 | `agentctl finish --summary ...` | 执行测试命令、记录结果、把任务交给评审 |
 | `agentctl run start -- <command>` | 受监管的后台任务；另有 `run list`、`run stop <run-id> --reason "..."` |
 | `agentctl gate approve --task <id> --by <reviewer> --rerun-tests` | 重跑测试命令后独立批准（或 `gate reject`） |
-| `agentctl board` | 谁在干什么 |
+| `agentctl task create --type milestone --title "..."` | 开一个里程碑；用 `work --auto-create ... --parent <id>` 往下面挂工作 |
+| `agentctl board` | 谁在干什么（`--tree`：按里程碑展开子任务） |
 | `agentctl doctor` | 哪里卡住了、怎么解 |
 | `agentctl sync` | 发布本检出的认领、拉回其他人的（只提交账本，拉取，推送） |
 
@@ -213,7 +218,7 @@ hooks 负责协调智能体，不负责隔离不受信任的代码。绕过 `age
 
 ## 现状
 
-312 个回归测试在 Linux 的 CI 上运行，另有一个 Windows job 跑其中涉及 Windows
+323 个回归测试在 Linux 的 CI 上运行，另有一个 Windows job 跑其中涉及 Windows
 进程处理的子集。协调保证也在全新安装上完整
 演练过：并发会话、带着显卡死掉的会话、持有锁时被删除的项目、独立评审者，以及
 针对租约与评审检查的对抗式状态篡改。GPU 监管在共享的 RTX 5090 上实测过。

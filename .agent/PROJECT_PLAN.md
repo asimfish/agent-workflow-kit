@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TA08B0CC413F151F5-038 - milestone tasks: a task whose Definition of Done is 'every dependency done', closed by the tool when its children close (owner: cursor)
 - [ ] T9F94C43755189F1F-001 - re-render task views after the -036 review takeover left PROJECT_PLAN.md owner stale (CI red on main since #62) (owner: supervisor)
 - [x] T959D7DD577093D31-001 - review adoption commit and clone wiring TA08B0CC413F151F5-036 (owner: independent-reviewer-036c)
 - [x] TA08B0CC413F151F5-036 - adoption commit: the commit that installs the kit passes the kit's own hooks (owner: cursor)
