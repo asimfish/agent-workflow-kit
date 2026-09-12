@@ -549,6 +549,21 @@ def _resolve_board_entry(_key: str, ours: dict, theirs: dict) -> dict:
     return ours
 
 
+def _resolve_milestone_entry(key: str, base: dict, ours: dict, theirs: dict) -> dict:
+    """Keep independent additions; ambiguous lifecycle changes need reconciliation."""
+    winner = _resolve_board_entry(key, ours, theirs)
+    if not any(_is_milestone(row) for row in (base, ours, theirs)):
+        return winner
+    b, o, t = (set(row.get("deps") or []) for row in (base, ours, theirs))
+    if b - o or b - t:
+        raise ValueError(f"milestone {key}: dependency removal races another edit")
+    if (o != t and "done" in (ours.get("status"), theirs.get("status"))) or (
+        base.get("status") == "done" and ours.get("status") != theirs.get("status")
+    ):
+        raise ValueError(f"milestone {key}: completion/reopen races another edit")
+    return {**winner, "deps": sorted(o | t)}
+
+
 def _merge_ledger_json(base_text: str, ours_text: str, theirs_text: str,
                        collection: str, resolve) -> str:
     """Merge two JSON ledgers by entry; raises ValueError on a side that is not a JSON object.
@@ -573,11 +588,21 @@ def _merge_ledger_json(base_text: str, ours_text: str, theirs_text: str,
         if collection in side and not isinstance(side[collection], dict):
             raise ValueError(f"{label} side: {collection} is not a JSON object")
     merged = {**theirs, **ours}  # top-level fields: ours wins, theirs-only keys survive
+    entry_resolver = resolve
+    if collection == "tasks":
+        entry_resolver = lambda key, o, t: _resolve_milestone_entry(
+            key, (base.get(collection) or {}).get(key) or {}, o, t)
     merged[collection] = _three_way_entries(
         base.get(collection) or {}, ours.get(collection) or {}, theirs.get(collection) or {},
-        resolve,
+        entry_resolver,
         deletion_wins=_board_deletion_wins if collection == "tasks" else None,
     )
+    if collection == "tasks":
+        for tid, entry in merged[collection].items():
+            if _is_milestone(entry):
+                cycle = _dependency_cycle(merged, tid, entry.get("deps"))
+                if cycle:
+                    raise ValueError("milestone dependency cycle after merge: " + " -> ".join(cycle))
     stamps = [str(d.get("updated") or "") for d in (ours, theirs) if d.get("updated")]
     if stamps:
         merged["updated"] = max(stamps)
@@ -2729,6 +2754,12 @@ def _dependency_cycle(board: dict, task: str, deps) -> list[str] | None:
     return None
 
 
+def _milestone_board(root: Path, board: dict) -> dict:
+    """Resolve archived evidence without letting it override a live reopened task."""
+    archived = _load_json(root / WORKFLOW_DIR / "archive" / "board.json", {})
+    return {**board, "tasks": {**(archived.get("tasks") or {}), **(board.get("tasks") or {})}}
+
+
 def _milestone_children(board: dict, milestone: str) -> tuple[list[str], list[str]]:
     """(done children, open children) of a milestone, by its deps."""
     tasks = board.get("tasks") or {}
@@ -2748,13 +2779,14 @@ def _cascade_milestones(root: Path, board: dict) -> list[str]:
     """
     tasks = board.get("tasks") or {}
     closed: list[str] = []
+    resolved = _milestone_board(root, board)
     changed = True
     while changed:
         changed = False
         for tid, entry in tasks.items():
             if not _is_milestone(entry) or entry.get("status") == "done":
                 continue
-            done, open_ = _milestone_children(board, tid)
+            done, open_ = _milestone_children(resolved, tid)
             if not done or open_:
                 continue
             ts = _now()
@@ -2782,7 +2814,8 @@ def _record_milestone_completion(root: Path, milestone: str, children: list[str]
     head = "\n".join(lines[:header]).rstrip("\n") if header is not None else body.rstrip("\n")
     record = (
         f"- Summary: all {len(children)} children done: {', '.join(children)}\n"
-        f"- Tests: each child passed its own independent review; see .agent/gates/\n"
+        f"- Tests: child completion evidence in .agent/tasks/ and .agent/archive/tasks/; "
+        f"review decisions in .agent/gates/ or .agent/archive/gates/ where applicable\n"
         f"- Completed-at: {ts}\n- Completed-at-ns: {time.time_ns()}\n"
     )
     _write(path, head + f"\n\n{COMPLETION_SECTION}\n\n" + record)
@@ -3931,7 +3964,7 @@ def cmd_start(
             return 2
         entry = tasks.get(task, {})
         if _is_milestone(entry):
-            done, open_ = _milestone_children(board, task)
+            done, open_ = _milestone_children(_milestone_board(root, board), task)
             print(
                 f"agentctl: {task} is a milestone; it is not worked, it closes when its "
                 f"children do. Open children: {', '.join(open_) or 'none yet'}"
@@ -5005,15 +5038,16 @@ def cmd_board(args: argparse.Namespace) -> int:
         str(row.get("task") or "") for row in _session_rows_unlocked(root)
     } if (root / ".git").exists() else set()
     if getattr(args, "tree", False):
-        _print_board_tree(board)
+        _print_board_tree(board, root=root)
         return 0
+    resolved = _milestone_board(root, board)
     for tid in sorted(tasks):
         t = tasks[tid]
         owner = t.get("owner") or "-"
         scope = ",".join(t.get("scope") or []) or "-"
         marker = ""
         if _is_milestone(t):
-            done, open_ = _milestone_children(board, tid)
+            done, open_ = _milestone_children(resolved, tid)
             marker = f"  [milestone: {len(done)}/{len(done) + len(open_)} children done]"
         elif t.get("status") == "in_progress" and tid not in local_tasks:
             # Claimed from another checkout or machine: this checkout cannot
@@ -5025,13 +5059,22 @@ def cmd_board(args: argparse.Namespace) -> int:
     return 0
 
 
-def _print_board_tree(board: dict) -> None:
+def _print_board_tree(board: dict, root: Path | None = None) -> None:
     """The plan as a DAG: roots first, children indented, status on every line.
 
     A task under several milestones is printed under each. Tasks no
     milestone depends on are listed last so nothing on the board is hidden.
     """
-    tasks = board.get("tasks") or {}
+    live_tasks = board.get("tasks") or {}
+    board = _milestone_board(root, board) if root is not None else board
+    all_tasks = board.get("tasks") or {}
+    tasks = dict(live_tasks)
+    pending = list(tasks)
+    while pending:
+        for dep in (tasks[pending.pop()].get("deps") or []):
+            if dep not in tasks and dep in all_tasks:
+                tasks[dep] = all_tasks[dep]
+                pending.append(dep)
     depended_on = {dep for entry in tasks.values() for dep in entry.get("deps") or []}
 
     def line(tid: str, depth: int) -> str:
@@ -5054,10 +5097,10 @@ def _print_board_tree(board: dict) -> None:
             else:
                 print("  " + "  " * (depth + 1) + f"- {dep} [missing]")
 
-    roots = [tid for tid in sorted(tasks) if _is_milestone(tasks[tid]) and tid not in depended_on]
+    roots = [tid for tid in sorted(live_tasks) if _is_milestone(tasks[tid]) and tid not in depended_on]
     for tid in roots:
         walk(tid, 0, ())
-    loose = [tid for tid in sorted(tasks) if tid not in depended_on and not _is_milestone(tasks[tid])]
+    loose = [tid for tid in sorted(live_tasks) if tid not in depended_on and not _is_milestone(tasks[tid])]
     if loose:
         # Walked, not listed: a plain task's own deps are otherwise in
         # depended_on and would appear nowhere.
