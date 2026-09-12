@@ -319,3 +319,30 @@ runtime the gate was about to need. Alongside: plain `work --agent <id>
 rendered from flattened board fields, and `finish` re-checks the record's
 structure under the lock, after the tests command has run, before it
 writes.
+
+A plan had one level: a task either existed or was done, and a request too
+large for one contract was either one oversized task or a handful of
+siblings whose relationship lived in someone's head. Tasks of type
+`milestone` give the plan a second level. A milestone is a node, not work:
+it cannot be claimed and `work` never selects it; its children are created
+with `--parent <milestone>` (through `task create` or `work --auto-create`,
+which the worktree bootstrap forwards) and become its `deps`; and it closes
+by itself the moment its last child reaches `done` -- at the gate, when a
+review task finishes with a decision, in the closed-review sweep, on
+`reconcile merge-back` and `reconcile github`, and when `sync` pulls
+another machine's approval, repeating so a milestone of milestones closes
+in the same step and `sync` commits the result. The completion record it
+writes names the children, so the plan reads as a chain of evidence from
+the leaves to the root. Dependency edges that would close a cycle, directly
+or through `--parent`, are refused at creation with the cycle spelled out.
+`board --tree` prints milestones with their children indented and lists the
+tasks under no milestone last; the flat board marks each milestone with how
+many children are done. Eleven tests cover the shape rules, the cascade
+through each done-transition, both cross-machine paths, and the rendering.
+
+Milestone review fixes: archived completed children still satisfy their parents
+and appear in tree/progress views. Concurrent parent additions preserve both
+dependency edges; races with completion, removal, reopening, and merged cycles
+stop for reconciliation. Regression coverage includes actual archive commands,
+two independently installed clones syncing through a bare remote, both merge
+orders, and nested completion with archived children.

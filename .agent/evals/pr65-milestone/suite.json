@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "suites": {
+    "pr65-milestone-repair": {
+      "description": "Supervisor-owned positive milestone repair oracles, frozen before candidate SHA is supplied. Exit 0 means correctness, not defect reproduction.",
+      "cases": [
+        {
+          "id": "cr001-archived-child-cascade",
+          "split": "held_in",
+          "required": true,
+          "argv": ["python3", "-B", "/tmp/awk-pr65-codex-9eeJOt/repo/.agent/evals/pr65-milestone/runner.py", "archive", "--sha256", "d8182020ef0aa77298418a0d17f9838c5d1c6313b9a7838bbcf72d1b6bf4a846"],
+          "timeout_seconds": 180,
+          "expected_exit_codes": [0]
+        },
+        {
+          "id": "cr002-concurrent-parent-edges",
+          "split": "held_in",
+          "required": true,
+          "argv": ["python3", "-B", "/tmp/awk-pr65-codex-9eeJOt/repo/.agent/evals/pr65-milestone/runner.py", "parent-merge", "--sha256", "d8182020ef0aa77298418a0d17f9838c5d1c6313b9a7838bbcf72d1b6bf4a846"],
+          "timeout_seconds": 180,
+          "expected_exit_codes": [0]
+        },
+        {
+          "id": "heldout-live-state-precedence",
+          "split": "held_out",
+          "required": true,
+          "argv": ["python3", "-B", "/tmp/awk-pr65-codex-9eeJOt/repo/.agent/evals/pr65-milestone/runner.py", "live-precedence", "--sha256", "d8182020ef0aa77298418a0d17f9838c5d1c6313b9a7838bbcf72d1b6bf4a846"],
+          "timeout_seconds": 180,
+          "expected_exit_codes": [0]
+        }
+      ]
+    }
+  }
+}

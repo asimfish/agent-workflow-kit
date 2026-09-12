@@ -186,7 +186,12 @@ RUN_HEARTBEAT_SECONDS = 2.0
 # AttributeError at call time, which broke every run stop. The numeric value
 # routes to taskkill /F on Windows and to the real SIGKILL elsewhere.
 PORTABLE_SIGKILL = getattr(signal, "SIGKILL", 9)
-TASK_TYPES = {"code", "experiment", "docs", "review", "maintenance", "generic"}
+TASK_TYPES = {"code", "experiment", "docs", "review", "maintenance", "generic", "milestone"}
+# A milestone is a node of the plan, not a piece of work: its Definition of
+# Done is "every task it depends on is done", and the tool closes it when
+# that becomes true. Nobody claims it, so its scope is the ledger itself.
+MILESTONE_TYPE = "milestone"
+MILESTONE_SCOPE = ".agent/"
 ISOLATION_MODES = {"auto", "shared", "worktree", "read-only", "exclusive"}
 TASK_ID_NAMESPACE_FILE = "task-id-namespace.key"
 TASK_ID_NAMESPACE_BYTES = 32
@@ -544,6 +549,21 @@ def _resolve_board_entry(_key: str, ours: dict, theirs: dict) -> dict:
     return ours
 
 
+def _resolve_milestone_entry(key: str, base: dict, ours: dict, theirs: dict) -> dict:
+    """Keep independent additions; ambiguous lifecycle changes need reconciliation."""
+    winner = _resolve_board_entry(key, ours, theirs)
+    if not any(_is_milestone(row) for row in (base, ours, theirs)):
+        return winner
+    b, o, t = (set(row.get("deps") or []) for row in (base, ours, theirs))
+    if b - o or b - t:
+        raise ValueError(f"milestone {key}: dependency removal races another edit")
+    if (o != t and "done" in (ours.get("status"), theirs.get("status"))) or (
+        base.get("status") == "done" and ours.get("status") != theirs.get("status")
+    ):
+        raise ValueError(f"milestone {key}: completion/reopen races another edit")
+    return {**winner, "deps": sorted(o | t)}
+
+
 def _merge_ledger_json(base_text: str, ours_text: str, theirs_text: str,
                        collection: str, resolve) -> str:
     """Merge two JSON ledgers by entry; raises ValueError on a side that is not a JSON object.
@@ -568,11 +588,21 @@ def _merge_ledger_json(base_text: str, ours_text: str, theirs_text: str,
         if collection in side and not isinstance(side[collection], dict):
             raise ValueError(f"{label} side: {collection} is not a JSON object")
     merged = {**theirs, **ours}  # top-level fields: ours wins, theirs-only keys survive
+    entry_resolver = resolve
+    if collection == "tasks":
+        entry_resolver = lambda key, o, t: _resolve_milestone_entry(
+            key, (base.get(collection) or {}).get(key) or {}, o, t)
     merged[collection] = _three_way_entries(
         base.get(collection) or {}, ours.get(collection) or {}, theirs.get(collection) or {},
-        resolve,
+        entry_resolver,
         deletion_wins=_board_deletion_wins if collection == "tasks" else None,
     )
+    if collection == "tasks":
+        for tid, entry in merged[collection].items():
+            if _is_milestone(entry):
+                cycle = _dependency_cycle(merged, tid, entry.get("deps"))
+                if cycle:
+                    raise ValueError("milestone dependency cycle after merge: " + " -> ".join(cycle))
     stamps = [str(d.get("updated") or "") for d in (ours, theirs) if d.get("updated")]
     if stamps:
         merged["updated"] = max(stamps)
@@ -825,6 +855,16 @@ def cmd_sync(args: argparse.Namespace) -> int:
             return 1
         if committed_views:
             print("agentctl: sync re-rendered task views from the merged board")
+    # Children finished on other machines may have completed a milestone.
+    closed = _cascade_and_report(root)
+    if closed:
+        _render_task_views(root, _load_board(root))
+        committed_closed, error = commit_ledger(
+            "chore(ledger): close milestone(s) " + ", ".join(closed),
+        )
+        if error:
+            print(f"agentctl: sync could not commit the closed milestone(s): {error}", file=sys.stderr)
+            return 1
 
     if args.no_push:
         return 0
@@ -2688,6 +2728,115 @@ def _agent_can_take(agent: str, task: dict) -> bool:
     return agent in {"supervisor", "human"}
 
 
+def _is_milestone(entry: dict | None) -> bool:
+    return str((entry or {}).get("type") or "") == MILESTONE_TYPE
+
+
+def _dependency_cycle(board: dict, task: str, deps) -> list[str] | None:
+    """The path that would close a cycle if `task` depended on `deps`, or None.
+
+    Follows existing `deps` edges from each proposed dependency; reaching
+    `task` again means the plan would wait on itself forever.
+    """
+    tasks = board.get("tasks") or {}
+    for dep in deps or []:
+        stack = [(dep, [task, dep])]
+        seen: set[str] = set()
+        while stack:
+            current, path = stack.pop()
+            if current == task:
+                return path
+            if current in seen:
+                continue
+            seen.add(current)
+            for nxt in (tasks.get(current) or {}).get("deps") or []:
+                stack.append((nxt, path + [nxt]))
+    return None
+
+
+def _milestone_board(root: Path, board: dict) -> dict:
+    """Resolve archived evidence without letting it override a live reopened task."""
+    archived = _load_json(root / WORKFLOW_DIR / "archive" / "board.json", {})
+    return {**board, "tasks": {**(archived.get("tasks") or {}), **(board.get("tasks") or {})}}
+
+
+def _milestone_children(board: dict, milestone: str) -> tuple[list[str], list[str]]:
+    """(done children, open children) of a milestone, by its deps."""
+    tasks = board.get("tasks") or {}
+    done, open_ = [], []
+    for dep in (tasks.get(milestone) or {}).get("deps") or []:
+        (done if (tasks.get(dep) or {}).get("status") == "done" else open_).append(dep)
+    return done, open_
+
+
+def _cascade_milestones(root: Path, board: dict) -> list[str]:
+    """Close every milestone whose children are all done; repeat until nothing moves.
+
+    The caller saves the board. A milestone with no children is never closed
+    here: nothing has been done for it yet. The closing is recorded in the
+    milestone's task document like any completion, naming the children, so
+    the plan reads as a chain of evidence from the leaves to the root.
+    """
+    tasks = board.get("tasks") or {}
+    closed: list[str] = []
+    resolved = _milestone_board(root, board)
+    changed = True
+    while changed:
+        changed = False
+        for tid, entry in tasks.items():
+            if not _is_milestone(entry) or entry.get("status") == "done":
+                continue
+            done, open_ = _milestone_children(resolved, tid)
+            if not done or open_:
+                continue
+            ts = _now()
+            entry["status"] = "done"
+            entry["updated_at"] = ts
+            _record_milestone_completion(root, tid, done, ts)
+            _set_task_doc_status(root, tid, "done")
+            _update_tasks_index(
+                root, tid, status="done", owner=entry.get("owner"),
+                scope=entry.get("scope"), title=entry.get("title"),
+            )
+            _check_plan_box(root, tid)
+            closed.append(tid)
+            changed = True
+    return closed
+
+
+def _record_milestone_completion(root: Path, milestone: str, children: list[str], ts: str) -> None:
+    path = root / WORKFLOW_DIR / TASKS_DIR / f"{milestone}.md"
+    body = _read(path)
+    if not body:
+        return
+    lines = _doc_lines(body)
+    header = _completion_record_header_index(lines)
+    head = "\n".join(lines[:header]).rstrip("\n") if header is not None else body.rstrip("\n")
+    record = (
+        f"- Summary: all {len(children)} children done: {', '.join(children)}\n"
+        f"- Tests: child completion evidence in .agent/tasks/ and .agent/archive/tasks/; "
+        f"review decisions in .agent/gates/ or .agent/archive/gates/ where applicable\n"
+        f"- Completed-at: {ts}\n- Completed-at-ns: {time.time_ns()}\n"
+    )
+    _write(path, head + f"\n\n{COMPLETION_SECTION}\n\n" + record)
+
+
+def _cascade_and_report(root: Path, board: dict | None = None) -> list[str]:
+    """Load (or take) the board, cascade, save when anything closed, and say so.
+
+    Called wherever a task reaches done: the gate, a review task's finish,
+    the closure sweep, a merge-back import, a sync pull, a reconciled PR.
+    """
+    board = board if board is not None else _load_board(root)
+    closed = _cascade_milestones(root, board)
+    if closed:
+        _save_board(root, board)
+        for tid in closed:
+            title = (board.get("tasks") or {}).get(tid, {}).get("title") or tid
+            print(f"agentctl: milestone {tid} closed: all children done ({title})")
+    return closed
+
+
 def _select_next_task(root: Path, agent: str) -> str | None:
     board = _load_board(root)
     candidates = []
@@ -2695,6 +2844,8 @@ def _select_next_task(root: Path, agent: str) -> str | None:
     for tid, task in board.get("tasks", {}).items():
         status = task.get("status")
         if status not in priority:
+            continue
+        if _is_milestone(task):
             continue
         if not _agent_can_take(agent, task):
             continue
@@ -3516,6 +3667,7 @@ def cmd_work(args: argparse.Namespace) -> int:
                 goal=getattr(args, "goal", None),
                 done=getattr(args, "done", None),
                 tests_cmd=getattr(args, "tests_cmd", None),
+                parent=getattr(args, "parent", None),
             )
             isolation = _task_isolation(
                 root, {"type": create_args.task_type}, args.isolation,
@@ -3811,6 +3963,16 @@ def cmd_start(
             )
             return 2
         entry = tasks.get(task, {})
+        if _is_milestone(entry):
+            done, open_ = _milestone_children(_milestone_board(root, board), task)
+            print(
+                f"agentctl: {task} is a milestone; it is not worked, it closes when its "
+                f"children do. Open children: {', '.join(open_) or 'none yet'}"
+                + (f"; done: {', '.join(done)}" if done else "")
+                + ". Claim one of the children, or add one with --parent " + task,
+                file=sys.stderr,
+            )
+            return 1
         scope = entry.get("scope") or []
         if args.scope:
             scope = [s.strip() for s in args.scope.split(",") if s.strip()]
@@ -4367,6 +4529,7 @@ def cmd_complete(args: argparse.Namespace) -> int:
             )
         if final_status == "done":
             _check_plan_box(root, task)
+            _cascade_and_report(root, board)
         lp = _lock_path(root, task)
         if lp.is_file():
             lp.unlink()
@@ -4597,6 +4760,7 @@ def _gate_reconcile_github(root: Path, args: argparse.Namespace, board: dict, ta
         _update_tasks_index(
             root, task, status="done", owner=t.get("owner"), scope=t.get("scope"), title=t.get("title"),
         )
+        _cascade_and_report(root, board)
     _write(
         gate_doc,
         f"# Gate {task}\n\n- Decision: approved\n- Source: github-merge\n"
@@ -4822,6 +4986,7 @@ def _cmd_gate_unlocked(root: Path, args: argparse.Namespace, rerun: dict | None 
         st["doc_hashes"] = _hash_docs(root, st.get("task"))
         _save_session(root, st)
         print(f"agentctl: {task} approved -> done")
+        _cascade_and_report(root, board)
         return 0
     t["status"] = "blocked"
     t["updated_at"] = ts
@@ -4872,12 +5037,19 @@ def cmd_board(args: argparse.Namespace) -> int:
     local_tasks = {
         str(row.get("task") or "") for row in _session_rows_unlocked(root)
     } if (root / ".git").exists() else set()
+    if getattr(args, "tree", False):
+        _print_board_tree(board, root=root)
+        return 0
+    resolved = _milestone_board(root, board)
     for tid in sorted(tasks):
         t = tasks[tid]
         owner = t.get("owner") or "-"
         scope = ",".join(t.get("scope") or []) or "-"
         marker = ""
-        if t.get("status") == "in_progress" and tid not in local_tasks:
+        if _is_milestone(t):
+            done, open_ = _milestone_children(resolved, tid)
+            marker = f"  [milestone: {len(done)}/{len(done) + len(open_)} children done]"
+        elif t.get("status") == "in_progress" and tid not in local_tasks:
             # Claimed from another checkout or machine: this checkout cannot
             # see that conversation's heartbeat, only when the board entry
             # last changed.
@@ -4885,6 +5057,56 @@ def cmd_board(args: argparse.Namespace) -> int:
             marker = f"  [elsewhere, updated {_format_age(age) if age else '?'} ago]"
         print(f"  {tid:<10} {t.get('status', '?'):<12} owner={owner:<12} scope={scope:<24} {t.get('title', '')}{marker}")
     return 0
+
+
+def _print_board_tree(board: dict, root: Path | None = None) -> None:
+    """The plan as a DAG: roots first, children indented, status on every line.
+
+    A task under several milestones is printed under each. Tasks no
+    milestone depends on are listed last so nothing on the board is hidden.
+    """
+    live_tasks = board.get("tasks") or {}
+    board = _milestone_board(root, board) if root is not None else board
+    all_tasks = board.get("tasks") or {}
+    tasks = dict(live_tasks)
+    pending = list(tasks)
+    while pending:
+        for dep in (tasks[pending.pop()].get("deps") or []):
+            if dep not in tasks and dep in all_tasks:
+                tasks[dep] = all_tasks[dep]
+                pending.append(dep)
+    depended_on = {dep for entry in tasks.values() for dep in entry.get("deps") or []}
+
+    def line(tid: str, depth: int) -> str:
+        entry = tasks.get(tid) or {}
+        title = entry.get("title") or tid
+        status = entry.get("status") or "?"
+        if _is_milestone(entry):
+            done, open_ = _milestone_children(board, tid)
+            status = f"{status}, {len(done)}/{len(done) + len(open_)} done"
+        return f"{'  ' * depth}{'- ' if depth else ''}{tid} [{status}] {title}"
+
+    def walk(tid: str, depth: int, trail: tuple) -> None:
+        print("  " + line(tid, depth))
+        if tid in trail:
+            print("  " + "  " * (depth + 1) + "- (cycle)")
+            return
+        for dep in (tasks.get(tid) or {}).get("deps") or []:
+            if dep in tasks:
+                walk(dep, depth + 1, trail + (tid,))
+            else:
+                print("  " + "  " * (depth + 1) + f"- {dep} [missing]")
+
+    roots = [tid for tid in sorted(live_tasks) if _is_milestone(tasks[tid]) and tid not in depended_on]
+    for tid in roots:
+        walk(tid, 0, ())
+    loose = [tid for tid in sorted(live_tasks) if tid not in depended_on and not _is_milestone(tasks[tid])]
+    if loose:
+        # Walked, not listed: a plain task's own deps are otherwise in
+        # depended_on and would appear nowhere.
+        print("  (not under any milestone)")
+        for tid in loose:
+            walk(tid, 1, ())
 
 
 def _task_create(root: Path, args: argparse.Namespace) -> int:
@@ -4931,13 +5153,46 @@ def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
     if task_type not in TASK_TYPES:
         print(f"agentctl: unsupported task type: {task_type}", file=sys.stderr)
         return 2
+    if task_type == MILESTONE_TYPE and not scope:
+        scope = [MILESTONE_SCOPE]
     requested_tests_cmd = str(getattr(args, "tests_cmd", None) or "").strip()
     if requested_tests_cmd and _tests_cmd_problem(requested_tests_cmd):
         print(f"agentctl: {_tests_cmd_problem(requested_tests_cmd)}", file=sys.stderr)
         return 2
+    parent = str(getattr(args, "parent", None) or "").strip()
     now = _now()
     board = _load_board(root)
     doc = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
+    if parent:
+        parent_entry = (board.get("tasks") or {}).get(parent)
+        if not parent_entry:
+            print(f"agentctl: --parent {parent} is not on the board", file=sys.stderr)
+            return 2
+        if not _is_milestone(parent_entry):
+            print(
+                f"agentctl: --parent {parent} is a {parent_entry.get('type') or 'generic'} task, "
+                "not a milestone; only milestones collect children",
+                file=sys.stderr,
+            )
+            return 2
+        if parent_entry.get("status") == "done":
+            print(f"agentctl: --parent {parent} is already done; it cannot take new children", file=sys.stderr)
+            return 2
+        if parent == task or parent in deps:
+            print(f"agentctl: {task} cannot be both a child and a dependency of {parent}", file=sys.stderr)
+            return 2
+    # Deps are edges of the plan; a plan that waits on itself never closes.
+    cycle = _dependency_cycle(board, task, deps)
+    if cycle:
+        print(f"agentctl: dependency cycle refused: {' -> '.join(cycle)}", file=sys.stderr)
+        return 2
+    if parent:
+        # The new task will be a dependency of the parent: a cycle if the
+        # parent is (transitively) among the new task's own dependencies.
+        cycle = _dependency_cycle(board, parent, [*deps])
+        if cycle:
+            print(f"agentctl: --parent {parent} would form a cycle: {' -> '.join(cycle)}", file=sys.stderr)
+            return 2
     if task in board.get("tasks", {}) and not args.force:
         print(f"agentctl: task {task} already exists (use --force)", file=sys.stderr)
         return 1
@@ -4965,6 +5220,13 @@ def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
     board.setdefault("tasks", {})[task] = {"title": title, "type": task_type, "status": "todo",
                                            "owner": owner or None, "scope": scope, "deps": deps,
                                            "created_at": now, "updated_at": now}
+    if parent:
+        parent_entry = board["tasks"][parent]
+        parent_deps = [str(item) for item in parent_entry.get("deps") or []]
+        if task not in parent_deps:
+            parent_deps.append(task)
+        parent_entry["deps"] = parent_deps
+        parent_entry["updated_at"] = now
     _save_board(root, board)
     if not doc.is_file():
         tmpl = _read(root / WORKFLOW_DIR / TASKS_DIR / "_template.md")
@@ -4976,10 +5238,16 @@ def _task_create_unlocked(root: Path, args: argparse.Namespace) -> int:
         else:
             body = f"# {task} - {title}\n\nStatus: todo\n"
         _write(doc, body)
+    done_text = getattr(args, "done", None)
+    if task_type == MILESTONE_TYPE and not (done_text or "").strip():
+        done_text = (
+            "every task this milestone depends on is done; the tool closes the milestone "
+            "itself at that moment and records the children here"
+        )
     _write_task_contract(
         root, task,
         goal=getattr(args, "goal", None),
-        done=getattr(args, "done", None),
+        done=done_text,
         tests_cmd=getattr(args, "tests_cmd", None),
     )
     tasks_md = root / WORKFLOW_DIR / TASKS_FILE
@@ -6895,7 +7163,7 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
         ]
         if create_args.deps:
             create_command.extend(["--deps", str(create_args.deps)])
-        for flag, attr in (("--goal", "goal"), ("--done", "done"), ("--tests-cmd", "tests_cmd")):
+        for flag, attr in (("--goal", "goal"), ("--done", "done"), ("--tests-cmd", "tests_cmd"), ("--parent", "parent")):
             value = getattr(create_args, attr, None)
             if value and str(value).strip():
                 # --flag=value: a value that begins with '-' must not be read as an option.
@@ -11280,6 +11548,9 @@ def _reconcile_merge_back(root: Path, args: argparse.Namespace) -> int:
                 missing_docs.append(tid)
         _save_board(root, board)
         _render_task_views(root, board)
+        # An imported done child may be the last one a milestone waited for.
+        if _cascade_and_report(root, board):
+            _render_task_views(root, board)
     finally:
         _release_lock_file(lock, fd)
     for tid, action in plan:
@@ -11489,6 +11760,7 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
                 closed.append((tid, decisions))
             if closed:
                 _save_board(root, board)
+                _cascade_and_report(root, board)
         finally:
             _release_lock_file(lock, fd)
         for tid, decisions in closed:
@@ -15059,6 +15331,10 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 
 def _add_contract_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--parent",
+        help="milestone this task contributes to; the task is added to the milestone's deps",
+    )
     parser.add_argument("--goal", help="what the task is for, one sentence")
     parser.add_argument(
         "--done",
@@ -15183,6 +15459,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("board")
     sp.add_argument("--json", action="store_true")
+    sp.add_argument(
+        "--tree", action="store_true",
+        help="print the plan as a tree: milestones at the root, their children indented",
+    )
     sp.set_defaults(func=cmd_board)
 
     sp = sub.add_parser("task")

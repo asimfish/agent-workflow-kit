@@ -152,6 +152,31 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
 
     # --- tests ---------------------------------------------------------------------
 
+    def test_concurrent_milestone_children_survive_real_sync(self):
+        self.agentctl(self.a, "conv-a", "task", "create", "--id", "M-1",
+                      "--type", "milestone", "--title", "parallel collection")
+        self.open_task(self.a, "conv-a", "codex", "coordinate collection", "docs/a/")
+        self.agentctl(self.a, "conv-a", "sync")
+        self.git(self.b, "pull", "-q", "--rebase", "origin", "main")
+        self.open_task(self.b, "conv-b", "codex", "coordinate second machine", "docs/b/")
+        for root, session, child in ((self.a, "conv-a", "E-1"), (self.b, "conv-b", "E-2")):
+            self.agentctl(root, session, "task", "create", "--id", child,
+                          "--title", child, "--parent", "M-1", "--scope", f"collect/{child}/")
+        self.agentctl(self.a, "conv-a", "sync")
+        self.agentctl(self.b, "conv-b", "sync")
+        self.agentctl(self.a, "conv-a", "sync")
+        for root in (self.a, self.b):
+            board = {"tasks": self.board(root)}
+            self.assertEqual(set(board["tasks"]["M-1"]["deps"]), {"E-1", "E-2"})
+            # Seed completion states to isolate cascade from the separately
+            # tested reviewer gate, after exercising real CLI sync above.
+            board["tasks"]["E-1"]["status"] = "done"
+            self.assertEqual(agentctl._cascade_milestones(root, board), [])
+            board["tasks"]["E-2"]["status"] = "done"
+            self.assertEqual(agentctl._cascade_milestones(root, board), ["M-1"])
+            record = (root / ".agent/tasks/M-1.md").read_text()
+            self.assertIn("E-1, E-2", record)
+
     def test_install_registers_the_merge_driver_and_attributes(self):
         for root in (self.a, self.b):
             self.assertIn("merge-driver", self.git(root, "config", "--get", "merge.agent-ledger.driver"))

@@ -369,6 +369,17 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-reviewer-038-codex": {
+      "role": "review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }
