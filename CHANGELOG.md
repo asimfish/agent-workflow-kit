@@ -339,3 +339,10 @@ or through `--parent`, are refused at creation with the cycle spelled out.
 tasks under no milestone last; the flat board marks each milestone with how
 many children are done. Eleven tests cover the shape rules, the cascade
 through each done-transition, both cross-machine paths, and the rendering.
+
+Milestone review fixes: archived completed children still satisfy their parents
+and appear in tree/progress views. Concurrent parent additions preserve both
+dependency edges; races with completion, removal, reopening, and merged cycles
+stop for reconciliation. Regression coverage includes actual archive commands,
+two independently installed clones syncing through a bare remote, both merge
+orders, and nested completion with archived children.

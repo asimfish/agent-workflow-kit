@@ -127,6 +127,29 @@ class _MilestoneTestCase(unittest.TestCase):
 
 
 class MilestoneShapeTest(_MilestoneTestCase):
+    def test_archive_cli_keeps_completed_child_evidence(self):
+        reviewer = self.reviewer(scope=".agent/")
+        self.milestone("M-1", "collection")
+        for child in ("E-1", "E-2"):
+            self.agentctl("task", "create", "--id", child, "--title", child,
+                          "--parent", "M-1", session=reviewer)
+        board = self.board()
+        board["tasks"]["E-1"].update(status="done", updated_at="2000-01-01 00:00:00")
+        agentctl._save_board(self.root, board)
+        agentctl._set_task_doc_status(self.root, "E-1", "done")
+        agentctl._render_task_views(self.root, board)
+        self.agentctl("refresh", session=reviewer)
+        self.agentctl("reconcile", "archive", "--days", "30", session=reviewer)
+        board = self.board()
+        self.assertNotIn("E-1", board["tasks"])
+        self.assertTrue((self.root / ".agent/archive/tasks/E-1.md").exists())
+        board["tasks"]["E-2"]["status"] = "done"
+        self.assertEqual(agentctl._cascade_and_report(self.root, board), ["M-1"])
+        tree = self.agentctl("board", "--tree").stdout
+        self.assertIn("E-1 [done]", tree)
+        self.assertNotIn("[missing]", tree)
+        self.assertIn("2/2 children done", self.agentctl("board").stdout)
+
     def test_created_with_deps_or_grown_by_parent(self):
         self.milestone("M-1", "paper: all experiments")
         entry = self.board()["tasks"]["M-1"]

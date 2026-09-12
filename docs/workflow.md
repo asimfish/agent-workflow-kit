@@ -101,6 +101,19 @@ It is a node of the plan, not a piece of work, and the tool treats it that way:
   no milestone depends on, so nothing on the board is hidden. The flat `board`
   marks each milestone with `[milestone: k/n children done]`.
 
+Completed children remain valid after archival: progress and closure resolve
+both the live board and `.agent/archive/board.json`, with live entries taking
+precedence if a task was reopened. The tree includes referenced archived
+children, not unrelated archive history. Completion records point to live and
+archived evidence.
+
+Concurrent `--parent` additions on different checkouts are merged as independent
+dependency additions. A dependency change racing completion, a concurrent
+removal or reopen, or a cycle formed by the combined graph stops the Git merge
+for explicit reconciliation; it must not silently drop required work or declare
+the parent complete. Resolve the board and completion evidence together before
+continuing `sync`.
+
 ## Loop Contract
 
 Every loop in `.agent/loops/` must close six links:

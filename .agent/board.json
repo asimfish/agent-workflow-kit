@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-12 17:55:09",
+  "updated_at": "2026-09-12 17:57:31",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -548,7 +548,7 @@
     "TA08B0CC413F151F5-038": {
       "title": "milestone tasks: a task whose Definition of Done is 'every dependency done', closed by the tool when its children close",
       "type": "code",
-      "status": "blocked",
+      "status": "review",
       "owner": "cursor",
       "scope": [
         "tools/agentctl.py",
@@ -562,7 +562,7 @@
       ],
       "deps": [],
       "created_at": "2026-09-09 01:49:56",
-      "updated_at": "2026-09-12 17:21:51"
+      "updated_at": "2026-09-12 17:53:05"
     },
     "T6610CD0566A2EF36-001": {
       "title": "Independent review PR 65 head 2214702 milestone DoD",
@@ -594,11 +594,17 @@
       "status": "in_progress",
       "owner": "independent-reviewer-038-codex",
       "scope": [
-        ".agent/"
+        ".agent/",
+        "CHANGELOG.md",
+        "docs/workflow.md",
+        "tests/test_milestone_boundaries.py",
+        "tests/test_milestones.py",
+        "tests/test_multi_checkout_sync.py",
+        "tools/agentctl.py"
       ],
       "deps": [],
       "created_at": "2026-09-12 17:55:09",
-      "updated_at": "2026-09-12 17:55:09"
+      "updated_at": "2026-09-12 17:57:31"
     }
   },
   "updated": ""
