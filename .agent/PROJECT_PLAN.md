@@ -36,10 +36,10 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] T6610CD0566A2EF36-003 - Independent PR65 re-review candidate 09a3bf1 and unchanged baseline eval (owner: independent-reviewer-038-codex)
+- [x] T6610CD0566A2EF36-003 - Independent PR65 re-review candidate 09a3bf1 and unchanged baseline eval (owner: independent-reviewer-038-codex)
 - [ ] T6610CD0566A2EF36-002 - Prepare frozen supervisor milestone repair evals for PR65; candidate pending (owner: independent-reviewer-038-codex)
 - [x] T6610CD0566A2EF36-001 - Independent review PR 65 head 2214702 milestone DoD (owner: independent-reviewer-038-codex)
-- [ ] TA08B0CC413F151F5-038 - milestone tasks: a task whose Definition of Done is 'every dependency done', closed by the tool when its children close (owner: cursor)
+- [x] TA08B0CC413F151F5-038 - milestone tasks: a task whose Definition of Done is 'every dependency done', closed by the tool when its children close (owner: cursor)
 - [x] TE832D810384C4321-001 - eighth review of task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037j)
 - [x] T3304B5F437A610F6-001 - sixth review of task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037h)
 - [x] T07C23F24446DE56B-001 - fifth review of task contract TA08B0CC413F151F5-037 (owner: independent-reviewer-037f)
