@@ -2,8 +2,10 @@
 
 Owner: independent-reviewer-038-codex, acting as the user-authorized evaluator.
 Preparation task: T6610CD0566A2EF36-002. Baseline:
-221470284f1c99a9525821dd4f590e2f3ae7875c. Candidate: not supplied at freeze time.
-This verifier was written without reading uncommitted worker fixes.
+221470284f1c99a9525821dd4f590e2f3ae7875c. Candidate was not supplied when the
+oracles were authored. SHA 09a3bf1ee4ace5fc96d23171fa6f8febb8c59867 was supplied
+after the suite was written, before its first policy commit; candidate code had
+not been read. This verifier was written without reading uncommitted worker fixes.
 
 ## Positive Oracles
 
