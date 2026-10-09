@@ -692,11 +692,13 @@ class RecordIntegrityTest(_ContractTestCase):
             row["workflow_session_key"] for row in json.loads(released)["sessions"] if row.get("task") == task
         )
         self.agentctl("sessions", "release", session_key, "--reason", "handoff", session="worker")
-        self.agentctl("agents", "add", "--id", "poser", "--role", "review", session="worker")
+        blocked = self.agentctl("agents", "add", "--id", "poser", "--role", "review", session="worker", expect=1)
+        self.assertIn("released its claim", blocked.stderr)
         self.agentctl(
             "work", "--agent", "poser", "--auto-create", "--type", "review",
             "--title", f"review {task}", "--scope", ".agent/gates/", session="worker",
         )
+        self.agentctl("agents", "add", "--id", "poser", "--role", "review", session="worker")
         self.agentctl("refresh", session="worker")
         refused = self.agentctl(
             "gate", "approve", "--task", task, "--by", "poser", "--note", "self",
@@ -724,11 +726,11 @@ class RecordIntegrityTest(_ContractTestCase):
         self.assertEqual(len(local), 2, local)
         self.assertTrue(committed < local)
 
-        self.agentctl("agents", "add", "--id", "alice-reviews", "--role", "review", session="alice")
         self.agentctl(
             "work", "--agent", "alice-reviews", "--auto-create", "--type", "review",
             "--title", f"review {task}", "--scope", ".agent/gates/", session="alice",
         )
+        self.agentctl("agents", "add", "--id", "alice-reviews", "--role", "review", session="alice")
         self.agentctl("refresh", session="alice")
         refused = self.agentctl(
             "gate", "approve", "--task", task, "--by", "alice-reviews", "--note", "mine",
@@ -761,11 +763,11 @@ class RecordIntegrityTest(_ContractTestCase):
         self.hand_written_review_record(task)
         key = self.session_key_for(task, "worker")
         self.agentctl("sessions", "release", key, "--reason", "handoff", session="worker", CODEX_THREAD_ID="thread-joiner")
-        self.agentctl("agents", "add", "--id", "poser", "--role", "review", session="worker", CODEX_THREAD_ID="thread-joiner")
         self.agentctl(
             "work", "--agent", "poser", "--auto-create", "--type", "review",
             "--title", f"review {task}", "--scope", ".agent/gates/", session="worker", CODEX_THREAD_ID="thread-joiner",
         )
+        self.agentctl("agents", "add", "--id", "poser", "--role", "review", session="worker", CODEX_THREAD_ID="thread-joiner")
         self.agentctl("refresh", session="worker", CODEX_THREAD_ID="thread-joiner")
         refused = self.agentctl(
             "gate", "approve", "--task", task, "--by", "poser", "--note", "self",
@@ -781,11 +783,11 @@ class RecordIntegrityTest(_ContractTestCase):
         self.agentctl("work", "--agent", "bob", "--task", task, session="bob")
         self.agentctl("finish", "--summary", "bob finished", "--tests", "unit", session="bob")
         self.assertEqual(len(agentctl._recorded_task_runtimes(self.root, task)), 3)
-        self.agentctl("agents", "add", "--id", "joiner", "--role", "review", session="alice", CODEX_THREAD_ID="thread-joiner")
         self.agentctl(
             "work", "--agent", "joiner", "--auto-create", "--type", "review",
             "--title", f"review {task}", "--scope", ".agent/gates/", session="alice", CODEX_THREAD_ID="thread-joiner",
         )
+        self.agentctl("agents", "add", "--id", "joiner", "--role", "review", session="alice", CODEX_THREAD_ID="thread-joiner")
         self.agentctl("refresh", session="alice", CODEX_THREAD_ID="thread-joiner")
         refused = self.agentctl(
             "gate", "approve", "--task", task, "--by", "joiner", "--note", "mine",

@@ -228,11 +228,13 @@ class MigrationWorkflowRegressionTest(unittest.TestCase):
 
         report = self.migrate(env, expect=1)
 
-        self.assertEqual(report["action"], "refresh")
+        self.assertEqual(report["action"], "inspect_sessions")
         self.assertEqual(report["current_session"]["source"], "singleton_legacy")
         self.assertEqual(legacy.read_bytes(), before)
+        self.assertTrue(any("refresh cannot bind" in step for step in report["next_steps"]))
         self.agentctl_env(env, "status", "--json")
         self.assertFalse(legacy.exists())
+        self.agentctl_env(env, "refresh", expect=1)
 
     def test_released_record_returns_to_work_selection_without_mutation(self):
         env = self.env("released-conversation")

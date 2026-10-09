@@ -382,7 +382,16 @@ class MergeBackAndSyncCascadeTest(_MilestoneTestCase):
         self.ledger_commit(other, "chore(ledger): child done elsewhere\n\nRefs: E-1, M-1")
         subprocess.run(["git", "-C", str(other), "-c", "core.hooksPath=/dev/null", "push", "-q", "origin", "HEAD:main"], check=True, capture_output=True)
         self.assertEqual(self.status("M-1"), "todo")
-        synced = self.agentctl("sync", "--branch", "main", session="a")
+        revoked = self.agentctl("sync", "--branch", "main", session="a", expect=1)
+        self.assertIn("claim authority changed", revoked.stderr)
+        self.assertEqual(self.status("M-1"), "todo")
+        self.agentctl("sessions", "release", "--reason", "child was completed after verified takeover", session="a")
+        self.agentctl("agents", "add", "--id", "planner", "--role", "planning", session="planner")
+        self.agentctl(
+            "work", "--agent", "planner", "--auto-create", "--type", "review",
+            "--title", "sync approved child", "--scope", ".agent/handoffs/", session="planner",
+        )
+        synced = self.agentctl("sync", "--branch", "main", session="planner")
         self.assertIn("milestone M-1 closed", synced.stdout)
         self.assertEqual(self.status("M-1"), "done")
         self.assertEqual(self.status("E-1"), "done")

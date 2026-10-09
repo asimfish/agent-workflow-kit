@@ -136,9 +136,9 @@ stale-session state into one required action. It exits zero only for
 | Action | Agent behavior |
 |---|---|
 | `continue` | Start or resume normal `.agent` work. |
-| `refresh` | Read the named workflow/task documents, run `refresh`, and audit again. Matching legacy singleton state is first moved by `status`. |
+| `refresh` | Read the named documents; use `refresh` for changed receipts or `upgrade rebind` for an older protocol, then audit again. |
 | `restart` | Reopen the conversation so `SessionStart` establishes a trusted identity, then audit again. |
-| `inspect_sessions` | Inspect pre-upgrade claims whose identity is unknown; release only a verified closed conversation, then audit again. |
+| `inspect_sessions` | Inspect unknown peers, unbound legacy claims, or revoked/conflicting ownership. Resolve the canonical claim; release only verified holders, then audit again. |
 | `inspect_stale` | Inspect the recorded task and working tree; release only after explicit verification. |
 | `repair_install` | Rerun `init` from the latest kit, resolving managed-file conflicts without overwriting project state. |
 
@@ -148,6 +148,25 @@ identity; that is the only case where reopening the conversation is required.
 Identifiable stale peers are reported as warnings instead of globally blocking
 unrelated work selection; `work/start` still rejects same-task,
 overlapping-scope, and exclusive conflicts.
+
+### Protocol 3: Claim-Bound Sessions
+
+Protocol 3 adds durable `claim_id` ownership. Do not run old controllers alongside
+new writers: let existing runs finish or stop them, preserve their outputs, and
+release each verified old conversation's session during the upgrade drain. Rerun
+`init` from the new kit after writers have drained; the installer preserves task
+history and project-owned plans. Do not force-release an unidentified holder.
+
+After re-reading the task and rebinding the protocol, a legacy session without a
+claim must explicitly start its own task with `work --agent <name> --task <id>`.
+`refresh` alone does not migrate ownership. An `in_progress` task with no matching
+local claim needs `--takeover --reason <verified handoff>`; verify the previous
+holder has stopped first, even if both workers use the name `codex`. A bound but
+revoked session cannot regain authority through `rebind` or `refresh`.
+
+The agent performs these steps; the human can simply ask it to upgrade the kit
+and preserve the current task history. For multi-machine projects, publish and
+synchronize the upgraded ledger before restarting writers on other machines.
 
 ## Identity Policy
 

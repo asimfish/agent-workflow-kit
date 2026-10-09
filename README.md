@@ -258,7 +258,7 @@ the board.
 
 ## Status
 
-323 regression tests run on Linux in CI; a Windows job runs the subset that
+The regression suite runs on Linux in CI; a Windows job runs the subset that
 exercises Windows-specific process handling. The coordination guarantees
 were also exercised end to end on a fresh install: concurrent
 conversations, a conversation that died holding a GPU, a project deleted
