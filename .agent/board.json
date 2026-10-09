@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-10 02:05:59",
+  "updated_at": "2026-10-10 02:11:57",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -603,7 +603,7 @@
     "T054FC882C66C691A-001": {
       "title": "Isolate task claims and loop feedback across concurrent conversations",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "tools/",
@@ -614,13 +614,13 @@
       ],
       "deps": [],
       "created_at": "2026-10-10 00:07:12",
-      "updated_at": "2026-10-10 02:02:40",
+      "updated_at": "2026-10-10 02:09:46",
       "claim_id": "03e002bc75eecdbd609c2dd8d65ed43e"
     },
     "T99FC40EB5DD86230-002": {
       "title": "CI validates PR head instead of synthetic merge commit",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "ci-head-checkout-sidecar-codex",
       "scope": [
         ".github/workflows/agent-workflow-check.yml",
@@ -629,12 +629,12 @@
       ],
       "deps": [],
       "created_at": "2026-10-10 00:23:31",
-      "updated_at": "2026-10-10 00:31:56"
+      "updated_at": "2026-10-10 02:10:03"
     },
     "T92F59D61AE852113-001": {
       "title": "Clarify protocol 3 claim recovery and task-local loops in workflow entries",
       "type": "docs",
-      "status": "review",
+      "status": "done",
       "owner": "protocol3-entry-docs-sidecar-codex",
       "scope": [
         ".agent/WORKFLOW_ENTRY.md",
@@ -642,19 +642,19 @@
       ],
       "deps": [],
       "created_at": "2026-10-10 00:41:13",
-      "updated_at": "2026-10-10 00:49:59"
+      "updated_at": "2026-10-10 02:10:02"
     },
     "T1262BE3589E9D0D6-001": {
       "title": "Independent final review 0f7c8dc isolation authority and unchanged eval",
       "type": "review",
-      "status": "in_progress",
+      "status": "done",
       "owner": "independent-isolation-reviewer-5a24a0be",
       "scope": [
         ".agent/gates/"
       ],
       "deps": [],
       "created_at": "2026-10-10 02:05:45",
-      "updated_at": "2026-10-10 02:05:59",
+      "updated_at": "2026-10-10 02:11:57",
       "claim_id": "42b625390457f6e7034d61dffe326318"
     }
   },
