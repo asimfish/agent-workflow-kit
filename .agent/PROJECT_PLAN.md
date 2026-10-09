@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T1262BE3589E9D0D6-001 - Independent final review 0f7c8dc isolation authority and unchanged eval (owner: independent-isolation-reviewer-5a24a0be)
 - [ ] T054FC882C66C691A-001 - Isolate task claims and loop feedback across concurrent conversations (owner: codex)
 - [x] T6610CD0566A2EF36-003 - Independent PR65 re-review candidate 09a3bf1 and unchanged baseline eval (owner: independent-reviewer-038-codex)
 - [ ] T6610CD0566A2EF36-002 - Prepare frozen supervisor milestone repair evals for PR65; candidate pending (owner: independent-reviewer-038-codex)

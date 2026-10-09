@@ -34,6 +34,13 @@
       "last_run_at": "2026-10-10 01:42:57",
       "last_status": "success",
       "last_report": ".agent/loops/runs/20261010-014257-daily-plan-triage-549233.md"
+    },
+    "daily-plan-triage:T1262BE3589E9D0D6-001": {
+      "task": "T1262BE3589E9D0D6-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-10 02:05:45",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261010-020545-daily-plan-triage-96a4de.md"
     }
   },
   "checkpoints": {
@@ -114,6 +121,19 @@
         ".agent/loops/runs/20261010-014257-daily-plan-triage-549233.md"
       ],
       "last_input_hash": "c016712bc3bee06c",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "work-start:T1262BE3589E9D0D6-001": {
+      "task": "T1262BE3589E9D0D6-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-10 02:05:45",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261010-020545-daily-plan-triage-96a4de.md"
+      ],
+      "last_input_hash": "b4dd931dfaa8cca9",
       "strict": false,
       "trigger": "work-start",
       "open_follow_up": null
