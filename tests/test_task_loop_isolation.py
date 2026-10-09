@@ -1,7 +1,10 @@
 """A worker's feedback, checks, and memory belong to its task, not its peers."""
 
 import json
+import subprocess
+import sys
 import tempfile
+import time
 from pathlib import Path
 from unittest import mock
 
@@ -76,6 +79,44 @@ class TaskLoopIsolationTest(_MilestoneTestCase):
         self.assertNotIn("skipped", again.stdout)
         peer = self.agentctl("loop", "auto", "--checkpoint", "local-docs", "--once", session="b")
         self.assertIn("skipped", peer.stdout)
+
+    def test_running_cycle_stops_before_writing_after_claim_transfer(self):
+        self.start("a")
+        runner = subprocess.Popen(
+            [sys.executable, "tools/agentctl.py", "loop", "cycle",
+             "--checkpoint", "pre-finish", "--cycles", "2", "--interval", "2", "--force"],
+            cwd=self.root, env=self.env("a"), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            state_path = self.root / ".agent/loops/state.json"
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                runtime = json.loads(state_path.read_text()).get("cycle_runtime") or {}
+                if runtime.get("status") == "running" and runtime.get("completed_cycles") == 1:
+                    break
+                self.assertIsNone(runner.poll(), "runner ended before its first interval")
+                time.sleep(0.05)
+            else:
+                self.fail("runner did not reach its first interval")
+
+            reports = set((self.root / ".agent/loops/runs").glob("*.md"))
+            board_path = self.root / ".agent/board.json"
+            board = self.board()
+            board["tasks"]["T-A"].update(claim_id="replacement-claim", owner="peer")
+            board_path.write_text(json.dumps(board) + "\n")
+            stdout, stderr = runner.communicate(timeout=20)
+            self.assertNotEqual(runner.returncode, 0, stdout + stderr)
+            self.assertIn("claim authority changed", stdout + stderr)
+            runtime = json.loads(state_path.read_text())["cycle_runtime"]
+            self.assertEqual((runtime["status"], runtime["completed_cycles"]), ("blocked", 1))
+            self.assertIsNone(runtime["inflight_cycle"])
+            self.assertEqual(set((self.root / ".agent/loops/runs").glob("*.md")), reports)
+            self.assertEqual(self.board()["tasks"]["T-A"]["claim_id"], "replacement-claim")
+        finally:
+            if runner.poll() is None:
+                runner.kill()
+                runner.communicate()
 
     def test_experiment_monitor_does_not_scan_peer_results(self):
         for name, marker in (("a", "DONE"), ("b", "ERROR")):

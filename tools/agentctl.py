@@ -13338,6 +13338,20 @@ def _cycle_execute(root: Path, runtime_id: str) -> int:
             if runtime.get("status") != "running":
                 return _cycle_terminal_exit(runtime)
 
+            error = _session_claim_error(root, _load_session(root))
+            if error:
+                blocked = _cycle_finish(
+                    root,
+                    runtime_id,
+                    "blocked",
+                    error,
+                    expected_statuses={"running"},
+                    expected_owner_pid=os.getpid(),
+                )
+                if not blocked:
+                    continue
+                return _cycle_terminal_exit(blocked)
+
             cycles = int(runtime.get("requested_cycles") or 0)
             completed = int(runtime.get("completed_cycles") or 0)
             if completed >= cycles:

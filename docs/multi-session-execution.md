@@ -385,6 +385,9 @@ Task-local manual checks and cycle escalation do not stop unrelated workers.
 Sessionless audits and CI still report project-wide inconsistencies/escalations.
 Managed worktrees each retain their own bounded-loop runtime; a shared checkout
 still serializes loop execution, so long-running cycles belong in a worktree.
+A running cycle rechecks canonical task ownership before each iteration. If its
+claim is released, transferred or conflicted, it becomes `blocked` before the
+next checkpoint; earlier reports and the replacement claim remain untouched.
 
 ## Upgrade Barrier
 
