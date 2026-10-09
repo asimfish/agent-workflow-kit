@@ -616,6 +616,20 @@
       "created_at": "2026-10-10 00:07:12",
       "updated_at": "2026-10-10 00:46:22",
       "claim_id": "03e002bc75eecdbd609c2dd8d65ed43e"
+    },
+    "T99FC40EB5DD86230-002": {
+      "title": "CI validates PR head instead of synthetic merge commit",
+      "type": "code",
+      "status": "review",
+      "owner": "ci-head-checkout-sidecar-codex",
+      "scope": [
+        ".github/workflows/agent-workflow-check.yml",
+        "templates/project/.github/workflows/agent-workflow-check.yml",
+        "tests/test_ci_workflow.py"
+      ],
+      "deps": [],
+      "created_at": "2026-10-10 00:23:31",
+      "updated_at": "2026-10-10 00:31:56"
     }
   },
   "updated": ""

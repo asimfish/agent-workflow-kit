@@ -10,10 +10,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # PR github.sha is a synthetic merge; validate contributor history.
+          # Push runs use the event SHA instead.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Validate agent workflow documents and commits
         shell: bash
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "pull_request" ]; then
@@ -22,10 +27,16 @@ jobs:
             base="${{ github.event.before }}"
           fi
 
-          if [ -n "${base:-}" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+          # New-branch pushes have a zero before SHA; use the default branch.
+          if [ -z "${base:-}" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            base="$(git merge-base HEAD "origin/${DEFAULT_BRANCH:-}" 2>/dev/null || true)"
+          fi
+
+          if [ -n "${base:-}" ] && git cat-file -e "$base^{commit}" 2>/dev/null && [ "$base" != "$(git rev-parse HEAD)" ]; then
             python3 tools/agentctl.py check --mode ci --commit-range "$base..HEAD"
           else
-            python3 tools/agentctl.py check --mode ci
+            # HEAD checks reachable history; adoption excludes pre-install commits.
+            python3 tools/agentctl.py check --mode ci --commit-range HEAD
           fi
 
       - name: Run loop workflow regression tests
