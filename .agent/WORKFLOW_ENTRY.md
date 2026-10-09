@@ -91,13 +91,29 @@ python3 tools/agentctl.py migrate
 ```
 
 The command is read-only and returns one action. Follow it until a rerun returns
-`continue`: re-read and `refresh` changed documents, restart only when a trusted
+`continue`: re-read changed documents, restart only when a trusted
 `SessionStart` identity is missing, inspect pre-identity or stale claims without
 auto-releasing them, or repair the managed install from the latest kit checkout.
 A matching legacy singleton record is moved only by the existing `status` path
-after the report tells the agent it is safe to do so. Never continue an old-kit
-conversation alongside new-kit writers in the same checkout; reopen it first so
-the installed SessionStart hook can establish isolated state.
+after the report tells the agent it is safe to do so. This migrates storage only,
+not claim ownership.
+
+For protocol 3, inspect the canonical board and task before resuming. If the
+epoch changed, re-read the plan/task and run `upgrade rebind` as above. A legacy
+session without a bound `claim_id` must explicitly run
+`python3 tools/agentctl.py work --agent <agent-name> --task <task-id>`.
+`status` and `refresh` do not establish ownership; `refresh` acknowledges changed
+documents only for a still-authorized claim.
+
+A revoked or competing claim cannot be recovered by `refresh` or `rebind`.
+Resolve Git board conflicts before starting, resuming, or writing. Release your
+own revoked session and choose different work; use `--takeover --reason` only
+after inspecting the holder's task/outputs and verifying it has stopped, even
+when the agent name matches.
+
+Never continue an old-kit conversation alongside new-kit writers in the same
+checkout; reopen it first so the installed SessionStart hook can establish
+isolated state.
 
 After bootstrap, terminal-only/default identity is rejected by both the
 controller dispatcher and PreToolUse for every non-read-only command. `init` is
@@ -130,6 +146,11 @@ the sole bootstrap exception because it installs the identity hook itself.
 
   Every loop must close Trigger, Execute, Check, Feedback, Memory, and Next, and
   must write a report under `.agent/loops/runs/`.
+
+  Task-scoped checkpoints keep feedback, memory and cache inputs local to the
+  active task; peer task changes do not affect retries or invalidate its cache.
+  Experiment monitoring reads results only inside the active task scope.
+  Full-project audits and CI remain global.
 
 - For experiment or benchmark monitoring, use the project checkpoint:
 

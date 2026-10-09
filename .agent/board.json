@@ -630,6 +630,19 @@
       "deps": [],
       "created_at": "2026-10-10 00:23:31",
       "updated_at": "2026-10-10 00:31:56"
+    },
+    "T92F59D61AE852113-001": {
+      "title": "Clarify protocol 3 claim recovery and task-local loops in workflow entries",
+      "type": "docs",
+      "status": "review",
+      "owner": "protocol3-entry-docs-sidecar-codex",
+      "scope": [
+        ".agent/WORKFLOW_ENTRY.md",
+        "templates/project/.agent/WORKFLOW_ENTRY.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-10 00:41:13",
+      "updated_at": "2026-10-10 00:45:34"
     }
   },
   "updated": ""
