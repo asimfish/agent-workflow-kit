@@ -13083,6 +13083,7 @@ def _loop_execution_claim(root: Path, operation: str, *,
                 session.get("workflow_session_key") or _workflow_session_key()
             ),
             "task": session.get("task"),
+            "claim_id": session.get("claim_id"),
             "scope": list(session.get("scope") or []),
             "checkout": str(root.resolve()),
             "cycle_runtime_id": cycle_runtime_id,
@@ -13177,9 +13178,13 @@ def _cycle_begin(root: Path, args: argparse.Namespace) -> tuple[dict | None, str
 
     runtime_id = f"cycle-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     effective_max_failures = max_failures or (cycles if args.continue_on_failure else 1)
+    session = _load_session(root)
     runtime = {
         "version": 1,
         "id": runtime_id,
+        "task": session.get("task"),
+        "claim_id": session.get("claim_id"),
+        "workflow_session_key": session.get("workflow_session_key") or _workflow_session_key(),
         "checkpoint": args.checkpoint,
         "status": "running",
         "requested_cycles": cycles,
@@ -13316,6 +13321,24 @@ def _cycle_terminal_exit(runtime: dict) -> int:
     return 2
 
 
+def _loop_binding_present(record: dict) -> bool:
+    return bool(record.get("workflow_session_key")) and {"task", "claim_id"}.issubset(record)
+
+
+def _cycle_claim_error(root: Path, runtime: dict, *, require_authority: bool = True) -> str:
+    session = _load_session(root)
+    if not _loop_binding_present(runtime):
+        return "legacy loop runtime has no task/session binding; inspect and stop it before starting a new cycle"
+    binding = {
+        "workflow_session_key": session.get("workflow_session_key") or _workflow_session_key(),
+        "task": session.get("task"),
+        "claim_id": session.get("claim_id"),
+    }
+    if any(runtime.get(key) != value for key, value in binding.items()):
+        return "loop runtime belongs to a different task/session claim; its holder must reconcile it"
+    return _session_claim_error(root, session) if require_authority else ""
+
+
 def _cycle_execute(root: Path, runtime_id: str) -> int:
     try:
         while True:
@@ -13338,7 +13361,7 @@ def _cycle_execute(root: Path, runtime_id: str) -> int:
             if runtime.get("status") != "running":
                 return _cycle_terminal_exit(runtime)
 
-            error = _session_claim_error(root, _load_session(root))
+            error = _cycle_claim_error(root, runtime)
             if error:
                 blocked = _cycle_finish(
                     root,
@@ -13559,6 +13582,10 @@ def _loop_resume(root: Path, _args: argparse.Namespace) -> int:
     if status != "interrupted":
         print(f"agentctl: loop runtime {runtime.get('id')} is terminal ({status}); start a new cycle", file=sys.stderr)
         return 2
+    error = _cycle_claim_error(root, runtime)
+    if error:
+        print(f"agentctl: {error}", file=sys.stderr)
+        return 2
     if runtime.get("resume_safe") is False:
         print(
             f"agentctl: loop runtime {runtime.get('id')} cannot be resumed because its in-flight "
@@ -13623,6 +13650,11 @@ def _reconcile_execution_lease(root: Path, lease: dict, args: argparse.Namespace
         return 2
     if lease.get("status") != "interrupted":
         return 0
+    error = _cycle_claim_error(root, lease, require_authority=False)
+    if error and (_loop_binding_present(lease) or _blocking_session_rows(root, _workflow_session_key())):
+        print(f"agentctl: {error}; unbound legacy reconciliation requires an exclusive checkout",
+              file=sys.stderr)
+        return 2
     command_state = _active_command_state(lease.get("active_command"))
     if command_state == "live":
         print(
@@ -13659,6 +13691,18 @@ def _loop_stop(root: Path, args: argparse.Namespace) -> int:
             return _reconcile_execution_lease(root, execution_lease, args)
         print(f"agentctl: loop runtime {runtime.get('id')} already terminal ({status})")
         return 0
+    error = _cycle_claim_error(root, runtime, require_authority=False)
+    if error:
+        legacy_reconciled = (
+            not _loop_binding_present(runtime)
+            and status == "interrupted"
+            and args.ack_inflight and args.reason
+            and not _blocking_session_rows(root, _workflow_session_key())
+        )
+        if not legacy_reconciled:
+            print(f"agentctl: {error}; unbound legacy cleanup requires an exclusive checkout "
+                  "and --ack-inflight --reason after inspection", file=sys.stderr)
+            return 2
     unsafe_inflight = status == "interrupted" and runtime.get("resume_safe") is False
     if unsafe_inflight:
         command_states = [_active_command_state(runtime.get("active_command"))]

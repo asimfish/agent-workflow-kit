@@ -164,6 +164,12 @@ local claim needs `--takeover --reason <verified handoff>`; verify the previous
 holder has stopped first, even if both workers use the name `codex`. A bound but
 revoked session cannot regain authority through `rebind` or `refresh`.
 
+An interrupted legacy loop without a task/session binding cannot be resumed.
+Inspect its processes and outputs, then use
+`loop stop --ack-inflight --reason <verified result>` in an exclusive checkout
+before starting a new bound cycle. A new conversation must not silently inherit
+another conversation's runtime.
+
 The agent performs these steps; the human can simply ask it to upgrade the kit
 and preserve the current task history. For multi-machine projects, publish and
 synchronize the upgraded ledger before restarting writers on other machines.

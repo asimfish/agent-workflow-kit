@@ -1,6 +1,8 @@
 """A worker's feedback, checks, and memory belong to its task, not its peers."""
 
 import json
+import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -10,6 +12,7 @@ from unittest import mock
 
 from tools import agentctl
 from tests.test_milestones import _MilestoneTestCase
+from tests.test_loop_workflow import LOOP_CONTRACT
 
 
 class TaskLoopIsolationTest(_MilestoneTestCase):
@@ -112,6 +115,143 @@ class TaskLoopIsolationTest(_MilestoneTestCase):
             self.assertEqual((runtime["status"], runtime["completed_cycles"]), ("blocked", 1))
             self.assertIsNone(runtime["inflight_cycle"])
             self.assertEqual(set((self.root / ".agent/loops/runs").glob("*.md")), reports)
+            self.assertEqual(self.board()["tasks"]["T-A"]["claim_id"], "replacement-claim")
+        finally:
+            if runner.poll() is None:
+                runner.kill()
+                runner.communicate()
+
+    def test_peer_cannot_resume_interrupted_cycle_but_owner_can(self):
+        self.start("a")
+        self.start("b")
+        runner = subprocess.Popen(
+            [sys.executable, "tools/agentctl.py", "loop", "cycle", "--checkpoint",
+             "pre-finish", "--cycles", "2", "--interval", "30", "--force"],
+            cwd=self.root, env=self.env("a"), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            state_path = self.root / ".agent/loops/state.json"
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                runtime = json.loads(state_path.read_text()).get("cycle_runtime") or {}
+                if runtime.get("status") == "running" and runtime.get("completed_cycles") == 1:
+                    break
+                self.assertIsNone(runner.poll(), "runner ended before its first interval")
+                time.sleep(0.05)
+            else:
+                self.fail("runner did not reach its first interval")
+            refused_stop = self.agentctl("loop", "stop", "--reason", "peer stop", session="b", expect=2)
+            self.assertIn("different task/session claim", refused_stop.stdout + refused_stop.stderr)
+            self.assertEqual(json.loads(state_path.read_text())["cycle_runtime"], runtime)
+            runner.terminate()
+            runner.communicate(timeout=20)
+            normalized = json.loads(self.agentctl("loop", "status", "--json", session="a").stdout)
+            self.assertEqual(normalized["status"], "interrupted")
+            before = json.loads(state_path.read_text())["cycle_runtime"]
+            reports = set((self.root / ".agent/loops/runs").glob("*.md"))
+            refused = self.agentctl("loop", "resume", session="b", expect=2)
+            self.assertIn("different task/session claim", refused.stdout + refused.stderr)
+            self.assertEqual(json.loads(state_path.read_text())["cycle_runtime"], before)
+            self.assertEqual(set((self.root / ".agent/loops/runs").glob("*.md")), reports)
+            self.agentctl("loop", "resume", session="a")
+            runtime = json.loads(state_path.read_text())["cycle_runtime"]
+            self.assertEqual((runtime["status"], runtime["completed_cycles"]), ("completed", 2))
+            for report in runtime["last_reports"]:
+                self.assertIn("- Task: T-A", (self.root / report).read_text())
+        finally:
+            if runner.poll() is None:
+                runner.kill()
+                runner.communicate()
+
+    def test_revoked_cycle_holder_can_stop_but_peer_cannot(self):
+        self.start("a")
+        self.start("b")
+        with mock.patch.dict(os.environ, self.env("a"), clear=True):
+            session = agentctl._load_session(self.root)
+        runtime = {"id": "interrupted-owner-cycle", "status": "interrupted", "owner_pid": None,
+                   "task": session["task"], "claim_id": session["claim_id"],
+                   "workflow_session_key": session["workflow_session_key"], "resume_safe": True}
+        state_path = self.root / ".agent/loops/state.json"
+        state = json.loads(state_path.read_text())
+        state["cycle_runtime"] = runtime
+        state_path.write_text(json.dumps(state) + "\n")
+        board_path = self.root / ".agent/board.json"
+        board = self.board()
+        board["tasks"]["T-A"].update(claim_id="replacement-claim", owner="peer")
+        board_path.write_text(json.dumps(board) + "\n")
+        self.agentctl("loop", "stop", "--reason", "not the holder", session="b", expect=2)
+        self.assertEqual(json.loads(state_path.read_text())["cycle_runtime"], runtime)
+        self.agentctl("loop", "stop", "--reason", "revoked holder cleanup", session="a")
+        self.assertEqual(json.loads(state_path.read_text())["cycle_runtime"]["status"], "stopped")
+        self.assertEqual(self.board()["tasks"]["T-A"]["claim_id"], "replacement-claim")
+
+    def test_legacy_unbound_cycle_requires_exclusive_explicit_reconciliation(self):
+        self.start("a")
+        self.start("b")
+        runtime = {"id": "legacy-cycle", "status": "interrupted", "owner_pid": None, "resume_safe": True}
+        state_path = self.root / ".agent/loops/state.json"
+        state = json.loads(state_path.read_text())
+        state["cycle_runtime"] = runtime
+        state_path.write_text(json.dumps(state) + "\n")
+        self.agentctl("loop", "resume", session="a", expect=2)
+        self.agentctl("loop", "stop", "--reason", "not explicitly reconciled", session="a", expect=2)
+        args = ("loop", "stop", "--ack-inflight", "--reason", "verified legacy process and outputs")
+        self.agentctl(*args, session="a", expect=2)
+        self.assertEqual(json.loads(state_path.read_text())["cycle_runtime"], runtime)
+        self.agentctl("sessions", "release", "--reason", "peer finished", session="b")
+        self.agentctl(*args, session="a")
+        self.assertEqual(json.loads(state_path.read_text())["cycle_runtime"]["status"], "stopped")
+
+    def test_interrupted_one_shot_only_original_holder_can_reconcile(self):
+        self.agentctl("work", "--agent", "codex", "--auto-create", "--type", "docs",
+                      "--new-id", "T-A", "--title", "one-shot A", "--scope", "docs/a/,.agent/loops/",
+                      "--done", "fixture complete", session="a")
+        artifacts = self.root / ".agent-artifacts/T-A"
+        artifacts.mkdir(parents=True)
+        child = ("from pathlib import Path; import time; p=Path('.agent-artifacts/T-A'); "
+                 "(p/'starts').touch(); time.sleep(2); (p/'dones').touch()")
+        argv = [sys.executable, "-c", child]
+        command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
+        (self.root / ".agent/loops/owned-one-shot.md").write_text(
+            LOOP_CONTRACT.format(loop_id="owned-one-shot", checkpoint="manual", command=command))
+        self.agentctl("refresh", session="a")
+        runner = subprocess.Popen(
+            [sys.executable, "tools/agentctl.py", "loop", "run", "owned-one-shot", "--once"],
+            cwd=self.root, env=self.env("a"), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        state_path = self.root / ".agent/loops/state.json"
+        try:
+            deadline = time.monotonic() + 15
+            while not (artifacts / "starts").exists():
+                self.assertIsNone(runner.poll(), "one-shot runner ended before child start")
+                self.assertLess(time.monotonic(), deadline, "one-shot child did not start")
+                time.sleep(0.05)
+            runner.terminate()
+            runner.communicate(timeout=20)
+            status = json.loads(self.agentctl("loop", "status", "--json", session="a").stdout)
+            self.assertEqual(status["execution_lease"]["status"], "interrupted")
+            deadline = time.monotonic() + 15
+            while True:
+                lease = json.loads(state_path.read_text())["execution_lease"]
+                if (artifacts / "dones").exists() and not agentctl._active_command_alive(lease.get("active_command")):
+                    break
+                self.assertLess(time.monotonic(), deadline, "one-shot child did not exit")
+                time.sleep(0.05)
+            self.start("b")
+            state = json.loads(state_path.read_text())
+            args = ("loop", "stop", "--ack-inflight", "--reason", "verified child result")
+            self.agentctl(*args, session="b", expect=2)
+            self.assertEqual(json.loads(state_path.read_text()), state)
+            board_path = self.root / ".agent/board.json"
+            board = self.board()
+            board["tasks"]["T-A"].update(claim_id="replacement-claim", owner="peer")
+            board_path.write_text(json.dumps(board) + "\n")
+            self.agentctl(*args, session="a")
+            state = json.loads(state_path.read_text())
+            self.assertNotIn("execution_lease", state)
+            self.assertEqual(state["execution_history"][-1]["token"], lease["token"])
             self.assertEqual(self.board()["tasks"]["T-A"]["claim_id"], "replacement-claim")
         finally:
             if runner.poll() is None:

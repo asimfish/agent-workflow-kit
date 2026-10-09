@@ -388,6 +388,16 @@ still serializes loop execution, so long-running cycles belong in a worktree.
 A running cycle rechecks canonical task ownership before each iteration. If its
 claim is released, transferred or conflicted, it becomes `blocked` before the
 next checkpoint; earlier reports and the replacement claim remain untouched.
+The runtime retains its original task, claim and conversation binding. A peer
+cannot resume or stop it; the original holder can stop its own runtime even
+after claim revocation, but cannot resume work with revoked authority.
+Interrupted one-shot execution leases use the same holder-only reconciliation.
+
+An interrupted legacy runtime without that binding is never adopted implicitly.
+After inspecting its processes and outputs, reconcile it with
+`loop stop --ack-inflight --reason <verified result>` in an exclusive checkout,
+then start a new bound cycle. Re-reading documents does not transfer runtime
+ownership.
 
 ## Upgrade Barrier
 
