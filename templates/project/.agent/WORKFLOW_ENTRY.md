@@ -111,9 +111,11 @@ own revoked session and choose different work; use `--takeover --reason` only
 after inspecting the holder's task/outputs and verifying it has stopped, even
 when the agent name matches.
 
-Never continue an old-kit conversation alongside new-kit writers in the same
-checkout; reopen it first so the installed SessionStart hook can establish
-isolated state.
+Drain old-kit writers before allowing new-epoch writers in the same checkout.
+After the upgrade, re-read the plan/task, run `upgrade rebind`, and explicitly
+claim the task with `work --agent <agent-name> --task <task-id>` if unbound.
+Reopen the conversation only when `migrate` reports a missing trusted
+`SessionStart` identity.
 
 After bootstrap, terminal-only/default identity is rejected by both the
 controller dispatcher and PreToolUse for every non-read-only command. `init` is
