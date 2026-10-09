@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-09-12 18:03:08",
+  "updated_at": "2026-10-09 15:52:09",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -599,6 +599,18 @@
       "deps": [],
       "created_at": "2026-09-12 17:55:09",
       "updated_at": "2026-09-12 18:03:08"
+    },
+    "T88A3907618CB94B3-001": {
+      "title": "Verify approved PR65 publication and assess remaining loop isolation gaps",
+      "type": "review",
+      "status": "review",
+      "owner": "supervisor",
+      "scope": [
+        ".agent/logs/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-09 15:46:04",
+      "updated_at": "2026-10-09 15:52:09"
     }
   },
   "updated": ""
