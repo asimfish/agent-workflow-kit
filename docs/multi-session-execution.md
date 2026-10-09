@@ -311,11 +311,14 @@ the clone's config (per clone, like `core.hooksPath`; `doctor` reports a
 clone that lacks it). The driver merges entries keyed by task id: an entry
 changed on one side takes that side, an entry deleted on one side and
 advanced on the other keeps the advance (archiving must not lose progress),
-and a genuinely competing edit of one entry resolves to the status further
+and competing edits **of the same claim** resolve to the status further
 along the lifecycle (`todo` < `in_progress` < `review` < `approved` <
 `done`), then to the newer `updated_at` -- so a concurrent step back
 (`in_progress` to `todo`) loses to a concurrent touch that stays
-`in_progress`; abandon a task after syncing, not during. A `done` task
+`in_progress`; abandon a task after syncing, not during. Different `claim_id`
+values, or competing owners of an active legacy task, are conflicts, never
+resolved by lifecycle rank or timestamp. Unresolved board conflicts block
+writing even if Git left this checkout's JSON in the working tree. A `done` task
 archived on one side stays archived when the other side merely touched
 its `done` entry. A side whose JSON does not parse is a conflict for a
 human, never read as "deleted everything". `TASKS.md` rows and the `## Task
@@ -325,12 +328,18 @@ markers for a human. `loops/state.json` keeps this checkout's version
 because loop runtime is checkout-local bookkeeping. After a pull, `sync`
 re-renders the views from the merged board if they drifted.
 
-**A claim made elsewhere is not yours to resume.** `start` and `work
---task` refuse a task the board shows `in_progress` when no session in this
-checkout -- active, stale, or released -- has ever held it: that is a claim
-from another checkout or machine, and taking it silently would be the
-cross-machine version of stealing a task. `--takeover --reason <why>` claims
-it anyway and records `taken over from <owner> by <agent>: <reason>` in
+**A claim made elsewhere is not yours to resume.** Each new claim has a random
+`claim_id`, persisted in the board and bound to the worker's local session.
+The agent name is a role label, not ownership. A historical local session
+counts only when its claim matches the current board claim. After synchronization,
+`work`, `refresh`, `note`, native write guards and new background runs refuse a
+session whose claim no longer matches. `refresh` acknowledges documents; it
+cannot grant authority. `sync` checks authority again after pulling before
+rendering or pushing. Stops, holder-bound resource cleanup, session release and
+read-only inspection remain available after revocation.
+
+`--takeover --reason <why>` is for verified abandoned work, not a merge-conflict
+override. It creates a new claim and records `taken over from <owner> by <agent>: <reason>` in
 the task document, the progress log, and the board entry
 (`taken_over_from`, `takeover_reason`). Auto-selection never picks an
 `in_progress` task, so this only ever applies to an explicit `--task`.
@@ -349,6 +358,46 @@ whether another machine's conversation is alive, only that its claim is on
 the board), resource locks (a GPU is claimed per host), and worktree
 leases. Treat a foreign claim as live until its owner's notes or commits
 say otherwise.
+
+Before doing work on a task visible to other full clones, publish the claim
+with `sync` and verify success. If two offline clones claim the same snapshot,
+the second synchronization fails explicitly. Keep both task artifacts, inspect
+the holders, choose one claim, and finish Git conflict reconciliation before
+resuming. There is no centralized distributed lock, and no guarantee of exclusive
+offline execution before synchronization; use different tasks/output namespaces
+or a shared external resource lock for work that must never run twice.
+
+## Task-Local Feedback
+
+Loop follow-ups deduplicate and auto-close by `(checkpoint, task)`. A's failure
+does not increment B's retries, and B's success cannot close A's packet. Existing
+packets retain their `to_task`, occurrences and escalation history on upgrade.
+Checkpoint memory and debounce use the same task boundary; own-document changes
+rerun a check, while peer task churn does not invalidate the cache.
+
+Document hygiene at worker completion reads only the current task document.
+Experiment monitoring scans only standard result paths inside that task's scope
+and its declared run outputs. Declare distinct output scopes such as
+`results/4090/` and `results/5090/`; a blanket `results/` scope is not isolation.
+External outputs are limited to validated task-specific artifact paths; scanning
+never expands to their shared parent or sibling task directories.
+Task-local manual checks and cycle escalation do not stop unrelated workers.
+Sessionless audits and CI still report project-wide inconsistencies/escalations.
+Managed worktrees each retain their own bounded-loop runtime; a shared checkout
+still serializes loop execution, so long-running cycles belong in a worktree.
+A running cycle rechecks canonical task ownership before each iteration. If its
+claim is released, transferred or conflicted, it becomes `blocked` before the
+next checkpoint; earlier reports and the replacement claim remain untouched.
+The runtime retains its original task, claim and conversation binding. A peer
+cannot resume or stop it; the original holder can stop its own runtime even
+after claim revocation, but cannot resume work with revoked authority.
+Interrupted one-shot execution leases use the same holder-only reconciliation.
+
+An interrupted legacy runtime without that binding is never adopted implicitly.
+After inspecting its processes and outputs, reconcile it with
+`loop stop --ack-inflight --reason <verified result>` in an exclusive checkout,
+then start a new bound cycle. Re-reading documents does not transfer runtime
+ownership.
 
 ## Upgrade Barrier
 

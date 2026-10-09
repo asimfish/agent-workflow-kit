@@ -230,9 +230,14 @@ class LoopWorkflowRegressionTest(unittest.TestCase):
     def set_cycle_runtime(self, **overrides):
         state_path = self.root / ".agent" / "loops" / "state.json"
         state = json.loads(state_path.read_text(encoding="utf-8"))
+        module = self.load_agentctl_module("agentctl_cycle_fixture_binding")
+        session = module._load_session(self.root)
         runtime = {
             "version": 1,
             "id": "cycle-test-runtime",
+            "task": session.get("task"),
+            "claim_id": session.get("claim_id"),
+            "workflow_session_key": session.get("workflow_session_key") or module._workflow_session_key(),
             "checkpoint": "resume-check",
             "status": "running",
             "requested_cycles": 3,

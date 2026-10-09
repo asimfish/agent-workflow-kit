@@ -125,7 +125,7 @@ ADOPTION_FILE = "adoption.json"
 INSTALL_MANIFEST_FILE = "install-manifest.json"
 KIT_VERSION = "0.5.0"
 INSTALL_SCHEMA_VERSION = 2
-PROTOCOL_EPOCH = 2
+PROTOCOL_EPOCH = 3
 LEGACY_PROTOCOL_EPOCH = 1
 UPGRADE_STATE_FILE = "upgrade-state.json"
 PLAN_FILE = "PROJECT_PLAN.md"
@@ -535,9 +535,16 @@ def _board_deletion_wins(base_entry: dict, survivor: dict) -> bool:
 
 
 def _resolve_board_entry(_key: str, ours: dict, theirs: dict) -> dict:
-    """Competing edits of one task: the entry further along the lifecycle wins."""
+    """Advance one claim, but never choose a competing holder by timestamp."""
     if not isinstance(ours, dict) or not isinstance(theirs, dict):
         return ours
+    o_claim, t_claim = ours.get("claim_id"), theirs.get("claim_id")
+    if o_claim != t_claim and (o_claim or t_claim):
+        raise ValueError(f"task {_key}: competing claims; reconcile ownership explicitly")
+    if ours.get("owner") != theirs.get("owner") and (
+        o_claim or t_claim or "in_progress" in (ours.get("status"), theirs.get("status"))
+    ):
+        raise ValueError(f"task {_key}: competing owners; reconcile ownership explicitly")
     o_rank = LEDGER_STATUS_RANK.get(str(ours.get("status") or ""), 0)
     t_rank = LEDGER_STATUS_RANK.get(str(theirs.get("status") or ""), 0)
     if t_rank > o_rank:
@@ -833,6 +840,10 @@ def cmd_sync(args: argparse.Namespace) -> int:
             print("  " + (pull.stderr.strip() or pull.stdout.strip()), file=sys.stderr)
         return 1
     print(f"agentctl: sync pulled {args.remote}/{branch}")
+    authority_error = _session_claim_error(root, _load_session(root))
+    if authority_error:
+        print(f"agentctl: sync stopped: {authority_error}", file=sys.stderr)
+        return 1
     # git exits 0 when the autostash could not be re-applied cleanly and only
     # warns; the edits then sit in the stash list. Say so instead of hiding it.
     pull_output = (pull.stdout or "") + (pull.stderr or "")
@@ -1502,11 +1513,38 @@ def _render_sessions_view(root: Path, rows: list[dict] | None = None) -> None:
     _write_atomic_text(_state_dir(root) / SESSION_VIEW_FILE, "\n".join(lines))
 
 
+def _session_claim_error(root: Path, session: dict, *, allow_released: bool = False) -> str:
+    """A read receipt is not authority: bind writes to the canonical board claim."""
+    task = str(session.get("task") or "")
+    if _git(root, "ls-files", "--unmerged", "--", f"{WORKFLOW_DIR}/{BOARD_FILE}"):
+        return f"task {task}: board has an unresolved claim/merge conflict; reconcile before writing"
+    if not task:
+        return ""
+    entry = (_load_board(root).get("tasks") or {}).get(task) or {}
+    claim = session.get("claim_id")
+    if session.get("presence_status") == "released" and not allow_released:
+        transferred = " and is already claimed by another session" if claim != entry.get("claim_id") else ""
+        return f"task {task}: this session released its claim{transferred}; run work to reclaim eligible work"
+    if not claim or not entry.get("claim_id"):
+        return (f"task {task}: legacy claim is not bound; inspect ownership and run "
+                f"'agentctl work --agent {session.get('agent') or 'agent'} --task {task}' "
+                "before writing (refresh cannot grant ownership)")
+    if claim != entry.get("claim_id") or session.get("agent") != entry.get("owner"):
+        return (f"task {task}: claim authority changed; this session no longer owns the task. "
+                "Read the board, release this session, and choose different work; "
+                "takeover requires --takeover --reason after inspecting the holder")
+    return ""
+
+
 def _require_session(root: Path) -> dict:
     st = _load_session(root)
     if not st.get("task"):
         print("agentctl: no active task. run 'agentctl work --agent <name>' first.", file=sys.stderr)
         sys.exit(3)
+    error = _session_claim_error(root, st)
+    if error:
+        print(f"agentctl: {error}", file=sys.stderr)
+        sys.exit(1)
     return st
 
 
@@ -3472,6 +3510,9 @@ def cmd_work(args: argparse.Namespace) -> int:
     if identity_error:
         print(f"agentctl: {identity_error}", file=sys.stderr)
         return 2
+    if _git(root, "ls-files", "--unmerged", "--", f"{WORKFLOW_DIR}/{BOARD_FILE}"):
+        print("agentctl: unresolved board claim/merge conflict; reconcile before starting work", file=sys.stderr)
+        return 1
     # Before any task state is written: a session that starts in a clone whose
     # config does not point at the kit's hooks would work unguarded.
     if _wire_clone_or_report(root):
@@ -3526,6 +3567,10 @@ def cmd_work(args: argparse.Namespace) -> int:
             st = _load_session(root)
             active = st.get("task")
             if active and _task_status(root, active) == "in_progress":
+                error = _session_claim_error(root, st)
+                if error:
+                    print(f"agentctl: {error}", file=sys.stderr)
+                    return 1
                 session_key = st.get("workflow_session_key") or _workflow_session_key()
                 conflicts = _session_start_conflicts(
                     root, session_key, active, st.get("scope") or [],
@@ -3880,17 +3925,13 @@ def _format_age(delta: _dt.timedelta) -> str:
 
 
 def _foreign_claim_holder(root: Path, task: str, entry: dict) -> str:
-    """Owner of a task the board shows in_progress that no session here ever held.
-
-    Sessions never leave the machine, so a board entry that is in_progress
-    while this checkout (including its linked worktrees) has no record of
-    the task -- active, stale, or released -- is a claim made somewhere
-    else. Returns the recorded owner, or "" when the claim is local.
-    """
+    """An old local session is not proof that the current claim is local."""
     if str(entry.get("status") or "") != "in_progress":
         return ""
     for row in _session_rows_unlocked(root):
-        if str(row.get("task") or "") == task:
+        if (str(row.get("task") or "") == task
+                and row.get("agent") == entry.get("owner")
+                and row.get("claim_id") == entry.get("claim_id")):
             return ""
     return str(entry.get("owner") or "another agent")
 
@@ -3932,6 +3973,9 @@ def cmd_start(
     if identity_error:
         print(f"agentctl: {identity_error}", file=sys.stderr)
         return 2
+    if _git(root, "ls-files", "--unmerged", "--", f"{WORKFLOW_DIR}/{BOARD_FILE}"):
+        print("agentctl: unresolved board claim/merge conflict; reconcile before starting work", file=sys.stderr)
+        return 1
     if not (root / WORKFLOW_DIR / PLAN_FILE).is_file():
         print(f"agentctl: missing {WORKFLOW_DIR}/{PLAN_FILE}. run 'agentctl init' first.", file=sys.stderr)
         return 2
@@ -4086,6 +4130,12 @@ def cmd_start(
         })
         e["status"] = "in_progress"
         e["owner"] = agent
+        local = _load_session(root)
+        reuse_claim = (not foreign_holder and local.get("task") == task
+                       and local.get("claim_id") == e.get("claim_id")
+                       and local.get("agent") == agent
+                       and local.get("presence_status") != "released")
+        e["claim_id"] = e.get("claim_id") if reuse_claim and e.get("claim_id") else secrets.token_hex(16)
         if scope:
             e["scope"] = scope
         e["updated_at"] = now
@@ -4103,6 +4153,7 @@ def cmd_start(
             _record_takeover(root, task, agent, foreign_holder, str(getattr(args, "reason", "") or "").strip())
         session = {
             "task": task, "agent": agent, "started_at": now, "scope": scope,
+            "claim_id": e["claim_id"],
             "task_type": entry.get("type") or "generic",
             "isolation": required_isolation,
             "protocol_epoch": _installed_protocol_epoch(root),
@@ -5015,6 +5066,10 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     if not st.get("task"):
         print("agentctl: no active session to refresh", file=sys.stderr)
         return 2
+    error = _session_claim_error(root, st)
+    if error:
+        print(f"agentctl: {error}", file=sys.stderr)
+        return 1
     st["doc_hashes"] = _hash_docs(root, st["task"])
     st["refreshed_at"] = _now()
     _record_runtime_identity(st)
@@ -10194,8 +10249,8 @@ def cmd_resource(args: argparse.Namespace) -> int:
             if not rows:
                 print("agentctl: no resource leases")
         return 0
-    session = _require_session(root)
     if args.resource_action == "acquire":
+        session = _require_session(root)
         lease, error = _resource_acquire_one(
             root, str(session.get("task")), args.resource,
             "conversation", _workflow_session_key(),
@@ -10790,7 +10845,8 @@ def cmd_eval(args: argparse.Namespace) -> int:
 
 # ---------- loops ----------
 
-def _loop_follow_up_packets(root: Path, checkpoint: str | None = None) -> list[tuple[Path, dict]]:
+def _loop_follow_up_packets(root: Path, checkpoint: str | None = None,
+                            task: str | None = None) -> list[tuple[Path, dict]]:
     """Open (status=ready) loop follow-up packets sitting in the inbox."""
     packets = []
     inbox = _bus_dir(root, BUS_INBOX)
@@ -10801,6 +10857,8 @@ def _loop_follow_up_packets(root: Path, checkpoint: str | None = None) -> list[t
         if pkt.get("kind") != LOOP_FOLLOW_UP_KIND:
             continue
         if checkpoint and pkt.get("checkpoint") != checkpoint:
+            continue
+        if task is not None and pkt.get("to_task") != task:
             continue
         if pkt.get("status") != "ready":
             continue
@@ -10813,14 +10871,15 @@ def _create_loop_follow_up(root: Path, checkpoint: str, aggregate: str,
                            escalate_after: int = LOOP_ESCALATE_AFTER_DEFAULT) -> tuple[str, bool, bool]:
     """Create (or refresh) the follow-up packet for a failed checkpoint.
 
-    Returns (packet_id, created, escalated_now). Deduplicates per checkpoint:
+    Returns (packet_id, created, escalated_now). Deduplicates per task/checkpoint:
     re-running a still-failing checkpoint updates the existing open packet
     instead of flooding the inbox. When occurrences reaches escalate_after the
     packet is flagged escalated exactly once and requires a human decision.
     """
     session = _load_session(root)
+    to_task = session.get("task") or "supervisor"
     summary = f"checkpoint {checkpoint} reported {aggregate}" + (" under strict mode" if strict else "")
-    existing = _loop_follow_up_packets(root, checkpoint)
+    existing = _loop_follow_up_packets(root, checkpoint, task=to_task)
     if existing:
         path, pkt = existing[0]
         pkt["updated_at"] = _now()
@@ -10887,9 +10946,10 @@ def _escalated_follow_ups(root: Path, task: str | None = None) -> list[tuple[Pat
 
 
 def _close_loop_follow_ups(root: Path, checkpoint: str, note: str) -> list[str]:
-    """Mark open follow-up packets for a now-successful checkpoint as done."""
+    """Success resolves this task's failures, never a peer's or supervisor's."""
     closed = []
-    for _path, pkt in _loop_follow_up_packets(root, checkpoint):
+    task = _load_session(root).get("task") or "supervisor"
+    for _path, pkt in _loop_follow_up_packets(root, checkpoint, task=task):
         pkt["status"] = "done"
         pkt["updated_at"] = _now()
         pkt["notes"] = (pkt.get("notes") or "") + f"\n{pkt['updated_at']}: {note}"
@@ -11046,7 +11106,7 @@ def _parse_time(value: str | None) -> _dt.datetime | None:
     return None
 
 
-def _checkpoint_input_fingerprint(root: Path) -> str:
+def _checkpoint_input_fingerprint(root: Path, *, experiment: bool = False) -> str:
     """Fingerprint the coordination docs a checkpoint reconciles against.
 
     Debounce exists to skip redundant reruns, but the loop contracts promise
@@ -11055,15 +11115,23 @@ def _checkpoint_input_fingerprint(root: Path) -> str:
     silently suppressed.
     """
     h = hashlib.sha256()
-    for rel in (
-        f"{WORKFLOW_DIR}/{PLAN_FILE}",
-        f"{WORKFLOW_DIR}/{TASKS_FILE}",
-        f"{WORKFLOW_DIR}/{BOARD_FILE}",
-    ):
-        p = root / rel
-        if p.is_file():
-            h.update(rel.encode("utf-8"))
-            h.update(p.read_bytes())
+    task = _load_session(root).get("task")
+    if task:
+        h.update(json.dumps(_hash_docs(root, task), sort_keys=True).encode("utf-8"))
+        entry = (_load_board(root).get("tasks") or {}).get(task) or {}
+        h.update(json.dumps(entry, sort_keys=True).encode("utf-8"))
+    else:
+        for rel in (
+            f"{WORKFLOW_DIR}/{PLAN_FILE}",
+            f"{WORKFLOW_DIR}/{TASKS_FILE}",
+            f"{WORKFLOW_DIR}/{BOARD_FILE}",
+        ):
+            p = root / rel
+            if p.is_file():
+                h.update(rel.encode("utf-8"))
+                h.update(p.read_bytes())
+    if experiment:
+        h.update(json.dumps(_loop_experiment_monitor(root), sort_keys=True).encode("utf-8"))
     return h.hexdigest()[:16]
 
 
@@ -11874,7 +11942,10 @@ def _loop_doc_hygiene(root: Path) -> dict:
         "## Task Contract", "## Context To Read Before Starting", "## Work Scope",
         "## Stage Plan", "## Stage Log", "## Verification", "## Completion Record",
     )
-    for doc in sorted((root / WORKFLOW_DIR / TASKS_DIR).glob("*.md")):
+    task = _load_session(root).get("task")
+    docs = ([root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"] if task else
+            sorted((root / WORKFLOW_DIR / TASKS_DIR).glob("*.md")))
+    for doc in docs:
         if doc.name == "_template.md":
             continue
         rel = str(doc.relative_to(root))
@@ -11895,7 +11966,8 @@ def _loop_doc_hygiene(root: Path) -> dict:
         feedback.append(f"{rel}: {_short_file_status(root, rel)}")
     return {
         "status": "partial" if checks else "success",
-        "read": [".agent/tasks/*.md", ".agent/PROJECT_PLAN.md", ".agent/TASKS.md", ".agent/WORKFLOW_ENTRY.md"],
+        "read": ([f".agent/tasks/{task}.md"] if task else [".agent/tasks/*.md"])
+                + [".agent/PROJECT_PLAN.md", ".agent/TASKS.md", ".agent/WORKFLOW_ENTRY.md"],
         "actions": ["Checked task document schema, duplicate stage log entries, and required workflow docs."],
         "checks": checks or ["No document hygiene issues found in task docs."],
         "feedback": feedback,
@@ -11909,9 +11981,25 @@ def _bounded_walk_markers(root: Path, bases: list[str], limit: int = 5000) -> tu
     samples = []
     capped = False
     seen = 0
+
+    def sample_path(path: Path) -> str:
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            return str(path)
+
     for rel in bases:
         base = root / rel
         if not base.exists():
+            continue
+        if base.is_file():
+            seen += 1
+            if seen > limit:
+                return counts, samples, True
+            if base.name in {"DONE", "ERROR"}:
+                counts[base.name] += 1
+                if len(samples) < 10:
+                    samples.append(sample_path(base))
             continue
         for dirpath, _dirs, files in os.walk(base):
             for fn in files:
@@ -11922,12 +12010,35 @@ def _bounded_walk_markers(root: Path, bases: list[str], limit: int = 5000) -> tu
                 if fn in {"DONE", "ERROR"}:
                     counts[fn] += 1
                     if len(samples) < 10:
-                        samples.append(str((Path(dirpath) / fn).relative_to(root)))
+                        samples.append(sample_path(Path(dirpath) / fn))
     return counts, samples, capped
 
 
 def _loop_experiment_monitor(root: Path) -> dict:
     bases = ["results", "experiments/analysis_outputs", "experiments/logs"]
+    session = _load_session(root)
+    if session.get("task"):
+        scoped = set()
+        for base in bases:
+            for scope in session.get("scope") or []:
+                scope = str(scope).rstrip("/")
+                if _scopes_overlap([base], [scope]):
+                    scoped.add(scope if scope.startswith(base + "/") else base)
+        for lease in _load_runtime_leases(root).get("leases") or []:
+            if lease.get("task") != session["task"] or lease.get("kind") != "run":
+                continue
+            outputs, _problems = _validate_run_outputs(
+                root, session["task"], session.get("scope") or [], lease.get("outputs") or [])
+            for output in outputs:
+                try:
+                    scoped.add(str(Path(output).resolve().relative_to(root.resolve())))
+                except ValueError:
+                    scoped.add(str(Path(output)))
+        bases = []
+        for candidate in sorted(scoped, key=lambda value: (len(Path(value).parts), value)):
+            if not any(Path(base) == Path(candidate) or Path(base) in Path(candidate).parents
+                       for base in bases):
+                bases.append(candidate)
     counts, samples, capped = _bounded_walk_markers(root, bases)
     checks = []
     if not any((root / rel).exists() for rel in bases):
@@ -12390,9 +12501,14 @@ def _loop_run_commands(root: Path, loop_id: str, spec: dict) -> dict:
     }
 
 
+def _loop_context_key(root: Path, name: str) -> str:
+    task = _load_session(root).get("task")
+    return f"{name}:{task}" if task else name
+
+
 def _attach_previous_run(root: Path, loop_id: str, result: dict) -> dict:
     """Feed the prior run's outcome into this run (the Feedback link)."""
-    prev = (_load_json(_loop_state_path(root), {}).get("loops") or {}).get(loop_id) or {}
+    prev = (_load_json(_loop_state_path(root), {}).get("loops") or {}).get(_loop_context_key(root, loop_id)) or {}
     if not prev.get("last_run_at"):
         return result
     result["previous"] = {
@@ -12496,7 +12612,9 @@ def _write_loop_report(root: Path, loop_id: str, trigger: str, result: dict) -> 
     ]
     _write(path, "\n".join(lines))
     def update(state: dict) -> None:
-        state.setdefault("loops", {})[loop_id] = {
+        state.setdefault("loops", {})[_loop_context_key(root, loop_id)] = {
+            "task": session.get("task"),
+            "loop": loop_id,
             "last_run_at": ts.strftime("%Y-%m-%d %H:%M:%S"),
             "last_status": result.get("status", "unknown"),
             "last_report": str(path.relative_to(root)),
@@ -12593,9 +12711,11 @@ def _run_loop_checkpoint_unlocked(root: Path, checkpoint: str, *, once: bool, tr
     loop_ids = [str(x).strip() for x in loop_ids if str(x).strip()]
     strict_effective = bool(spec.get("strict")) if strict is None else bool(strict)
     debounce = int(spec.get("debounce_minutes") or 0)
-    input_hash = _checkpoint_input_fingerprint(root)
+    input_hash = _checkpoint_input_fingerprint(root, experiment="experiment-monitor" in loop_ids)
+    task = _load_session(root).get("task")
+    state_key = _loop_context_key(root, checkpoint)
     state = _load_json(_loop_state_path(root), {"version": 1, "loops": {}, "checkpoints": {}})
-    if _checkpoint_recent(state, checkpoint, debounce, input_hash) and not force:
+    if _checkpoint_recent(state, state_key, debounce, input_hash) and not force:
         if not quiet:
             print(f"agentctl: loop checkpoint {checkpoint} skipped (debounced {debounce}m)")
         return 0
@@ -12632,7 +12752,9 @@ def _run_loop_checkpoint_unlocked(root: Path, checkpoint: str, *, once: bool, tr
         closed_follow_ups = _close_loop_follow_ups(
             root, checkpoint, f"checkpoint {checkpoint} succeeded (trigger={trigger})")
     def update(state: dict) -> None:
-        state.setdefault("checkpoints", {})[checkpoint] = {
+        state.setdefault("checkpoints", {})[state_key] = {
+            "task": task,
+            "checkpoint": checkpoint,
             "last_run_at": _now(),
             "last_status": aggregate,
             "last_reports": reports,
@@ -12961,6 +13083,7 @@ def _loop_execution_claim(root: Path, operation: str, *,
                 session.get("workflow_session_key") or _workflow_session_key()
             ),
             "task": session.get("task"),
+            "claim_id": session.get("claim_id"),
             "scope": list(session.get("scope") or []),
             "checkout": str(root.resolve()),
             "cycle_runtime_id": cycle_runtime_id,
@@ -13055,9 +13178,13 @@ def _cycle_begin(root: Path, args: argparse.Namespace) -> tuple[dict | None, str
 
     runtime_id = f"cycle-{_dt.datetime.now().strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
     effective_max_failures = max_failures or (cycles if args.continue_on_failure else 1)
+    session = _load_session(root)
     runtime = {
         "version": 1,
         "id": runtime_id,
+        "task": session.get("task"),
+        "claim_id": session.get("claim_id"),
+        "workflow_session_key": session.get("workflow_session_key") or _workflow_session_key(),
         "checkpoint": args.checkpoint,
         "status": "running",
         "requested_cycles": cycles,
@@ -13144,7 +13271,8 @@ def _cycle_finish(root: Path, runtime_id: str, status: str, reason: str | None =
 
 def _cycle_escalated(root: Path, checkpoint: str) -> list[str]:
     return [
-        str(pkt.get("id")) for _path, pkt in _loop_follow_up_packets(root, checkpoint)
+        str(pkt.get("id")) for _path, pkt in _loop_follow_up_packets(
+            root, checkpoint, task=_load_session(root).get("task") or "supervisor")
         if pkt.get("escalated")
     ]
 
@@ -13193,6 +13321,24 @@ def _cycle_terminal_exit(runtime: dict) -> int:
     return 2
 
 
+def _loop_binding_present(record: dict) -> bool:
+    return bool(record.get("workflow_session_key")) and {"task", "claim_id"}.issubset(record)
+
+
+def _cycle_claim_error(root: Path, runtime: dict, *, require_authority: bool = True) -> str:
+    session = _load_session(root)
+    if not _loop_binding_present(runtime):
+        return "legacy loop runtime has no task/session binding; inspect and stop it before starting a new cycle"
+    binding = {
+        "workflow_session_key": session.get("workflow_session_key") or _workflow_session_key(),
+        "task": session.get("task"),
+        "claim_id": session.get("claim_id"),
+    }
+    if any(runtime.get(key) != value for key, value in binding.items()):
+        return "loop runtime belongs to a different task/session claim; its holder must reconcile it"
+    return _session_claim_error(root, session) if require_authority else ""
+
+
 def _cycle_execute(root: Path, runtime_id: str) -> int:
     try:
         while True:
@@ -13214,6 +13360,20 @@ def _cycle_execute(root: Path, runtime_id: str) -> int:
                 return _cycle_terminal_exit(stopped)
             if runtime.get("status") != "running":
                 return _cycle_terminal_exit(runtime)
+
+            error = _cycle_claim_error(root, runtime)
+            if error:
+                blocked = _cycle_finish(
+                    root,
+                    runtime_id,
+                    "blocked",
+                    error,
+                    expected_statuses={"running"},
+                    expected_owner_pid=os.getpid(),
+                )
+                if not blocked:
+                    continue
+                return _cycle_terminal_exit(blocked)
 
             cycles = int(runtime.get("requested_cycles") or 0)
             completed = int(runtime.get("completed_cycles") or 0)
@@ -13264,7 +13424,7 @@ def _cycle_execute(root: Path, runtime_id: str) -> int:
             )
             checkpoint_state = (
                 (_load_json(_loop_state_path(root), {}).get("checkpoints") or {})
-                .get(runtime.get("checkpoint"), {})
+                .get(_loop_context_key(root, str(runtime.get("checkpoint"))), {})
             )
             escalated = _cycle_escalated(root, str(runtime.get("checkpoint")))
 
@@ -13422,6 +13582,10 @@ def _loop_resume(root: Path, _args: argparse.Namespace) -> int:
     if status != "interrupted":
         print(f"agentctl: loop runtime {runtime.get('id')} is terminal ({status}); start a new cycle", file=sys.stderr)
         return 2
+    error = _cycle_claim_error(root, runtime)
+    if error:
+        print(f"agentctl: {error}", file=sys.stderr)
+        return 2
     if runtime.get("resume_safe") is False:
         print(
             f"agentctl: loop runtime {runtime.get('id')} cannot be resumed because its in-flight "
@@ -13486,6 +13650,11 @@ def _reconcile_execution_lease(root: Path, lease: dict, args: argparse.Namespace
         return 2
     if lease.get("status") != "interrupted":
         return 0
+    error = _cycle_claim_error(root, lease, require_authority=False)
+    if error and (_loop_binding_present(lease) or _blocking_session_rows(root, _workflow_session_key())):
+        print(f"agentctl: {error}; unbound legacy reconciliation requires an exclusive checkout",
+              file=sys.stderr)
+        return 2
     command_state = _active_command_state(lease.get("active_command"))
     if command_state == "live":
         print(
@@ -13522,6 +13691,18 @@ def _loop_stop(root: Path, args: argparse.Namespace) -> int:
             return _reconcile_execution_lease(root, execution_lease, args)
         print(f"agentctl: loop runtime {runtime.get('id')} already terminal ({status})")
         return 0
+    error = _cycle_claim_error(root, runtime, require_authority=False)
+    if error:
+        legacy_reconciled = (
+            not _loop_binding_present(runtime)
+            and status == "interrupted"
+            and args.ack_inflight and args.reason
+            and not _blocking_session_rows(root, _workflow_session_key())
+        )
+        if not legacy_reconciled:
+            print(f"agentctl: {error}; unbound legacy cleanup requires an exclusive checkout "
+                  "and --ack-inflight --reason after inspection", file=sys.stderr)
+            return 2
     unsafe_inflight = status == "interrupted" and runtime.get("resume_safe") is False
     if unsafe_inflight:
         command_states = [_active_command_state(runtime.get("active_command"))]
@@ -13629,11 +13810,12 @@ def _check_base(root: Path) -> list:
     return p
 
 
-def _check_escalations(root: Path) -> list:
+def _check_escalations(root: Path, *, project_wide: bool = False) -> list:
     return [
         f"escalated loop follow-up {pkt.get('id')} (checkpoint={pkt.get('checkpoint')}, "
         f"occurrences={pkt.get('occurrences', 1)}) needs a human decision"
-        for _path, pkt in _escalated_follow_ups(root)
+        for _path, pkt in _escalated_follow_ups(
+            root, task=None if project_wide else _load_session(root).get("task"))
     ]
 
 
@@ -13661,6 +13843,9 @@ def _check_receipt(root: Path) -> list:
     st = _load_session(root)
     if not st.get("task"):
         return []
+    error = _session_claim_error(root, st)
+    if error:
+        return [error]
     cur = _hash_docs(root, st["task"])
     old = st.get("doc_hashes", {})
     changed = sorted(k for k in set(cur) | set(old) if cur.get(k) != old.get(k))
@@ -13894,7 +14079,18 @@ def _check_prepush(
 ) -> list:
     if not commit_range:
         return ["pre-push mode requires --commit-range"]
-    p = _check_git_exclusive(root)
+    return _check_git_exclusive(root) + _check_commit_range(root, commit_range, published_remote)
+
+
+def _check_commit_range(root: Path, commit_range: str,
+                         published_remote: str | None = None) -> list:
+    """The durable push policy also runs in CI, without requiring a local session."""
+    p = []
+    if commit_range.startswith("-"):
+        return [f"invalid commit range: {commit_range}"]
+    valid = _git_process(root, "rev-list", commit_range)
+    if valid.returncode:
+        return [f"invalid commit range: {commit_range}"]
     rev_args = [commit_range]
     baseline = _load_json(_adoption_path(root), {}).get("ignore_commits_through")
     if baseline and _git(root, "rev-parse", "--verify", f"{baseline}^{{commit}}").strip():
@@ -14278,6 +14474,32 @@ def _migration_report(root: Path) -> dict:
             "After the old conversation is closed, release only its verified claim "
             "with agentctl sessions release <session-key> --reason <verified-reason>.",
             "Run agentctl migrate again before selecting work.",
+        ])
+    elif session.get("task") and current_status not in {"released", "review", "approved", "done"} and (
+        _session_claim_error(root, session)
+    ):
+        action = "inspect_sessions"
+        reasons.append(_session_claim_error(root, session))
+        entry = (_load_board(root).get("tasks") or {}).get(session["task"]) or {}
+        if not session.get("claim_id") and not entry.get("claim_id"):
+            next_steps.extend([
+                "Inspect task ownership; re-read the plan/task and run upgrade rebind if the protocol changed.",
+                f"Explicitly start the verified legacy task with agentctl work --agent "
+                f"{session.get('agent') or 'agent'} --task {session['task']}; refresh cannot bind a claim.",
+            ])
+        else:
+            next_steps.extend([
+                "Inspect the canonical board and resolve any Git claim conflict before writing.",
+                "Release only this conversation's superseded claim, then select different work; "
+                "an abandoned task needs an explicit --takeover --reason.",
+            ])
+        next_steps.append("Run agentctl migrate again before editing.")
+    elif session.get("task") and _session_protocol_epoch(root, session) != _installed_protocol_epoch(root):
+        action = "refresh"
+        reasons.append("this conversation is bound to an older workflow protocol")
+        next_steps.extend([
+            "Re-read the plan and task document, then run agentctl upgrade rebind (not refresh alone).",
+            "Run agentctl migrate again before editing.",
         ])
     elif source in {"shared_legacy", "singleton_legacy"}:
         action = "refresh"
@@ -14829,7 +15051,9 @@ def cmd_check(args: argparse.Namespace) -> int:
     elif mode == "pre-push":
         problems = _check_prepush(root, args.commit_range, args.published_remote)
     elif mode == "ci":
-        problems = _check_base(root) + _check_board_consistency(root) + _check_escalations(root)
+        problems = _check_base(root) + _check_board_consistency(root) + _check_escalations(root, project_wide=True)
+        if args.commit_range:
+            problems += _check_commit_range(root, args.commit_range)
     else:
         print(f"agentctl: unknown check mode '{mode}'", file=sys.stderr)
         return 2
@@ -14886,6 +15110,10 @@ def _sessions_heartbeat(root: Path) -> int:
         if not st.get("task"):
             print("agentctl: no active session to heartbeat", file=sys.stderr)
             return 3
+        error = _session_claim_error(root, st)
+        if error:
+            print(f"agentctl: {error}", file=sys.stderr)
+            return 1
         if st.get("presence_status") == "released":
             print(
                 "agentctl: this session was released for handoff; run 'agentctl work' "
@@ -14937,6 +15165,10 @@ def _sessions_guard(root: Path, args: argparse.Namespace) -> int:
             )
             return 3
         current_key = st.get("workflow_session_key") or _workflow_session_key()
+        error = _session_claim_error(root, st)
+        if error:
+            print(f"agentctl: {error}", file=sys.stderr)
+            return 1
         blockers = _blocking_session_rows(root, current_key)
         prior_peer_snapshot = st.get("peer_snapshot") or ""
         peer_snapshot = _peer_session_snapshot(blockers)
@@ -15292,6 +15524,12 @@ def cmd_upgrade(args: argparse.Namespace) -> int:
         if not session.get("task"):
             print("agentctl: no task session to rebind", file=sys.stderr)
             return 2
+        entry = (_load_board(root).get("tasks") or {}).get(session["task"]) or {}
+        if entry.get("claim_id") or session.get("claim_id"):
+            error = _session_claim_error(root, session, allow_released=True)
+            if error:
+                print(f"agentctl: rebind blocked: {error}", file=sys.stderr)
+                return 1
         session_key = session.get("workflow_session_key") or _workflow_session_key()
         conflicts = _session_start_conflicts(
             root, session_key, str(session.get("task")), session.get("scope") or [],
@@ -15845,6 +16083,20 @@ def main(argv=None) -> int:
         upgrade_error = _upgrade_command_error(_repo_root(), args)
         if upgrade_error:
             print(f"agentctl: {upgrade_error}", file=sys.stderr)
+            return 1
+    # Recovery remains possible after revocation; new side effects do not.
+    recovery_paths = {
+        ("work",), ("start",), ("sessions", "release"),
+        ("run", "stop"), ("run", "finish"), ("_run-supervise",),
+        ("resource", "release"), ("worktree", "release"), ("worktree", "list"),
+        ("loop", "stop"), ("loop", "status"),
+        ("upgrade", "begin"), ("upgrade", "complete"), ("upgrade", "rebind"),
+    }
+    if _command_requires_trusted_identity(args) and _agentctl_command_path(args) not in recovery_paths:
+        session = _load_session(_repo_root())
+        error = _session_claim_error(_repo_root(), session)
+        if error:
+            print(f"agentctl: {error}", file=sys.stderr)
             return 1
     return args.func(args)
 

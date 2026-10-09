@@ -80,7 +80,7 @@ class TaskCapsuleWorkflowRegressionTest(unittest.TestCase):
         self.assertEqual(capsule["task"], "T-CAP-A")
         self.assertEqual(capsule["type"], "docs")
         self.assertEqual(capsule["isolation"], "shared")
-        self.assertEqual(capsule["protocol_epoch"], 2)
+        self.assertEqual(capsule["protocol_epoch"], 3)
         self.assertEqual(len(capsule["documents_digest"]), 12)
         self.assertTrue(any(
             row["task"] == "T-CAP-B" and row["status"] == "active"

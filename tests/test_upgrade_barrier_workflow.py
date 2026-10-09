@@ -143,7 +143,7 @@ class UpgradeBarrierWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertEqual(manifest["version"], 2)
         self.assertEqual(manifest["kit_version"], "0.5.0")
-        self.assertEqual(manifest["protocol_epoch"], 2)
+        self.assertEqual(manifest["protocol_epoch"], 3)
         self.assertTrue(manifest["source_commit"])
         validation = json.loads(
             self.agentctl("upgrade", "validate", "--json").stdout
@@ -198,7 +198,7 @@ class UpgradeBarrierWorkflowRegressionTest(unittest.TestCase):
             self.agentctl("upgrade", "status", "--json").stdout
         )
         self.assertEqual(status["state"], "steady")
-        self.assertEqual(status["installed_epoch"], 2)
+        self.assertEqual(status["installed_epoch"], 3)
 
         mismatch = self.agentctl(
             "note", "must not write before rebind", session="old", expect=1,
@@ -266,7 +266,7 @@ class UpgradeBarrierWorkflowRegressionTest(unittest.TestCase):
             session="runner",
         )
         self.agentctl(
-            "upgrade", "begin", "--target-epoch", "3",
+            "upgrade", "begin", "--target-epoch", "4",
             "--target-version", "0.6.0", session="admin",
         )
         waiting = self.agentctl(
