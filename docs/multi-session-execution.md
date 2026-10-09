@@ -379,6 +379,8 @@ Document hygiene at worker completion reads only the current task document.
 Experiment monitoring scans only standard result paths inside that task's scope
 and its declared run outputs. Declare distinct output scopes such as
 `results/4090/` and `results/5090/`; a blanket `results/` scope is not isolation.
+External outputs are limited to validated task-specific artifact paths; scanning
+never expands to their shared parent or sibling task directories.
 Task-local manual checks and cycle escalation do not stop unrelated workers.
 Sessionless audits and CI still report project-wide inconsistencies/escalations.
 Managed worktrees each retain their own bounded-loop runtime; a shared checkout

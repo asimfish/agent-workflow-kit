@@ -11981,6 +11981,13 @@ def _bounded_walk_markers(root: Path, bases: list[str], limit: int = 5000) -> tu
     samples = []
     capped = False
     seen = 0
+
+    def sample_path(path: Path) -> str:
+        try:
+            return str(path.relative_to(root))
+        except ValueError:
+            return str(path)
+
     for rel in bases:
         base = root / rel
         if not base.exists():
@@ -11992,7 +11999,7 @@ def _bounded_walk_markers(root: Path, bases: list[str], limit: int = 5000) -> tu
             if base.name in {"DONE", "ERROR"}:
                 counts[base.name] += 1
                 if len(samples) < 10:
-                    samples.append(str(base.relative_to(root)))
+                    samples.append(sample_path(base))
             continue
         for dirpath, _dirs, files in os.walk(base):
             for fn in files:
@@ -12003,7 +12010,7 @@ def _bounded_walk_markers(root: Path, bases: list[str], limit: int = 5000) -> tu
                 if fn in {"DONE", "ERROR"}:
                     counts[fn] += 1
                     if len(samples) < 10:
-                        samples.append(str((Path(dirpath) / fn).relative_to(root)))
+                        samples.append(sample_path(Path(dirpath) / fn))
     return counts, samples, capped
 
 
@@ -12020,11 +12027,13 @@ def _loop_experiment_monitor(root: Path) -> dict:
         for lease in _load_runtime_leases(root).get("leases") or []:
             if lease.get("task") != session["task"] or lease.get("kind") != "run":
                 continue
-            for output in lease.get("outputs") or []:
+            outputs, _problems = _validate_run_outputs(
+                root, session["task"], session.get("scope") or [], lease.get("outputs") or [])
+            for output in outputs:
                 try:
                     scoped.add(str(Path(output).resolve().relative_to(root.resolve())))
                 except ValueError:
-                    continue
+                    scoped.add(str(Path(output)))
         bases = []
         for candidate in sorted(scoped, key=lambda value: (len(Path(value).parts), value)):
             if not any(Path(base) == Path(candidate) or Path(base) in Path(candidate).parents
@@ -13378,7 +13387,7 @@ def _cycle_execute(root: Path, runtime_id: str) -> int:
             )
             checkpoint_state = (
                 (_load_json(_loop_state_path(root), {}).get("checkpoints") or {})
-                .get(runtime.get("checkpoint"), {})
+                .get(_loop_context_key(root, str(runtime.get("checkpoint"))), {})
             )
             escalated = _cycle_escalated(root, str(runtime.get("checkpoint")))
 

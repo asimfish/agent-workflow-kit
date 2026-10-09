@@ -1,6 +1,8 @@
 """A worker's feedback, checks, and memory belong to its task, not its peers."""
 
 import json
+import tempfile
+from pathlib import Path
 from unittest import mock
 
 from tools import agentctl
@@ -133,6 +135,73 @@ class TaskLoopIsolationTest(_MilestoneTestCase):
         recovery = self.agentctl(*args, session="a")
         self.assertIn("auto-closed", recovery.stdout)
         self.assertEqual(agentctl._loop_follow_up_packets(self.root), [])
+
+    def test_cycle_records_only_current_task_reports_not_legacy_or_peer_history(self):
+        self.start("a")
+        args = ("loop", "cycle", "--checkpoint", "pre-finish", "--cycles", "1", "--force")
+        state_path = self.root / ".agent/loops/state.json"
+        for seed_legacy in (False, True):
+            if seed_legacy:
+                state = json.loads(state_path.read_text())
+                state["checkpoints"]["pre-finish"] = {"last_reports": ["legacy/report.md"]}
+                state["checkpoints"]["pre-finish:T-B"] = {"last_reports": ["peer/report.md"]}
+                state_path.write_text(json.dumps(state) + "\n")
+            self.agentctl(*args, session="a")
+            state = json.loads(state_path.read_text())
+            expected = state["checkpoints"]["pre-finish:T-A"]["last_reports"]
+            self.assertTrue(expected)
+            self.assertEqual(state["cycle_runtime"]["last_reports"], expected)
+
+    def test_external_owned_outputs_detect_errors_without_peers_and_invalidate_cache(self):
+        self.agentctl("work", "--agent", "codex", "--auto-create", "--type", "docs",
+                      "--new-id", "T-A", "--title", "external monitor", "--scope", "results/a/",
+                      "--done", "monitor complete", session="a")
+        checkpoint_path = self.root / ".agent/loops/checkpoints.json"
+        checkpoints = json.loads(checkpoint_path.read_text())
+        checkpoints["checkpoints"]["experiment-check"]["strict"] = True
+        checkpoint_path.write_text(json.dumps(checkpoints) + "\n")
+        self.agentctl("refresh", session="a")
+        internal = self.root / "results/a"
+        internal.mkdir(parents=True)
+        (internal / "DONE").touch()
+        with tempfile.TemporaryDirectory(prefix="awk-owned-external-") as directory:
+            external = Path(directory).resolve()
+            policy_path = self.root / ".agent/runtime-policy.json"
+            policy = json.loads(policy_path.read_text())
+            policy["artifact_roots"] = [str(external)]
+            policy_path.write_text(json.dumps(policy) + "\n")
+            own, peer = external / "T-A", external / "T-B"
+            own.mkdir()
+            peer.mkdir()
+            (peer / "ERROR").touch()
+            args = ("loop", "auto", "--checkpoint", "experiment-check", "--once")
+            for declared in (own, own / "ERROR"):
+                with self.subTest(output=declared.name):
+                    outputs, problems = agentctl._validate_run_outputs(
+                        self.root, "T-A", ["results/a/"], [str(declared)])
+                    self.assertFalse(problems)
+                    agentctl._save_runtime_leases(self.root, {"leases": [
+                        {"id": "run-own", "task": "T-A", "kind": "run", "status": "succeeded",
+                         "outputs": outputs},
+                        {"id": "run-peer", "task": "T-B", "kind": "run", "status": "succeeded",
+                         "outputs": [str(peer)]},
+                    ]})
+                    self.agentctl(*args, "--force", session="a")
+                    cached = self.agentctl(*args, session="a")
+                    self.assertIn("skipped", cached.stdout)
+                    (own / "ERROR").touch()
+                    failure = self.agentctl(*args, session="a", expect=1)
+                    self.assertNotIn("skipped", failure.stdout)
+                    state = json.loads((self.root / ".agent/loops/state.json").read_text())
+                    reports = state["checkpoints"]["experiment-check:T-A"]["last_reports"]
+                    text = "\n".join((self.root / path).read_text() for path in reports)
+                    self.assertIn("ERROR markers: 1", text)
+                    self.assertIn(str(own / "ERROR"), text)
+                    self.assertNotIn(str(peer), text)
+                    (own / "ERROR").unlink()
+                    recovery = self.agentctl(*args, session="a")
+                    self.assertIn("auto-closed", recovery.stdout)
+                    self.assertEqual(agentctl._loop_follow_up_packets(self.root), [])
 
 
 class CICommitRangeTest(_MilestoneTestCase):
