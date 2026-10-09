@@ -169,6 +169,12 @@ flowchart LR
   work; `finish` refuses without the former and executes the latter; the
   reviewer reruns it. The deliverable is judged against the contract, never
   against the worker's own summary of it.
+- **Big requests are milestones; only their children are worked.** A
+  `milestone` task is a node of the plan: it cannot be claimed, its children
+  are created with `--parent`, and it closes by itself when the last child
+  passes review, recording which children did. Dependency cycles are
+  refused at creation. `board --tree` shows how far each piece of work is
+  from the goal it serves.
 - **A silent conversation goes stale, not away.** After 30 minutes without
   a heartbeat its claims are flagged. Others see the warning and keep
   working. Taking over requires an explicit `sessions release` with a
@@ -211,7 +217,8 @@ flowchart LR
 | `agentctl finish --summary ...` | run the tests command, record the result, hand the task to review |
 | `agentctl run start -- <command>` | supervised background job; `run list`, `run stop <run-id> --reason "..."` |
 | `agentctl gate approve --task <id> --by <reviewer> --rerun-tests` | independent approval after rerunning the tests command (or `gate reject`) |
-| `agentctl board` | who is doing what |
+| `agentctl task create --type milestone --title "..."` | open a milestone; add work under it with `work --auto-create ... --parent <id>` |
+| `agentctl board` | who is doing what (`--tree`: milestones with their children) |
 | `agentctl doctor` | what is stuck, and how to unstick it |
 | `agentctl sync` | publish this checkout's claims and pick up everyone else's (ledger-only commit, pull, push) |
 
@@ -251,7 +258,7 @@ the board.
 
 ## Status
 
-312 regression tests run on Linux in CI; a Windows job runs the subset that
+323 regression tests run on Linux in CI; a Windows job runs the subset that
 exercises Windows-specific process handling. The coordination guarantees
 were also exercised end to end on a fresh install: concurrent
 conversations, a conversation that died holding a GPU, a project deleted

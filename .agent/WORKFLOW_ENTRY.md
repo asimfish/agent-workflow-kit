@@ -45,6 +45,13 @@ When working in this repository, do this before any edit or mutating command:
    Code and experiment tasks automatically receive a managed worktree; continue
    from the printed path and do not recreate the task in the planning checkout.
 
+   A request too large for one task becomes a `milestone`: create it with
+   `task create --type milestone`, then create each piece of work with
+   `--parent <milestone-id>`. A milestone is never claimed or worked; the tool
+   closes it the moment its last child is approved and lists the children in
+   its completion record. `board --tree` shows the plan as milestones with
+   their children.
+
    `--done` is the Definition of Done and `--tests-cmd` the one command that
    proves it. Write them before the work, not after: the reviewer judges the
    result against the contract, not against your account of it. `finish`
