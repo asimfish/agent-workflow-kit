@@ -50,7 +50,7 @@ class _MilestoneTestCase(unittest.TestCase):
     def setUp(self):
         self.root = Path(tempfile.mkdtemp(prefix="awk-milestone-"))
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        self.git("init", "-q")
+        self.git("init", "-q", "--initial-branch=main")
         self.git("config", "user.email", "agent@example.com")
         self.git("config", "user.name", "Agent Test")
         install = subprocess.run(

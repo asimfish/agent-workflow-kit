@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-10 13:22:56",
+  "updated_at": "2026-10-10 13:32:08",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -699,6 +699,19 @@
       "created_at": "2026-10-10 12:29:54",
       "updated_at": "2026-10-10 12:57:21",
       "claim_id": "d297e02302d97b18ad2020f0fe1ac677"
+    },
+    "TA1E87B810BE4A9B2-001": {
+      "title": "Pin milestone real-sync fixture to main independently of Git defaults",
+      "type": "code",
+      "status": "review",
+      "owner": "milestone-main-fixture-sidecar-codex",
+      "scope": [
+        "tests/test_milestones.py"
+      ],
+      "deps": [],
+      "created_at": "2026-10-10 13:27:45",
+      "updated_at": "2026-10-10 13:32:08",
+      "claim_id": "bddb9df478f1e5289a4ddb17233bc814"
     }
   },
   "updated": ""
