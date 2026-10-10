@@ -698,7 +698,7 @@ def _git_merge_file(base: str, ours: str, theirs: str) -> tuple[str, bool]:
             paths.append(str(path))
         proc = subprocess.run(
             ["git", "merge-file", "-p", "-L", "ours", "-L", "base", "-L", "theirs", *paths],
-            text=True, capture_output=True, timeout=60,
+            text=True, encoding="utf-8", capture_output=True, timeout=60,
         )
     # merge-file exits with the number of conflicts (negative on error)
     return proc.stdout, proc.returncode != 0

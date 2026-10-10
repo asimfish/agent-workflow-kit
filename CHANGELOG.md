@@ -15,7 +15,8 @@ pull requests.
   remote failures and claim revocation during sync.
 - Task Board merging and view rebuilding preserve non-generated plan notes and
   instructions. Prose conflicts remain explicit; peer rows alone do not require
-  a new read receipt.
+  a new read receipt. Git text merges explicitly decode UTF-8, preserving Chinese
+  instructions even when the process locale defaults to another encoding.
 
 ## 0.5.x — 2026-08
 

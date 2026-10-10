@@ -90,6 +90,39 @@ class PlanBoardProseTest(unittest.TestCase):
             agentctl._render_task_views(root, board)
             self.assertEqual(path.read_text(), rendered)
 
+    def test_chinese_instructions_survive_non_utf8_default_decoder(self):
+        # Exercise real Git in a fresh interpreter, not a mocked decoder.
+        env = os.environ.copy()
+        env.update(LC_ALL="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+        script = r'''
+import json
+import locale
+from tools import agentctl
+note = "Format: \u4e2d\u6587\u6307\u4ee4\u5fc5\u987b\u4fdd\u7559\u3002\n"
+base = "# Plan\n\n## Task Board\n- [ ] T-A - own (owner: codex)\n\n## Notes\nReview first.\n"
+theirs = base.replace("## Task Board\n", "## Task Board\n" + note)
+same, same_conflict = agentctl._git_merge_file(note, note, note)
+merged, conflict = agentctl._merge_project_plan(base, base, theirs)
+print(json.dumps({"encoding": locale.getpreferredencoding(False), "same": same,
+                  "same_conflict": same_conflict, "merged": merged, "conflict": conflict,
+                  "receipt_changed": agentctl._receipt_view(".agent/PROJECT_PLAN.md", base.encode(), "T-A")
+                      != agentctl._receipt_view(".agent/PROJECT_PLAN.md", merged.encode(), "T-A")}))
+'''
+        proc = subprocess.run(
+            [sys.executable, "-c", script], cwd=KIT, env=env,
+            text=True, encoding="utf-8", capture_output=True, timeout=60,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        if os.name != "nt":
+            self.assertNotEqual(result["encoding"].lower().replace("-", ""), "utf8")
+        note = "Format: \u4e2d\u6587\u6307\u4ee4\u5fc5\u987b\u4fdd\u7559\u3002\n"
+        self.assertFalse(result["same_conflict"])
+        self.assertEqual(result["same"], note)
+        self.assertFalse(result["conflict"])
+        self.assertIn(note, result["merged"])
+        self.assertTrue(result["receipt_changed"])
+
 
 class TwoCheckoutsOneRemoteTest(unittest.TestCase):
     """Machine A and machine B share a bare origin; each has the kit installed."""
