@@ -36,10 +36,10 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] TA1E87B810BE4A9B2-001 - Pin milestone real-sync fixture to main independently of Git defaults (owner: milestone-main-fixture-sidecar-codex)
-- [ ] TBB6EC3AD9A3FCCD7-001 - Independent sync safety review exact 2fc8ac4 and unchanged eval (owner: independent-sync-reviewer-5a24a0be)
+- [x] TA1E87B810BE4A9B2-001 - Pin milestone real-sync fixture to main independently of Git defaults (owner: milestone-main-fixture-sidecar-codex)
+- [x] TBB6EC3AD9A3FCCD7-001 - Independent sync safety review exact 2fc8ac4 and unchanged eval (owner: independent-sync-reviewer-5a24a0be)
 - [x] T64B983E7A6C13C25-001 - Run installed-project Git sync regressions on exact-head Windows CI (owner: windows-sync-ci-sidecar-codex)
-- [ ] TC86DDDF6B83D255E-001 - Make first task-branch sync safe and usable in managed worktrees (owner: codex)
+- [x] TC86DDDF6B83D255E-001 - Make first task-branch sync safe and usable in managed worktrees (owner: codex)
 - [x] T1262BE3589E9D0D6-001 - Independent final review 0f7c8dc isolation authority and unchanged eval (owner: independent-isolation-reviewer-5a24a0be)
 - [x] T92F59D61AE852113-001 - Clarify protocol 3 claim recovery and task-local loops in workflow entries (owner: protocol3-entry-docs-sidecar-codex)
 - [x] T99FC40EB5DD86230-002 - CI validates PR head instead of synthetic merge commit (owner: ci-head-checkout-sidecar-codex)
