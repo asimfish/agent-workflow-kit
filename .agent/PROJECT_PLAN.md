@@ -85,6 +85,7 @@ instead of relying on chat memory or repeated human prompts.
 - [x] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) (owner: cursor)
 - [x] T99FC40EB5DD86230-002 - CI validates PR head instead of synthetic merge commit (owner: ci-head-checkout-sidecar-codex)
 - [x] T92F59D61AE852113-001 - Clarify protocol 3 claim recovery and task-local loops in workflow entries (owner: protocol3-entry-docs-sidecar-codex)
+- [ ] T64B983E7A6C13C25-001 - Run installed-project Git sync regressions on exact-head Windows CI (owner: windows-sync-ci-sidecar-codex)
 
 ## Agent Allocation
 

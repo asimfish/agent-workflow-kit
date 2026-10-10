@@ -673,6 +673,19 @@
       "created_at": "2026-10-10 12:02:14",
       "updated_at": "2026-10-10 12:27:07",
       "claim_id": "58bb32f422030ba7f27a850f3f2ce68e"
+    },
+    "T64B983E7A6C13C25-001": {
+      "title": "Run installed-project Git sync regressions on exact-head Windows CI",
+      "type": "code",
+      "status": "review",
+      "owner": "windows-sync-ci-sidecar-codex",
+      "scope": [
+        ".github/workflows/agent-workflow-check.yml"
+      ],
+      "deps": [],
+      "created_at": "2026-10-10 12:14:44",
+      "updated_at": "2026-10-10 12:17:15",
+      "claim_id": "dab446546492f3738cb001e36882a446"
     }
   },
   "updated": ""
