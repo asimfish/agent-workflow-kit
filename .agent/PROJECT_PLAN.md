@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TC86DDDF6B83D255E-001 - Make first task-branch sync safe and usable in managed worktrees (owner: codex)
 - [x] T1262BE3589E9D0D6-001 - Independent final review 0f7c8dc isolation authority and unchanged eval (owner: independent-isolation-reviewer-5a24a0be)
 - [x] T054FC882C66C691A-001 - Isolate task claims and loop feedback across concurrent conversations (owner: codex)
 - [x] T6610CD0566A2EF36-003 - Independent PR65 re-review candidate 09a3bf1 and unchanged baseline eval (owner: independent-reviewer-038-codex)

@@ -165,7 +165,10 @@ Each worker writes only its scope. The supervisor owns manifest merge and final 
 When workers sit on different machines, each claims in its own clone and
 publishes the claim with `agentctl sync` (ledger-only commit, pull with the
 ledger merge driver, push); `work` and `finish` remind them when a remote is
-configured. Other clones see the task as `in_progress` after their next pull
+configured. On a new managed task branch, the first sync reads a verified
+remote default-branch base and publishes only its own branch; later syncs read
+that task branch. It never redirects a worker push to main. Other clones see
+the task as `in_progress` after fetching and integrating its published ledger
 (`board` marks it `[elsewhere, ...]`) and can only take it with `--takeover
 --reason`. See "Several Machines, One Remote" in
 `docs/multi-session-execution.md`.
