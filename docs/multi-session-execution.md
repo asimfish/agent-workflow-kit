@@ -336,6 +336,11 @@ edits remain in Git's stash and conflict stages for inspection; resolve them
 before continuing. Sync never resolves a conflict by dropping another agent's
 changes.
 
+Receipt keys use repository-relative forward-slash paths on every platform.
+An older Windows session with backslash keys must re-read its required documents
+and run `refresh` once after upgrading. The controller does not silently accept
+or rewrite that old receipt; claim authority is still checked before refresh.
+
 **Ledger files merge per task, not per line.** `agentctl init` commits a
 `.gitattributes` that routes `board.json`, `TASKS.md`, `PROJECT_PLAN.md`,
 `agents.json`, and `loops/state.json` to the `agent-ledger` merge driver

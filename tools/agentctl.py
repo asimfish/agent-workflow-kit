@@ -2421,7 +2421,7 @@ def _hash_docs(root: Path, task: str | None) -> dict:
     hashes = {}
     for d in _doc_hash_targets(root, task):
         if d.is_file():
-            rel = str(d.relative_to(root))
+            rel = d.relative_to(root).as_posix()
             data = d.read_bytes()
             if task and rel in scoped_views:
                 data = _receipt_view(rel, data, task)

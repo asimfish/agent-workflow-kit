@@ -17,6 +17,10 @@ pull requests.
   instructions. Prose conflicts remain explicit; peer rows alone do not require
   a new read receipt. Git text merges explicitly decode UTF-8, preserving Chinese
   instructions even when the process locale defaults to another encoding.
+- Windows document receipt keys now use canonical forward-slash paths, so peer
+  updates receive the same task-local filtering as on other platforms. Older
+  backslash-key receipts require re-reading and an explicit `refresh` once;
+  own-task and human-direction changes remain guarded.
 
 ## 0.5.x — 2026-08
 

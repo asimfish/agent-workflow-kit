@@ -22,7 +22,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from unittest import mock
 
 from tools import agentctl
 
@@ -122,6 +123,62 @@ print(json.dumps({"encoding": locale.getpreferredencoding(False), "same": same,
         self.assertFalse(result["conflict"])
         self.assertIn(note, result["merged"])
         self.assertTrue(result["receipt_changed"])
+
+
+class WindowsReceiptPathsTest(unittest.TestCase):
+    def hashes(self, plan, index):
+        paths = []
+        for name, data in ((".agent/PROJECT_PLAN.md", plan), (".agent/TASKS.md", index)):
+            path = mock.Mock()
+            path.is_file.return_value = True
+            path.relative_to.return_value = PureWindowsPath(name)
+            path.read_bytes.return_value = data.encode("utf-8")
+            paths.append(path)
+        # Only model the native path API; keep the receipt filtering real.
+        with mock.patch.object(agentctl, "_doc_hash_targets", return_value=paths):
+            return agentctl._hash_docs(Path("."), "T-A")
+
+    def plan(self):
+        return ("# Plan\n\nGoal: collect\n\n## Task Board\n"
+                "- [ ] T-A - own (owner: codex)\n"
+                "- [ ] T-B - peer (owner: cursor)\n\n"
+                "Format: preserve human direction.\n")
+
+    def index(self):
+        return ("# Tasks\n\n| ID | Title | Status | Owner |\n"
+                "|---|---|---|---|\n| T-A | own | ready | codex |\n"
+                "| T-B | peer | ready | cursor |\n")
+
+    def test_windows_paths_use_canonical_keys_and_ignore_only_peer_rows(self):
+        before = self.hashes(self.plan(), self.index())
+        self.assertEqual(set(before), {".agent/PROJECT_PLAN.md", ".agent/TASKS.md"})
+        peer_plan = self.plan().replace("[ ] T-B", "[x] T-B")
+        peer_index = self.index().replace("peer | ready", "peer | done")
+        self.assertEqual(self.hashes(peer_plan, peer_index), before)
+
+    def test_windows_own_rows_and_human_instructions_still_invalidate(self):
+        before = self.hashes(self.plan(), self.index())
+        own_plan = self.plan().replace("[ ] T-A", "[x] T-A")
+        own_index = self.index().replace("own | ready", "own | review")
+        self.assertNotEqual(self.hashes(own_plan, self.index())[".agent/PROJECT_PLAN.md"],
+                            before[".agent/PROJECT_PLAN.md"])
+        self.assertNotEqual(self.hashes(self.plan(), own_index)[".agent/TASKS.md"],
+                            before[".agent/TASKS.md"])
+        direction = self.plan().replace("Goal: collect", "Goal: validate")
+        self.assertNotEqual(self.hashes(direction, self.index())[".agent/PROJECT_PLAN.md"],
+                            before[".agent/PROJECT_PLAN.md"])
+
+    def test_legacy_windows_receipt_requires_explicit_refresh(self):
+        current = self.hashes(self.plan(), self.index())
+        old = {key.replace("/", "\\"): value for key, value in current.items()}
+        session = {"task": "T-A", "doc_hashes": old.copy()}
+        with mock.patch.object(agentctl, "_load_session", return_value=session), \
+                mock.patch.object(agentctl, "_session_claim_error", return_value=""), \
+                mock.patch.object(agentctl, "_hash_docs", return_value=current):
+            problems = agentctl._check_receipt(Path("."))
+        self.assertTrue(problems)
+        self.assertIn("refresh", "; ".join(problems))
+        self.assertEqual(session["doc_hashes"], old)
 
 
 class TwoCheckoutsOneRemoteTest(unittest.TestCase):

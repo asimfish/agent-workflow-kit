@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-10 12:57:21",
+  "updated_at": "2026-10-10 13:22:56",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -660,7 +660,7 @@
     "TC86DDDF6B83D255E-001": {
       "title": "Make first task-branch sync safe and usable in managed worktrees",
       "type": "code",
-      "status": "done",
+      "status": "review",
       "owner": "codex",
       "scope": [
         "tools/agentctl.py",
@@ -671,7 +671,7 @@
       ],
       "deps": [],
       "created_at": "2026-10-10 12:02:14",
-      "updated_at": "2026-10-10 12:54:15",
+      "updated_at": "2026-10-10 13:22:56",
       "claim_id": "58bb32f422030ba7f27a850f3f2ce68e"
     },
     "T64B983E7A6C13C25-001": {
