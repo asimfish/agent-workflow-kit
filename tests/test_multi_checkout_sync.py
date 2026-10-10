@@ -22,7 +22,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
+from unittest import mock
 
 from tools import agentctl
 
@@ -44,6 +45,140 @@ IDENTITY_ENV = (
     "AGENT_WORKFLOW_PARENT_SESSION_KEY",
     "AGENT_WORKFLOW_SESSION_ISOLATION_ERROR",
 )
+
+
+class PlanBoardProseTest(unittest.TestCase):
+    def plan(self):
+        return ("# Plan\n\nGoal: collect\n\n## Task Board\n"
+                "- [ ] T-1 - first (owner: codex)\n\n"
+                "Format: keep task IDs stable.\nUse [x] only after acceptance.\n\n"
+                "## Notes\nKeep human direction.\n")
+
+    def test_peer_rows_preserve_board_prose_and_own_receipt(self):
+        base = self.plan()
+        ours = base.replace("## Task Board\n", "## Task Board\n- [ ] T-A - own (owner: codex)\n")
+        theirs = base.replace("## Task Board\n", "## Task Board\n- [ ] T-B - peer (owner: cursor)\n")
+        merged, conflicted = agentctl._merge_project_plan(base, ours, theirs)
+        self.assertFalse(conflicted)
+        self.assertIn("Format: keep task IDs stable.", merged)
+        self.assertIn("Use [x] only after acceptance.", merged)
+        self.assertIn("T-B - peer", merged)
+        self.assertEqual(agentctl._receipt_view(".agent/PROJECT_PLAN.md", ours.encode(), "T-A"),
+                         agentctl._receipt_view(".agent/PROJECT_PLAN.md", merged.encode(), "T-A"))
+
+    def test_competing_board_instructions_remain_a_real_conflict(self):
+        base = self.plan()
+        ours = base.replace("Use [x] only after acceptance.", "Use [x] after review.")
+        theirs = base.replace("Use [x] only after acceptance.", "Use [x] after publication.")
+        merged, conflicted = agentctl._merge_project_plan(base, ours, theirs)
+        self.assertTrue(conflicted)
+        self.assertIn("<<<<<<<", merged)
+        self.assertIn("Use [x] after review.", merged)
+        self.assertIn("Use [x] after publication.", merged)
+
+    def test_render_changes_only_generated_rows_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory(prefix="awk-plan-prose-") as tmp:
+            root = Path(tmp)
+            path = root / ".agent/PROJECT_PLAN.md"
+            path.parent.mkdir()
+            path.write_text(self.plan())
+            board = {"tasks": {"T-1": {"status": "done", "owner": "codex", "title": "first"}}}
+            agentctl._render_task_views(root, board)
+            rendered = path.read_text()
+            self.assertIn("- [x] T-1 - first (owner: codex)", rendered)
+            self.assertIn("Format: keep task IDs stable.\nUse [x] only after acceptance.\n\n", rendered)
+            self.assertIn("## Notes\nKeep human direction.\n", rendered)
+            agentctl._render_task_views(root, board)
+            self.assertEqual(path.read_text(), rendered)
+
+    def test_chinese_instructions_survive_non_utf8_default_decoder(self):
+        # Exercise real Git in a fresh interpreter, not a mocked decoder.
+        env = os.environ.copy()
+        env.update(LC_ALL="C", PYTHONUTF8="0", PYTHONCOERCECLOCALE="0")
+        script = r'''
+import json
+import locale
+from tools import agentctl
+note = "Format: \u4e2d\u6587\u6307\u4ee4\u5fc5\u987b\u4fdd\u7559\u3002\n"
+base = "# Plan\n\n## Task Board\n- [ ] T-A - own (owner: codex)\n\n## Notes\nReview first.\n"
+theirs = base.replace("## Task Board\n", "## Task Board\n" + note)
+same, same_conflict = agentctl._git_merge_file(note, note, note)
+merged, conflict = agentctl._merge_project_plan(base, base, theirs)
+print(json.dumps({"encoding": locale.getpreferredencoding(False), "same": same,
+                  "same_conflict": same_conflict, "merged": merged, "conflict": conflict,
+                  "receipt_changed": agentctl._receipt_view(".agent/PROJECT_PLAN.md", base.encode(), "T-A")
+                      != agentctl._receipt_view(".agent/PROJECT_PLAN.md", merged.encode(), "T-A")}))
+'''
+        proc = subprocess.run(
+            [sys.executable, "-c", script], cwd=KIT, env=env,
+            text=True, encoding="utf-8", capture_output=True, timeout=60,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        result = json.loads(proc.stdout)
+        if os.name != "nt":
+            self.assertNotEqual(result["encoding"].lower().replace("-", ""), "utf8")
+        note = "Format: \u4e2d\u6587\u6307\u4ee4\u5fc5\u987b\u4fdd\u7559\u3002\n"
+        self.assertFalse(result["same_conflict"])
+        self.assertEqual(result["same"], note)
+        self.assertFalse(result["conflict"])
+        self.assertIn(note, result["merged"])
+        self.assertTrue(result["receipt_changed"])
+
+
+class WindowsReceiptPathsTest(unittest.TestCase):
+    def hashes(self, plan, index):
+        paths = []
+        for name, data in ((".agent/PROJECT_PLAN.md", plan), (".agent/TASKS.md", index)):
+            path = mock.Mock()
+            path.is_file.return_value = True
+            path.relative_to.return_value = PureWindowsPath(name)
+            path.read_bytes.return_value = data.encode("utf-8")
+            paths.append(path)
+        # Only model the native path API; keep the receipt filtering real.
+        with mock.patch.object(agentctl, "_doc_hash_targets", return_value=paths):
+            return agentctl._hash_docs(Path("."), "T-A")
+
+    def plan(self):
+        return ("# Plan\n\nGoal: collect\n\n## Task Board\n"
+                "- [ ] T-A - own (owner: codex)\n"
+                "- [ ] T-B - peer (owner: cursor)\n\n"
+                "Format: preserve human direction.\n")
+
+    def index(self):
+        return ("# Tasks\n\n| ID | Title | Status | Owner |\n"
+                "|---|---|---|---|\n| T-A | own | ready | codex |\n"
+                "| T-B | peer | ready | cursor |\n")
+
+    def test_windows_paths_use_canonical_keys_and_ignore_only_peer_rows(self):
+        before = self.hashes(self.plan(), self.index())
+        self.assertEqual(set(before), {".agent/PROJECT_PLAN.md", ".agent/TASKS.md"})
+        peer_plan = self.plan().replace("[ ] T-B", "[x] T-B")
+        peer_index = self.index().replace("peer | ready", "peer | done")
+        self.assertEqual(self.hashes(peer_plan, peer_index), before)
+
+    def test_windows_own_rows_and_human_instructions_still_invalidate(self):
+        before = self.hashes(self.plan(), self.index())
+        own_plan = self.plan().replace("[ ] T-A", "[x] T-A")
+        own_index = self.index().replace("own | ready", "own | review")
+        self.assertNotEqual(self.hashes(own_plan, self.index())[".agent/PROJECT_PLAN.md"],
+                            before[".agent/PROJECT_PLAN.md"])
+        self.assertNotEqual(self.hashes(self.plan(), own_index)[".agent/TASKS.md"],
+                            before[".agent/TASKS.md"])
+        direction = self.plan().replace("Goal: collect", "Goal: validate")
+        self.assertNotEqual(self.hashes(direction, self.index())[".agent/PROJECT_PLAN.md"],
+                            before[".agent/PROJECT_PLAN.md"])
+
+    def test_legacy_windows_receipt_requires_explicit_refresh(self):
+        current = self.hashes(self.plan(), self.index())
+        old = {key.replace("/", "\\"): value for key, value in current.items()}
+        session = {"task": "T-A", "doc_hashes": old.copy()}
+        with mock.patch.object(agentctl, "_load_session", return_value=session), \
+                mock.patch.object(agentctl, "_session_claim_error", return_value=""), \
+                mock.patch.object(agentctl, "_hash_docs", return_value=current):
+            problems = agentctl._check_receipt(Path("."))
+        self.assertTrue(problems)
+        self.assertIn("refresh", "; ".join(problems))
+        self.assertEqual(session["doc_hashes"], old)
 
 
 class TwoCheckoutsOneRemoteTest(unittest.TestCase):
@@ -151,6 +286,163 @@ class TwoCheckoutsOneRemoteTest(unittest.TestCase):
         return self.task_id(root, title)
 
     # --- tests ---------------------------------------------------------------------
+
+    def test_first_sync_in_managed_worktree_uses_default_base_without_pushing_it(self):
+        created = self.agentctl(
+            self.a, "conv-a", "work", "--agent", "codex", "--auto-create",
+            "--type", "code", "--title", "first managed sync", "--scope", "src/a/",
+            "--done", "first task branch publishes without changing main",
+        )
+        leases = json.loads(self.agentctl(self.a, "conv-a", "worktree", "list", "--json").stdout)
+        self.assertEqual(len(leases["worktrees"]), 1, leases)
+        task = leases["worktrees"][0]["task"]
+        root = Path(leases["worktrees"][0]["path"])
+        self.assertIn(str(root), created.stdout)
+        self.agentctl(root, "conv-a", "work", "--agent", "codex", "--task", task)
+        branch = self.git(root, "branch", "--show-current")
+        main_before = self.git(self.origin, "rev-parse", "refs/heads/main")
+        local_note = root / ".gitignore"
+        local_note.write_text(local_note.read_text() + "\n# keep my local edit\n")
+
+        first = self.agentctl(root, "conv-a", "sync", "--no-push")
+        self.assertIn("pulled origin/main", first.stdout)
+        self.assertEqual(self.git(self.origin, "rev-parse", "refs/heads/main"), main_before)
+        self.assertNotEqual(self.git(self.origin, "rev-parse", f"refs/heads/{branch}", check=False).returncode, 0)
+        self.assertIn("# keep my local edit", local_note.read_text())
+
+        published = self.agentctl(root, "conv-a", "sync")
+        self.assertIn(f"pushed {branch} to origin", published.stdout)
+        self.assertEqual(self.git(self.origin, "rev-parse", "refs/heads/main"), main_before)
+        self.assertEqual(self.git(self.origin, "rev-parse", f"refs/heads/{branch}"), self.git(root, "rev-parse", "HEAD"))
+        self.assertIn(task, self.board(root))
+        self.assertIn("# keep my local edit", local_note.read_text())
+        repeat = self.agentctl(root, "conv-a", "sync")
+        self.assertIn(f"pulled origin/{branch}", repeat.stdout)
+
+    def test_sync_refuses_cross_branch_destination_before_committing(self):
+        self.git(self.a, "switch", "-q", "-c", "feature/sync-a")
+        task = self.open_task(self.a, "conv-a", "codex", "isolated branch", "docs/a/")
+        before = self.git(self.a, "rev-parse", "HEAD")
+        ledger = (self.a / ".agent/board.json").read_bytes()
+        rejected = self.agentctl(self.a, "conv-a", "sync", "--branch", "main", expect=1)
+        self.assertIn("destination different", rejected.stderr)
+        self.assertEqual(self.git(self.a, "rev-parse", "HEAD"), before)
+        self.assertEqual(self.git(self.origin, "rev-parse", "refs/heads/main"), before)
+        self.assertEqual((self.a / ".agent/board.json").read_bytes(), ledger)
+        self.assertEqual(self.board(self.a)[task]["status"], "in_progress")
+
+    def test_sync_remote_failures_do_not_commit_or_fall_back(self):
+        self.git(self.a, "switch", "-q", "-c", "feature/sync-a")
+        self.open_task(self.a, "conv-a", "codex", "remote failures", "docs/a/")
+        before = self.git(self.a, "rev-parse", "HEAD")
+        cases = (
+            (str(self.origin), "configured remote name"),
+            ("unknown", "configured remote name"),
+        )
+        for remote, message in cases:
+            with self.subTest(remote=remote):
+                rejected = self.agentctl(self.a, "conv-a", "sync", "--remote", remote, expect=1)
+                self.assertIn(message, rejected.stderr)
+                self.assertEqual(self.git(self.a, "rev-parse", "HEAD"), before)
+        self.git(self.a, "remote", "set-url", "origin", str(self.base / "unreachable.git"))
+        rejected = self.agentctl(self.a, "conv-a", "sync", expect=1)
+        self.assertIn("cannot inspect remote refs", rejected.stderr)
+        self.assertEqual(self.git(self.a, "rev-parse", "HEAD"), before)
+
+    def test_new_branch_refuses_unresolved_default_and_unrelated_history(self):
+        self.git(self.a, "switch", "-q", "-c", "feature/sync-a")
+        self.open_task(self.a, "conv-a", "codex", "verify sync base", "docs/a/")
+        before = self.git(self.a, "rev-parse", "HEAD")
+        self.git(self.origin, "symbolic-ref", "HEAD", "refs/heads/missing")
+        rejected = self.agentctl(self.a, "conv-a", "sync", expect=1)
+        self.assertIn("resolvable remote default", rejected.stderr)
+        self.assertEqual(self.git(self.a, "rev-parse", "HEAD"), before)
+
+        # A configured remote can be repointed to another repository. Never
+        # replay this task onto its unrelated root just because HEAD exists.
+        self.git(self.b, "switch", "-q", "--orphan", "other-root")
+        self.git(self.b, "-c", "core.hooksPath=", "commit", "-q", "--allow-empty", "-m", "fixture: other repository root")
+        self.git(self.b, "-c", "core.hooksPath=", "push", "-q", "origin", "HEAD:other-root")
+        self.git(self.origin, "symbolic-ref", "HEAD", "refs/heads/other-root")
+        rejected = self.agentctl(self.a, "conv-a", "sync", expect=1)
+        self.assertIn("no shared history", rejected.stderr)
+        self.assertEqual(self.git(self.a, "rev-parse", "HEAD"), before)
+        self.assertEqual(self.git(self.origin, "rev-parse", "refs/heads/main"), before)
+
+    def test_sync_does_not_recreate_a_deleted_published_branch(self):
+        self.git(self.a, "switch", "-q", "-c", "feature/sync-a")
+        self.open_task(self.a, "conv-a", "codex", "published branch removed", "docs/a/")
+        self.agentctl(self.a, "conv-a", "sync")
+        before = self.git(self.a, "rev-parse", "HEAD")
+        self.assertEqual(self.git(self.a, "rev-parse", "refs/remotes/origin/feature/sync-a"), before)
+        self.git(self.origin, "update-ref", "-d", "refs/heads/feature/sync-a")
+        rejected = self.agentctl(self.a, "conv-a", "sync", expect=1)
+        self.assertIn("previously published branch", rejected.stderr)
+        self.assertEqual(self.git(self.a, "rev-parse", "HEAD"), before)
+        self.assertNotEqual(self.git(self.origin, "rev-parse", "refs/heads/feature/sync-a", check=False).returncode, 0)
+
+    def test_autostash_conflict_stops_sync_even_when_rebase_exits_zero(self):
+        self.open_task(self.a, "conv-a", "codex", "autostash conflict", "docs/a/")
+        self.agentctl(self.a, "conv-a", "sync")
+        self.git(self.b, "pull", "-q", "--ff-only", "origin", "main")
+        for root, marker in ((self.a, "local edit"), (self.b, "remote edit")):
+            path = root / ".gitignore"
+            path.write_text(path.read_text() + f"\n# {marker}\n")
+        # Inject an external author's tracked edit; it is not this task's work.
+        self.git(self.b, "add", ".gitignore")
+        self.git(self.b, "-c", "core.hooksPath=", "commit", "-q", "-m", "chore(fixture): remote ignore edit\n\nRefs: T-000")
+        self.git(self.b, "-c", "core.hooksPath=", "push", "-q", "origin", "main")
+        remote_before = self.git(self.origin, "rev-parse", "refs/heads/main")
+        rejected = self.agentctl(self.a, "conv-a", "sync", "--no-push", expect=1)
+        self.assertIn("autostash left unresolved conflicts", rejected.stderr)
+        self.assertIn(".gitignore", self.git(self.a, "diff", "--name-only", "--diff-filter=U"))
+        self.assertIn("local edit", self.git(self.a, "stash", "show", "-p"))
+        self.assertEqual(self.git(self.origin, "rev-parse", "refs/heads/main"), remote_before)
+
+    def test_sync_rechecks_claim_after_remote_takeover(self):
+        task = self.open_task(self.a, "conv-a", "codex", "takeover during sync", "docs/a/")
+        self.agentctl(self.a, "conv-a", "sync")
+        self.git(self.b, "pull", "-q", "--ff-only", "origin", "main")
+        self.agentctl(self.b, "conv-b", "work", "--agent", "codex", "--task", task,
+                      "--takeover", "--reason", "fixture: old holder stopped and outputs inspected")
+        self.agentctl(self.b, "conv-b", "sync")
+        remote_before = self.git(self.origin, "rev-parse", "refs/heads/main")
+        rejected = self.agentctl(self.a, "conv-a", "sync", expect=1)
+        self.assertIn("claim authority changed", rejected.stderr)
+        self.assertEqual(self.git(self.origin, "rev-parse", "refs/heads/main"), remote_before)
+        self.assertEqual(self.board(self.a)[task]["claim_id"], self.board(self.b)[task]["claim_id"])
+
+    def assert_sync_rechecks_remote_instruction(self, relative):
+        self.open_task(self.a, "conv-a", "codex", "read receipt at sync", "docs/a/")
+        self.agentctl(self.a, "conv-a", "sync")
+        self.git(self.b, "pull", "-q", "--ff-only", "origin", "main")
+        task_b = self.open_task(self.b, "conv-b", "cursor", "update project direction", ".agent/")
+        doc = self.b / relative
+        marker = "Pause publication and reread this instruction before continuing."
+        doc.write_text(doc.read_text() + f"\n## Updated Human Direction\n\n{marker}\n")
+        self.agentctl(self.b, "conv-b", "refresh")
+        self.agentctl(self.b, "conv-b", "finish", "--done", "fixture direction recorded",
+                      "--summary", "updated direction for review", "--tests", "fixture direction edit")
+        self.git_as(self.b, "conv-b", "add", ".agent")
+        self.git_as(self.b, "conv-b", "commit", "-q", "-m", f"docs(fixture): updated direction\n\nRefs: {task_b}")
+        self.git_as(self.b, "conv-b", "push", "-q", "origin", "HEAD:main")
+        self.agentctl(self.a, "conv-a", "note", "queued local progress before new direction")
+        remote_before = self.git(self.origin, "rev-parse", "refs/heads/main")
+
+        rejected = self.agentctl(self.a, "conv-a", "sync", expect=1)
+        self.assertIn("re-read them then run 'agentctl refresh'", rejected.stderr)
+        self.assertEqual(self.git(self.origin, "rev-parse", "refs/heads/main"), remote_before)
+        self.assertIn("queued local progress", (self.a / ".agent/logs/progress.md").read_text())
+        self.assertIn(marker, (self.a / relative).read_text())
+        self.agentctl(self.a, "conv-a", "refresh")
+        self.agentctl(self.a, "conv-a", "sync")
+        self.assertEqual(self.git(self.origin, "rev-parse", "refs/heads/main"), self.git(self.a, "rev-parse", "HEAD"))
+
+    def test_sync_rechecks_receipt_after_remote_rule_change(self):
+        self.assert_sync_rechecks_remote_instruction(".agent/rules/github-standards.md")
+
+    def test_sync_rechecks_receipt_after_remote_plan_direction_change(self):
+        self.assert_sync_rechecks_remote_instruction(".agent/PROJECT_PLAN.md")
 
     def test_concurrent_milestone_children_survive_real_sync(self):
         self.agentctl(self.a, "conv-a", "task", "create", "--id", "M-1",

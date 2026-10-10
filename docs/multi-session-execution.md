@@ -303,6 +303,44 @@ ledger data, commits with a `Refs:` trailer for the active task, pulls with
 rebase, and pushes; a staged path that is not ledger data makes it refuse,
 and unstaged non-data changes under `.agent/` are named and left alone.
 
+**A new task branch can sync before it exists remotely.** `sync` first checks
+the configured remote's advertised refs. If the task branch has never been
+published, it fetches the remote default branch, verifies shared history, and
+rebases onto that exact fetched commit. It then publishes only the checked-out
+task branch, never the default branch. `--no-push` performs the same integration
+without creating a remote task branch. A repeated sync reads the now-published
+task branch. A missing previously published branch, unreachable remote,
+unresolvable default, or unrelated history stops before committing the ledger.
+`--remote` must name a configured remote; `--branch` cannot redirect a checkout
+to another branch. Use the reviewed merge-back path rather than
+`sync --branch main` from a worker branch.
+
+Branch publication is not a project-wide live board: another clone must fetch
+and integrate the branch's ledger to learn its claims. Shared Git worktrees also
+coordinate through their common local session registry; independent clones do
+not. A supervisor collects task records through the existing reconciliation
+workflow. Do not infer that a successful feature-branch push updates main or
+every other worker's snapshot.
+
+Only task rows in the plan's Task Board are generated. Its other lines,
+including human notes and format rules, survive merging and view rebuilding.
+Competing edits to that prose remain explicit Git conflicts, not a discarded
+instruction or an automatically selected winner.
+
+After integration, `sync` checks claim authority and the task's read receipt
+again. Changed goals, rules or own-task instructions require re-reading them
+and `refresh` before publication; unrelated task rows do not invalidate the
+receipt. An autostash conflict
+stops before rendering views or pushing, even when Git returned zero. The local
+edits remain in Git's stash and conflict stages for inspection; resolve them
+before continuing. Sync never resolves a conflict by dropping another agent's
+changes.
+
+Receipt keys use repository-relative forward-slash paths on every platform.
+An older Windows session with backslash keys must re-read its required documents
+and run `refresh` once after upgrading. The controller does not silently accept
+or rewrite that old receipt; claim authority is still checked before refresh.
+
 **Ledger files merge per task, not per line.** `agentctl init` commits a
 `.gitattributes` that routes `board.json`, `TASKS.md`, `PROJECT_PLAN.md`,
 `agents.json`, and `loops/state.json` to the `agent-ledger` merge driver

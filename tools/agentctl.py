@@ -680,7 +680,12 @@ def _split_plan(text: str) -> tuple[str, list[str], str]:
     nxt = re.search(r"^##\s+", rest, flags=re.M)
     section = rest[: nxt.start()] if nxt else rest
     after = rest[nxt.start():] if nxt else ""
-    return text[:content_start], [l for l in section.splitlines() if l.strip()], after
+    return text[:content_start], section.splitlines(), after
+
+
+def _task_board_prose(lines: list[str]) -> str:
+    """Keep every non-generated line, including human instructions and spacing."""
+    return "\n".join(line for line in lines if not _PLAN_ROW_RE.match(line)) + "\n"
 
 
 def _git_merge_file(base: str, ours: str, theirs: str) -> tuple[str, bool]:
@@ -693,7 +698,7 @@ def _git_merge_file(base: str, ours: str, theirs: str) -> tuple[str, bool]:
             paths.append(str(path))
         proc = subprocess.run(
             ["git", "merge-file", "-p", "-L", "ours", "-L", "base", "-L", "theirs", *paths],
-            text=True, capture_output=True, timeout=60,
+            text=True, encoding="utf-8", capture_output=True, timeout=60,
         )
     # merge-file exits with the number of conflicts (negative on error)
     return proc.stdout, proc.returncode != 0
@@ -706,10 +711,13 @@ def _merge_project_plan(base_text: str, ours_text: str, theirs_text: str) -> tup
     before, conflict_before = _git_merge_file(b_before, o_before, t_before)
     after, conflict_after = _git_merge_file(b_after, o_after, t_after)
     _prefix, rows = _merge_keyed_lines(b_rows, o_rows, t_rows, _PLAN_ROW_RE, _better_plan_row)
-    if not before.endswith("\n"):
+    prose, conflict_prose = _git_merge_file(
+        _task_board_prose(b_rows), _task_board_prose(o_rows), _task_board_prose(t_rows),
+    )
+    if rows and not before.endswith("\n"):
         before += "\n"
-    body = before + "\n".join(rows) + ("\n\n" if rows else "\n") + after.lstrip("\n")
-    return body, conflict_before or conflict_after
+    body = before + "\n".join(rows) + prose + after
+    return body, conflict_before or conflict_after or conflict_prose
 
 
 def _git_run(root: Path, *args: str) -> subprocess.CompletedProcess:
@@ -718,8 +726,42 @@ def _git_run(root: Path, *args: str) -> subprocess.CompletedProcess:
     )
 
 
+def _sync_fetch_base(root: Path, remote: str, branch: str) -> tuple[str, str, str]:
+    """Resolve a safe sync base before committing; return branch, commit, error."""
+    if remote.startswith("-") or remote not in _git(root, "remote").splitlines():
+        return "", "", "sync needs a configured remote name, not a URL or option"
+    valid = _git_run(root, "check-ref-format", "--branch", branch)
+    if valid.returncode:
+        return "", "", "sync needs a valid branch name"
+    advertised = _git_run(root, "ls-remote", "--symref", "--", remote, "HEAD", f"refs/heads/{branch}")
+    if advertised.returncode:
+        return "", "", "cannot inspect remote refs: " + advertised.stderr.strip()
+    rows = [line.split() for line in advertised.stdout.splitlines()]
+    source = branch
+    if not any(len(row) == 2 and row[1] == f"refs/heads/{branch}" for row in rows):
+        known = _git_run(root, "show-ref", "--verify", "--quiet", f"refs/remotes/{remote}/{branch}")
+        if known.returncode == 0:
+            return "", "", f"previously published branch {remote}/{branch} is missing; inspect before recreating it"
+        default = next((row[1] for row in rows if len(row) == 3 and row[0] == "ref:" and row[2] == "HEAD"), "")
+        has_head = any(len(row) == 2 and row[1] == "HEAD" and re.fullmatch(r"[0-9a-f]{40,64}", row[0]) for row in rows)
+        if not default.startswith("refs/heads/") or not has_head:
+            return "", "", "new task branch needs a resolvable remote default branch"
+        source = default[len("refs/heads/"):]
+        if _git_run(root, "check-ref-format", "--branch", source).returncode:
+            return "", "", "remote default branch is invalid"
+    fetched = _git_run(root, "fetch", "--quiet", "--", remote, f"refs/heads/{source}")
+    if fetched.returncode:
+        return "", "", "cannot fetch sync base: " + fetched.stderr.strip()
+    commit = _git(root, "rev-parse", "--verify", "FETCH_HEAD^{commit}").strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", commit):
+        return "", "", "fetched sync base does not resolve to a commit"
+    if _git_run(root, "merge-base", "HEAD", commit).returncode:
+        return "", "", "sync base has no shared history with this checkout; inspect the remote"
+    return source, commit, ""
+
+
 def cmd_sync(args: argparse.Namespace) -> int:
-    """Publish this checkout's ledger and pick up everyone else's.
+    """Publish this branch's ledger and integrate its configured remote base.
 
     Stages only ledger data (LEDGER_DATA_PATHS), commits with a `Refs:`
     trailer for the active task, makes sure the ledger merge driver is
@@ -765,10 +807,27 @@ def cmd_sync(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    branch = args.branch or _git(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
-    if not branch or branch == "HEAD":
+    current_branch = _git(root, "rev-parse", "--abbrev-ref", "HEAD").strip()
+    if not current_branch or current_branch == "HEAD":
         print("agentctl: sync needs a branch checked out (detached HEAD)", file=sys.stderr)
         return 1
+    branch = args.branch or current_branch
+    if branch != current_branch:
+        print(
+            "agentctl: sync refuses a destination different from the checked-out branch; "
+            "switch to the intended branch or use the reviewed merge-back workflow",
+            file=sys.stderr,
+        )
+        return 1
+    if _git(root, "diff", "--name-only", "--diff-filter=U"):
+        print("agentctl: sync stopped: resolve existing Git conflicts before syncing", file=sys.stderr)
+        return 1
+    source_branch, source_commit, error = _sync_fetch_base(root, args.remote, branch)
+    if error:
+        print(f"agentctl: sync stopped: {error}", file=sys.stderr)
+        return 1
+    if source_branch != branch:
+        print(f"agentctl: first sync will read {args.remote}/{source_branch}; publish destination stays {branch}")
 
     def commit_ledger(subject: str) -> tuple[bool, str]:
         # Stage ledger data only (see LEDGER_DATA_PATHS). Loop contracts,
@@ -820,14 +879,14 @@ def cmd_sync(args: argparse.Namespace) -> int:
     else:
         print("agentctl: sync found no ledger changes to commit")
 
-    pull = _git_run(root, "pull", "--rebase", "--autostash", "--quiet", args.remote, branch)
+    pull = _git_run(root, "rebase", "--autostash", "--quiet", source_commit)
     if pull.returncode:
         conflicted = [
             line.strip() for line in _git(root, "diff", "--name-only", "--diff-filter=U").splitlines()
             if line.strip()
         ]
         print(
-            f"agentctl: sync stopped: 'git pull --rebase {args.remote} {branch}' failed",
+            f"agentctl: sync stopped: rebase onto fetched {args.remote}/{source_branch} failed",
             file=sys.stderr,
         )
         if conflicted:
@@ -839,10 +898,18 @@ def cmd_sync(args: argparse.Namespace) -> int:
         else:
             print("  " + (pull.stderr.strip() or pull.stdout.strip()), file=sys.stderr)
         return 1
-    print(f"agentctl: sync pulled {args.remote}/{branch}")
-    authority_error = _session_claim_error(root, _load_session(root))
-    if authority_error:
-        print(f"agentctl: sync stopped: {authority_error}", file=sys.stderr)
+    print(f"agentctl: sync pulled {args.remote}/{source_branch}")
+    conflicted = _git(root, "diff", "--name-only", "--diff-filter=U").splitlines()
+    if conflicted:
+        print(
+            "agentctl: sync stopped: autostash left unresolved conflicts in: "
+            + ", ".join(conflicted) + "; inspect 'git status' and 'git stash list' before continuing",
+            file=sys.stderr,
+        )
+        return 1
+    receipt_problems = _check_receipt(root)
+    if receipt_problems:
+        print(f"agentctl: sync stopped: {'; '.join(receipt_problems)}", file=sys.stderr)
         return 1
     # git exits 0 when the autostash could not be re-applied cleanly and only
     # warns; the edits then sit in the stash list. Say so instead of hiding it.
@@ -2354,7 +2421,7 @@ def _hash_docs(root: Path, task: str | None) -> dict:
     hashes = {}
     for d in _doc_hash_targets(root, task):
         if d.is_file():
-            rel = str(d.relative_to(root))
+            rel = d.relative_to(root).as_posix()
             data = d.read_bytes()
             if task and rel in scoped_views:
                 data = _receipt_view(rel, data, task)
@@ -11426,8 +11493,9 @@ def _render_task_views(root: Path, board: dict) -> None:
         title = _completion_record_value(entry.get("title") or "") or task
         suffix = f" (owner: {owner})" if owner else ""
         plan_lines.append(f"- [{checked}] {task} - {title}{suffix}")
-    replacement = "\n".join(plan_lines) + "\n\n"
-    rendered_plan = plan[:start] + replacement + plan[content_end:].lstrip("\n")
+    prose = _task_board_prose(plan[content_start:content_end].splitlines())
+    replacement = "\n".join(plan_lines) + prose
+    rendered_plan = plan[:start] + replacement + plan[content_end:]
     _write_atomic_text(plan_path, rendered_plan)
 
     for task, entry in tasks.items():
@@ -16057,7 +16125,7 @@ def build_parser() -> argparse.ArgumentParser:
              "driver, and push, so other checkouts see the claim",
     )
     sp.add_argument("--remote", default="origin")
-    sp.add_argument("--branch", default="", help="Remote branch; defaults to the current branch")
+    sp.add_argument("--branch", default="", help="Publish branch; must match the checked-out branch")
     sp.add_argument("--message", default="", help="Commit subject; defaults to a ledger summary")
     sp.add_argument("--no-push", dest="no_push", action="store_true")
     sp.set_defaults(func=cmd_sync)

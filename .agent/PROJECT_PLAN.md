@@ -36,7 +36,13 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] TA1E87B810BE4A9B2-001 - Pin milestone real-sync fixture to main independently of Git defaults (owner: milestone-main-fixture-sidecar-codex)
+- [x] TBB6EC3AD9A3FCCD7-001 - Independent sync safety review exact 2fc8ac4 and unchanged eval (owner: independent-sync-reviewer-5a24a0be)
+- [x] T64B983E7A6C13C25-001 - Run installed-project Git sync regressions on exact-head Windows CI (owner: windows-sync-ci-sidecar-codex)
+- [x] TC86DDDF6B83D255E-001 - Make first task-branch sync safe and usable in managed worktrees (owner: codex)
 - [x] T1262BE3589E9D0D6-001 - Independent final review 0f7c8dc isolation authority and unchanged eval (owner: independent-isolation-reviewer-5a24a0be)
+- [x] T92F59D61AE852113-001 - Clarify protocol 3 claim recovery and task-local loops in workflow entries (owner: protocol3-entry-docs-sidecar-codex)
+- [x] T99FC40EB5DD86230-002 - CI validates PR head instead of synthetic merge commit (owner: ci-head-checkout-sidecar-codex)
 - [x] T054FC882C66C691A-001 - Isolate task claims and loop feedback across concurrent conversations (owner: codex)
 - [x] T6610CD0566A2EF36-003 - Independent PR65 re-review candidate 09a3bf1 and unchanged baseline eval (owner: independent-reviewer-038-codex)
 - [ ] T6610CD0566A2EF36-002 - Prepare frozen supervisor milestone repair evals for PR65; candidate pending (owner: independent-reviewer-038-codex)
@@ -82,8 +88,6 @@ instead of relying on chat memory or repeated human prompts.
 - [x] TA08B0CC413F151F5-025 - add a day-one quick start walkthrough to both READMEs (owner: cursor)
 - [x] TA08B0CC413F151F5-024 - refresh README for real-world use and document the worktree merge-back path (owner: cursor)
 - [x] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) (owner: cursor)
-- [x] T99FC40EB5DD86230-002 - CI validates PR head instead of synthetic merge commit (owner: ci-head-checkout-sidecar-codex)
-- [x] T92F59D61AE852113-001 - Clarify protocol 3 claim recovery and task-local loops in workflow entries (owner: protocol3-entry-docs-sidecar-codex)
 
 ## Agent Allocation
 

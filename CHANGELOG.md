@@ -4,6 +4,24 @@ Detailed history lives in the task documents under `.agent/tasks/` and the
 review records under `.agent/gates/`. Entries here map to merged, reviewed
 pull requests.
 
+## Unreleased
+
+- First sync of an automatically allocated task worktree verifies the remote
+  default base when its branch is new, then publishes only the task branch.
+  Invalid destinations, unrelated histories and removed published branches
+  fail before a ledger commit; autostash conflicts and changed required
+  instructions stop before publication until inspected and re-read.
+  Installed-project regressions cover first publication, retries, local edits,
+  remote failures and claim revocation during sync.
+- Task Board merging and view rebuilding preserve non-generated plan notes and
+  instructions. Prose conflicts remain explicit; peer rows alone do not require
+  a new read receipt. Git text merges explicitly decode UTF-8, preserving Chinese
+  instructions even when the process locale defaults to another encoding.
+- Windows document receipt keys now use canonical forward-slash paths, so peer
+  updates receive the same task-local filtering as on other platforms. Older
+  backslash-key receipts require re-reading and an explicit `refresh` once;
+  own-task and human-direction changes remain guarded.
+
 ## 0.5.x — 2026-08
 
 The multi-session release (#30). One controller now tracks conversations,
