@@ -391,6 +391,17 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-sync-reviewer-5a24a0be": {
+      "role": "independent review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/gates/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }
