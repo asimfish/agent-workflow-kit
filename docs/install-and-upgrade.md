@@ -16,8 +16,13 @@ After installation, start normal work with:
 按 .agent 规范开始工作。
 ```
 
-The agent should read the installed `AGENTS.md` and `.agent/WORKFLOW_ENTRY.md`,
-then run the workflow by itself.
+The installing agent commits the clean installation using the commands printed
+by the installer, then reads the installed `AGENTS.md` and
+`.agent/WORKFLOW_ENTRY.md` and runs the workflow by itself. The human need not
+execute installation or task commands. If the client asks for hook trust,
+inspect and accept the project configuration and reopen the conversation once
+so `SessionStart` supplies a trusted identity; the repository cannot grant
+client-side trust. Later inspection and plan edits are optional.
 
 ### Option B: install manually
 

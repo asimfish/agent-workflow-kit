@@ -6,6 +6,13 @@ pull requests.
 
 ## Unreleased
 
+- Bilingual entry instructions put installation commits and workflow commands
+  with the agent, make human inspection optional, and state client-side hook
+  trust and session identity prerequisites. Examples authorize their test
+  paths, distinguish candidate code from ledger import, and avoid blanket
+  coordination guarantees. Fresh-install README command replays run on Linux
+  and Windows, including failed tests, refused task theft and independent review.
+
 - Restarting a completed task clears only its generated plan checkbox and
   synchronizes its document's owner and agent with the canonical claim. Workers
   can immediately note and finish again without manual view repair or receipt

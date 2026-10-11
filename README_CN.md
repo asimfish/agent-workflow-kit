@@ -11,8 +11,9 @@
   和任务板。你想调整方向，改计划文件就行。
 - **一个任务只有一个主人。** 任务和它允许写的路径，同一时刻只属于一个会话；
   申请重叠的范围会被拒绝。会话死了，任务可以被明确接管，但不会被悄悄抢走。
-- **没评审的东西合不进去。** 必须由另一个会话批准。长任务和显卡都有登记，
-  会话死掉不会留下一张锁死的卡或一个没人管的训练。
+- **先评审，再合并。** 智能体合并前须由另一个会话批准，Git hooks 和 CI
+  检查工作流。人或其他客户端能绕过本地 hooks 时，还需配置远端分支保护。
+  受监管的长任务和显卡都有归属记录与明确的恢复路径。
 
 整个套件就是一个 Python 脚本加一个提交进 Git 的纯文件目录。没有守护进程，
 没有服务器，除 Python 3.9 外没有依赖。
@@ -34,7 +35,8 @@ Cursor 的 hook 配置。**不会往 `PATH` 里加任何东西**：本文里的 
 都指在项目根目录执行 `python3 tools/agentctl.py`。智能体用的本来就是完整写法，
 因为 `.agent/WORKFLOW_ENTRY.md` 里就是这么写的。
 
-然后按安装器最后打印的 `git add` 和 `git commit` 两行，把安装本身单独提交一次。
+负责安装的智能体按安装器最后打印的 `git add` 和 `git commit` 两行，
+把安装本身单独提交一次，你不需要执行这些命令。手动安装时才自行执行。
 这一次提交不需要任务：hooks 能识别出“把套件加进仓库”的那个提交，只要里面
 全是安装器写入的文件就放行。规则从下一个提交开始生效。
 
@@ -42,12 +44,18 @@ Cursor 的 hook 配置。**不会往 `PATH` 里加任何东西**：本文里的 
 
 > 按 .agent 规范开始工作。
 
+如果客户端要求确认，请检查并信任项目 hook 配置，再重开一次会话，让
+`SessionStart` 提供会话身份。仓库无法替你授予客户端信任。下面的工作流命令
+由智能体执行；人平常只是按需查看、修改计划或规则，不必逐步推动。
+
 升级与迁移见 `docs/install-and-upgrade.md`。
 
 ## 五分钟走一遍
 
-下面是平常一天会发生的事。**你**只做第一步和最后一步，中间都由**智能体**按
-`.agent/WORKFLOW_ENTRY.md` 自己完成。每条命令都在全新安装的空项目上原样跑过。
+下面是平常一天会发生的事。**你**给目标，**智能体**按
+`.agent/WORKFLOW_ENTRY.md` 自己执行命令，最后的查看也是可选的。
+任务与评审命令由 `tests/test_readme_workflow.py` 在全新安装项目中回放。
+数据加载器和显卡任务是具体项目工作的示例，不是套件自带的文件。
 
 **你：把一个会话指向项目。** 对任意智能体会话说「按 .agent 规范开始工作。」
 它在改任何文件之前，先认领一个任务和要写的路径：
@@ -55,15 +63,20 @@ Cursor 的 hook 配置。**不会往 `PATH` 里加任何东西**：本文里的 
 ```bash
 agentctl work --agent codex                        # 领取已有任务
 agentctl work --agent codex --auto-create --type code \
-    --title "fix the data loader" --scope "src/data/" \
-    --done "shard split is exact for every n" \
-    --tests-cmd "pytest tests/data -q"                  # 或者新开一个
+    --title "fix the data loader" --scope "src/data/,tests/data/" \
+    --done "shard split tests pass, including n=1 and n=7" \
+    --tests-cmd "python3 -m unittest discover -s tests/data -v" # 或者新开一个
 ```
 
 第二个会话如果想领同一个任务，或者申请 `src/data/` 之内的路径，会被拒绝。
-`code` 和 `experiment` 类型的任务会自动分到独立的 Git worktree（命令会打印
-接着去哪里干活），两个智能体永远不会在同一个检出里改文件；`docs`、`review`、
-`generic` 类型共用当前检出。
+新建的 `code` 和 `experiment` 任务会自动分到独立 Git worktree，跟随打印的
+路径和任务 ID，在那里恢复任务。`docs`、`review`、`generic` 可以在写范围
+不重叠时共用检出，但 Git 修改和无法枚举写入的测试、脚本需要独占检出。
+已有的共享任务不会被悄悄搬走。复制会话历史时，不要复制身份或认领记录，
+新会话应使用自己的运行时进入 `work`。
+
+下文 `T-001` 是占位符，请换成 `work` 打印的真实任务 ID。写范围要包括代码
+和测试路径，测试命令换成项目的真实命令。复制历史不意味着可以接管原任务。
 
 `--done` 和 `--tests-cmd` 是任务的契约：前者用文字说清评审者要核对什么，
 后者是那条必须以 0 退出的命令。它们在干活之前写下，所以结果是对照契约来判，
@@ -100,13 +113,19 @@ agentctl finish --summary "..."
 的部分）。任务进入 `review`。在此之前 Git hooks 一直拒绝推送它的提交；现在分支
 可以推送、可以开 PR，但按套件的规则，要等别人批准之后才能合并。
 
-**评审者：由另一个会话批准。** 评审者在每个项目里注册一次，开一个评审任务，
+接着由工作智能体按 `.agent/rules/github-standards.md` 将代码和任务记录提交到
+自己的功能分支。
+
+**评审者：由另一个会话批准。** 将已提交的候选分支克隆到独立评审目录
+（或按下文使用规划检出），不要在工作者的专属 worktree 中另建评审任务。
+在独占检出中检查准确的候选代码，不要对无关的规划快照重跑测试。
+评审者在每个项目里注册一次，开一个评审任务，
 对照 Definition of Done 核对工作，然后裁决：
 
 ```bash
 agentctl agents add --id reviewer --role review
 agentctl work --agent reviewer --auto-create --type review \
-    --title "review T-001" --scope ".agent/"
+    --title "review T-001" --scope ".agent/gates/"
 agentctl gate approve --task T-001 --by reviewer --rerun-tests --note "..."
 agentctl finish --summary "approved T-001"                # 关闭评审任务
 ```
@@ -114,8 +133,9 @@ agentctl finish --summary "approved T-001"                # 关闭评审任务
 `--rerun-tests` 让评审者在自己的检出里重跑记录下来的测试命令，失败则拒绝批准；
 gate 记录里会留下 Definition of Done、命令和重跑结果。控制器比对的是运行时指纹，
 所以一个会话没法批准自己的工作。评审者自己的 `finish` 会按已记录的裁决直接关闭
-评审任务，不会再要求“评审的评审”。在 worktree 里完成的任务，开 PR 之前先用
-`agentctl reconcile merge-back --from-ref <branch>` 把它的记录搬回主检出
+评审任务，不会再要求“评审的评审”。如果在规划检出中评审，先用
+`agentctl reconcile merge-back --from-ref <branch>` 导入 worktree 的记录。
+这个命令只导入账本证据，不会带来工作代码；重跑测试前还须准备好准确的候选代码
 （见 `docs/worktree-merge-back.md`）。
 
 **你：想看就看。**
@@ -218,8 +238,10 @@ hooks 负责协调智能体，不负责隔离不受信任的代码。绕过 `age
 
 ## 现状
 
-323 个回归测试在 Linux 的 CI 上运行，另有一个 Windows job 跑其中涉及 Windows
-进程处理的子集。协调保证也在全新安装上完整
+Linux CI 运行完整回归，Windows job 运行选定的进程处理、指导下发、Git 同步、
+任务生命周期及 README 回放测试。具体提交的结果请查看
+[CI 运行记录](https://github.com/asimfish/agent-workflow-kit/actions/workflows/agent-workflow-check.yml)，
+不以固定测试数量代替验证证据。协调保证也在全新安装上
 演练过：并发会话、带着显卡死掉的会话、持有锁时被删除的项目、独立评审者，以及
 针对租约与评审检查的对抗式状态篡改。GPU 监管在共享的 RTX 5090 上实测过。
 改了什么、为什么改，见 `CHANGELOG.md`。
