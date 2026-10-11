@@ -13,9 +13,10 @@ without stepping on each other.
 - **One owner per task.** A task and the paths it may write belong to one
   conversation at a time. Overlapping claims are refused. If a conversation
   dies, its task can be taken over deliberately, never stolen silently.
-- **Nothing merges unreviewed.** A different conversation has to approve.
-  Long jobs and GPUs are tracked, so a dead conversation cannot leave a card
-  locked or a training run unwatched.
+- **Review before merge.** A different conversation approves before the
+  agent merges, with Git hooks and CI checking the workflow. Protect the
+  remote branch as well if humans or other clients can bypass local hooks.
+  Supervised jobs and GPUs have recorded owners and explicit recovery paths.
 
 It is one Python script and a folder of plain files committed to Git. No
 daemon, no server, no dependency beyond Python 3.9.
@@ -38,8 +39,9 @@ Nothing goes on your `PATH`: `agentctl` in this document means
 `python3 tools/agentctl.py`, run from the project root. Agents already use
 the long form because `.agent/WORKFLOW_ENTRY.md` tells them to.
 
-Then commit the installation on its own, with the `git add` and `git commit`
-lines the installer prints. That one commit needs no task: the hooks
+The installing agent commits the installation on its own, using the `git add`
+and `git commit` lines the installer prints; you need not run them. For a
+manual installation, run those lines yourself. That one commit needs no task: the hooks
 recognize the commit that adds the kit and accept it as long as it contains
 nothing but what the installer wrote. The rules start with the next commit.
 
@@ -48,13 +50,21 @@ From then on the only thing you need to say to an agent is:
 > Follow .agent and start work.
 > (or in Chinese: 按 .agent 规范开始工作。)
 
+If the client asks, inspect and trust the project hook configuration, then
+reopen the conversation once so `SessionStart` supplies its identity. A
+repository cannot grant that client-side trust itself. Agents run the workflow
+commands below; your normal role is optional inspection and editing the plan
+or rules, not manually driving every step.
+
 Upgrades and migration: `docs/install-and-upgrade.md`.
 
 ## Five minutes with it
 
-This is what happens on a normal day. **You** do the first and last step;
-**agents** do the rest by following `.agent/WORKFLOW_ENTRY.md`. Every
-command below was run as written on a fresh install.
+This is what happens on a normal day. **You** give the goal; **agents** run
+the commands by following `.agent/WORKFLOW_ENTRY.md`. Inspection at the end
+is optional. The task/review commands are replayed by
+`tests/test_readme_workflow.py` in fresh installed projects. The loader and
+GPU jobs illustrate project-specific work, not files supplied by the kit.
 
 **You: point a conversation at the project.** Say "Follow .agent and start
 work." to any agent session. Before it edits anything, the agent claims a
@@ -63,16 +73,23 @@ task and the paths it will write:
 ```bash
 agentctl work --agent codex                        # take an existing task
 agentctl work --agent codex --auto-create --type code \
-    --title "fix the data loader" --scope "src/data/" \
-    --done "shard split is exact for every n" \
-    --tests-cmd "pytest tests/data -q"                  # or open a new one
+    --title "fix the data loader" --scope "src/data/,tests/data/" \
+    --done "shard split tests pass, including n=1 and n=7" \
+    --tests-cmd "python3 -m unittest discover -s tests/data -v" # or open a new one
 ```
 
 A second conversation that asks for the same task, or for a path inside
 `src/data/`, is refused. Tasks of type `code` and `experiment` get their own
-Git worktree automatically (the command prints where to continue), so two
-agents never edit the same checkout; `docs`, `review`, and `generic` tasks
-share it.
+Git worktree automatically for new tasks (follow the printed path and resume
+the printed task ID there). `docs`, `review`, and `generic` tasks may share a
+checkout with disjoint scopes, but Git mutations and opaque test/script
+runners require an exclusive checkout. Existing shared tasks are not silently
+moved. Never copy another conversation's identity or claim when copying its
+history; enter `work` with the new conversation's own runtime.
+
+`T-001` below is a placeholder: use the actual task ID printed by `work`.
+Declare both implementation and test paths, and use your project's real test
+command. A copied history does not authorize taking over its task.
 
 `--done` and `--tests-cmd` are the task's contract: what a reviewer will
 check, in words, and the one command that has to exit 0. They are written
@@ -115,14 +132,21 @@ hooks refused to push its commits; now the branch can be pushed and a pull
 request opened, but by the kit's rules it merges only after someone else
 approves.
 
-**Reviewer: a different conversation approves.** The reviewer registers
+The worker now commits its code and task records on its feature branch,
+following `.agent/rules/github-standards.md`.
+
+**Reviewer: a different conversation approves.** Clone that committed branch
+into a separate review directory (or use the planning checkout as described
+below). Do not create a review task inside the worker's leased worktree. Review
+the exact candidate code in an exclusive checkout, not an unrelated planning
+snapshot. The reviewer registers
 once per project, opens a review task, checks the work against the
 Definition of Done, and decides:
 
 ```bash
 agentctl agents add --id reviewer --role review
 agentctl work --agent reviewer --auto-create --type review \
-    --title "review T-001" --scope ".agent/"
+    --title "review T-001" --scope ".agent/gates/"
 agentctl gate approve --task T-001 --by reviewer --rerun-tests --note "..."
 agentctl finish --summary "approved T-001"                # closes the review task
 ```
@@ -132,9 +156,10 @@ checkout and refuses approval if it fails; the gate record keeps the
 Definition of Done, the command, and the rerun result. The controller
 compares runtime fingerprints, so a conversation cannot approve its own
 work. The reviewer's own `finish` closes the review task on the recorded
-decision; no second review is asked for. For a task that ran in a worktree,
-bring its records back to the main checkout with `agentctl reconcile
-merge-back --from-ref <branch>` before opening the pull request
+decision; no second review is asked for. If reviewing from the planning
+checkout, first import the worktree's records with `agentctl reconcile
+merge-back --from-ref <branch>`. This imports ledger evidence, not the worker's
+code; make the candidate code available before rerunning its tests
 (`docs/worktree-merge-back.md`).
 
 **You: look whenever you like.**
@@ -258,8 +283,10 @@ the board.
 
 ## Status
 
-The regression suite runs on Linux in CI; a Windows job runs the subset that
-exercises Windows-specific process handling. The coordination guarantees
+The regression suite runs on Linux in CI; a Windows job runs selected process,
+guidance, Git sync, task lifecycle and README replay tests. See the
+[CI runs](https://github.com/asimfish/agent-workflow-kit/actions/workflows/agent-workflow-check.yml)
+for results at a specific commit rather than a fixed test count. The coordination guarantees
 were also exercised end to end on a fresh install: concurrent
 conversations, a conversation that died holding a GPU, a project deleted
 while it held a lock, an independent reviewer, and adversarial state

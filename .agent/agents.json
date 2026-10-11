@@ -413,6 +413,17 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-onboarding-reviewer-01a12a08": {
+      "role": "review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/gates/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

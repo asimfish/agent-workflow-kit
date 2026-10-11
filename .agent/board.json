@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-11 15:23:22",
+  "updated_at": "2026-10-11 16:23:45",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -742,6 +742,37 @@
       "created_at": "2026-10-11 15:09:36",
       "updated_at": "2026-10-11 15:23:22",
       "claim_id": "e4deeaaea2e66d0bbd96ef498d43f6bf"
+    },
+    "T8ED1CBB4E9C30D6A-001": {
+      "title": "Keep bilingual onboarding examples executable and coordination claims scoped",
+      "type": "code",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "README.md",
+        "README_CN.md",
+        "docs/install-and-upgrade.md",
+        "tests/test_readme_workflow.py",
+        ".github/workflows/agent-workflow-check.yml",
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-11 16:07:37",
+      "updated_at": "2026-10-11 16:22:50",
+      "claim_id": "6857ceecf9546268d3bbe9b9e36bcd8e"
+    },
+    "TE8072A0FEC7CC742-001": {
+      "title": "Independent frozen onboarding review 8e244fa",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-onboarding-reviewer-01a12a08",
+      "scope": [
+        ".agent/gates/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-11 16:17:17",
+      "updated_at": "2026-10-11 16:23:45",
+      "claim_id": "d04203f55666454419ba2229f7211f18"
     }
   },
   "updated": ""
