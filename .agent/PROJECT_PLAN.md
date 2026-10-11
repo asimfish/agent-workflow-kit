@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TE8072A0FEC7CC742-001 - Independent frozen onboarding review 8e244fa (owner: independent-onboarding-reviewer-01a12a08)
 - [ ] T8ED1CBB4E9C30D6A-001 - Keep bilingual onboarding examples executable and coordination claims scoped (owner: codex)
 - [x] T2A8C900D6DFB5577-001 - Independent frozen reopen review 1e4b073 (owner: independent-reopen-reviewer-01a129ca)
 - [x] TA74FE69251878CB4-001 - Keep reopened task lifecycle documents and read receipts consistent (owner: codex)
