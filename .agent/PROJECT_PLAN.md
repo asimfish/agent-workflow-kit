@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TA74FE69251878CB4-001 - Keep reopened task lifecycle documents and read receipts consistent (owner: codex)
 - [x] TA1E87B810BE4A9B2-001 - Pin milestone real-sync fixture to main independently of Git defaults (owner: milestone-main-fixture-sidecar-codex)
 - [x] TBB6EC3AD9A3FCCD7-001 - Independent sync safety review exact 2fc8ac4 and unchanged eval (owner: independent-sync-reviewer-5a24a0be)
 - [x] T64B983E7A6C13C25-001 - Run installed-project Git sync regressions on exact-head Windows CI (owner: windows-sync-ci-sidecar-codex)

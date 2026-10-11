@@ -6,6 +6,12 @@ pull requests.
 
 ## Unreleased
 
+- Restarting a completed task clears only its generated plan checkbox and
+  synchronizes its document's owner and agent with the canonical claim. Workers
+  can immediately note and finish again without manual view repair or receipt
+  refresh; peer documents and human plan notes stay intact. Installed-project
+  lifecycle regressions run on Linux and Windows.
+
 - First sync of an automatically allocated task worktree verifies the remote
   default base when its branch is new, then publishes only the task branch.
   Invalid destinations, unrelated histories and removed published branches

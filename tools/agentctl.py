@@ -2767,12 +2767,39 @@ def _check_plan_box(root: Path, task: str) -> None:
         _write(plan, new)
 
 
-def _set_task_doc_status(root: Path, task: str, status: str) -> None:
+def _update_plan_task(root: Path, task: str, entry: dict) -> None:
+    plan = root / WORKFLOW_DIR / PLAN_FILE
+    text = _read(plan)
+    heading = "## Task Board"
+    start = text.find(heading)
+    if start < 0:
+        return
+    content_start = start + len(heading)
+    next_heading = re.search(r"^##\s+", text[content_start:], flags=re.M)
+    end = content_start + next_heading.start() if next_heading else len(text)
+    checked = "x" if entry.get("status") == "done" else " "
+    title = _completion_record_value(entry.get("title") or "") or task
+    owner = _completion_record_value(entry.get("owner") or "")
+    row = f"- [{checked}] {task} - {title}" + (f" (owner: {owner})" if owner else "")
+    section = re.sub(
+        rf"^- \[[ xX]\]\s+{re.escape(task)}\s+-[^\n]*$",
+        lambda _match: row, text[content_start:end], count=1, flags=re.M,
+    )
+    new = text[:content_start] + section + text[end:]
+    if new != text:
+        _write(plan, new)
+
+
+def _set_task_doc_status(root: Path, task: str, status: str, *, owner: str | None = None) -> None:
     path = root / WORKFLOW_DIR / TASKS_DIR / f"{task}.md"
     text = _read(path)
     if not text:
         return
     new = re.sub(r"^Status: .*$", f"Status: {status}", text, count=1, flags=re.M)
+    if owner is not None:
+        for field in ("Owner", "Agent"):
+            new = re.sub(rf"^{field}: .*$", lambda _match: f"{field}: {owner}",
+                         new, count=1, flags=re.M)
     if new != text:
         _write(path, new)
 
@@ -4215,7 +4242,8 @@ def cmd_start(
             root, task, status="in_progress", owner=agent,
             scope=e.get("scope"), title=e.get("title"),
         )
-        _set_task_doc_status(root, task, "in_progress")
+        _set_task_doc_status(root, task, "in_progress", owner=agent)
+        _update_plan_task(root, task, e)
         if foreign_holder:
             _record_takeover(root, task, agent, foreign_holder, str(getattr(args, "reason", "") or "").strip())
         session = {

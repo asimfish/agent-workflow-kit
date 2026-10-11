@@ -67,6 +67,15 @@ as a last resort. `agentctl contract` alone prints the current contract.
 Writing them through the tool refreshes the session's read receipt, so no
 `refresh` is needed afterwards.
 
+Restarting an existing task with `work --task <id>` or `start --task <id>`
+keeps the board, index, task document and that task's plan row in sync. The
+plan checkbox is cleared when work resumes, and the document's `Owner` and
+`Agent` identify the current worker. Previous completion evidence stays in the
+task document until the next `finish`. No manual `reconcile render` or
+`refresh` is required after this controller-owned transition; other tasks'
+documents, read receipts and human plan notes are untouched. Existing claim,
+scope and explicit takeover checks still apply.
+
 Write the contract before the work. A Definition of Done written at `finish`
 is the worker's claim; one written at creation is the task's specification,
 and only the second lets a reviewer notice that the work solved a different
