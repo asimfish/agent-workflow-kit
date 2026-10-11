@@ -63,6 +63,9 @@ jobs:
       - name: Verify Windows installed-project Git sync
         run: python -m unittest tests.test_multi_checkout_sync -v
 
+      - name: Verify Windows task reopen views and receipts
+        run: python -m unittest tests.test_task_lifecycle_views -v
+
       - name: Verify Windows run lifecycle and stop tree
         # Exercises the taskkill /T termination branch, supervisor claim
         # confirmation, and replay rejection at runtime instead of relying

@@ -1,0 +1,35 @@
+agentctl: rerunning the tests command here: python3 -m unittest tests.test_task_lifecycle_views tests.test_claim_authority tests.test_milestones tests.test_reconcile_workflow tests.test_read_receipt tests.test_task_contract tests.test_task_loop_isolation tests.test_multi_session_e2e -v
+    test_executed_command_counts_as_verification_evidence (tests.test_task_contract.TestsCommandAtFinishTest) ... ok
+    test_finish_runs_the_command_and_records_the_result (tests.test_task_contract.TestsCommandAtFinishTest) ... ok
+    test_finish_uses_the_contracts_command_when_none_is_given (tests.test_task_contract.TestsCommandAtFinishTest) ... ok
+    test_without_a_command_the_record_says_so (tests.test_task_contract.TestsCommandAtFinishTest) ... ok
+    test_a_bad_tests_command_is_refused_before_any_worktree_exists (tests.test_task_contract.WorktreeBootstrapCarriesTheContractTest) ... ok
+    test_code_task_in_a_worktree_gets_the_fields (tests.test_task_contract.WorktreeBootstrapCarriesTheContractTest) ... ok
+    test_ci_accepts_valid_commits_without_local_session_or_exclusivity (tests.test_task_loop_isolation.CICommitRangeTest) ... ok
+    test_ci_rejects_bad_commit_and_invalid_range (tests.test_task_loop_isolation.CICommitRangeTest) ... ok
+    test_checkpoint_debounce_and_doc_change_are_task_local (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_cycle_records_only_current_task_reports_not_legacy_or_peer_history (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_escalation_for_a_does_not_block_b_manual_check (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_experiment_monitor_checks_only_own_declared_run_outputs (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_experiment_monitor_does_not_rescan_nested_owned_outputs (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_experiment_monitor_does_not_scan_peer_results (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_experiment_result_changes_bypass_debounce_and_close_own_failure (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_external_owned_outputs_detect_errors_without_peers_and_invalidate_cache (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_follow_up_failure_and_success_cannot_touch_another_task (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_interrupted_one_shot_only_original_holder_can_reconcile (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_legacy_unbound_cycle_requires_exclusive_explicit_reconciliation (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_peer_cannot_resume_interrupted_cycle_but_owner_can (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_revoked_cycle_holder_can_stop_but_peer_cannot (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_running_cycle_stops_before_writing_after_claim_transfer (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_unrelated_malformed_document_does_not_block_finish (tests.test_task_loop_isolation.TaskLoopIsolationTest) ... ok
+    test_four_conversations_storm_without_interference (tests.test_multi_session_e2e.FourConversationEndToEndTest) ... ok
+    test_hostile_moves_are_refused_with_zero_untracked_writes (tests.test_multi_session_e2e.FourConversationEndToEndTest) ... ok
+    test_one_completion_does_not_disturb_the_other_three (tests.test_multi_session_e2e.FourConversationEndToEndTest) ... ok
+    ----------------------------------------------------------------------
+    Ran 100 tests in 409.668s
+    OK
+    agentctl: milestone M-1 closed: all children done (collection)
+agentctl: tests command exited 0 in 409.8s: python3 -m unittest tests.test_task_lifecycle_views tests.test_claim_authority tests.test_milestones tests.test_reconcile_workflow tests.test_read_receipt tests.test_task_contract tests.test_task_loop_isolation tests.test_multi_session_e2e -v
+agentctl: Definition of Done: Real installed-project regressions prove reopening done or review tasks keeps canonical board, task index, own task doc and plan checkbox consistent; note and finish work without reconcile or refresh after controller-owned transitions; peer receipts and human plan text remain intact; rejected competing claims do not mutate state. Independent review and cross-platform CI pass.
+agentctl: worker's tests command: python3 -m unittest tests.test_task_lifecycle_views tests.test_claim_authority tests.test_milestones tests.test_reconcile_workflow tests.test_read_receipt tests.test_task_contract tests.test_task_loop_isolation tests.test_multi_session_e2e -v (exit 0)
+agentctl: TA74FE69251878CB4-001 approved -> done

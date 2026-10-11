@@ -90,6 +90,34 @@
       "last_run_at": "2026-10-10 13:31:45",
       "last_status": "success",
       "last_report": ".agent/loops/runs/20261010-133145-doc-hygiene-8061b0-2.md"
+    },
+    "daily-plan-triage:TA74FE69251878CB4-001": {
+      "task": "TA74FE69251878CB4-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-11 14:03:13",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261011-140313-daily-plan-triage-0c1f2d.md"
+    },
+    "doc-hygiene:TA74FE69251878CB4-001": {
+      "task": "TA74FE69251878CB4-001",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-11 14:18:46",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261011-141846-doc-hygiene-0c1f2d-2.md"
+    },
+    "daily-plan-triage:T2A8C900D6DFB5577-001": {
+      "task": "T2A8C900D6DFB5577-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-11 15:09:37",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261011-150937-daily-plan-triage-c9fb22.md"
+    },
+    "doc-hygiene:T2A8C900D6DFB5577-001": {
+      "task": "T2A8C900D6DFB5577-001",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-11 15:23:23",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261011-152323-doc-hygiene-c9fb22.md"
     }
   },
   "checkpoints": {
@@ -326,6 +354,84 @@
         ".agent/loops/runs/20261010-133145-doc-hygiene-8061b0-2.md"
       ],
       "last_input_hash": "80862b7a551ddb69",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:TA74FE69251878CB4-001": {
+      "task": "TA74FE69251878CB4-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-11 14:03:13",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261011-140313-daily-plan-triage-0c1f2d.md"
+      ],
+      "last_input_hash": "3acaca391b6f583f",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TA74FE69251878CB4-001": {
+      "task": "TA74FE69251878CB4-001",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-11 14:18:46",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261011-141846-doc-hygiene-0c1f2d.md"
+      ],
+      "last_input_hash": "f8d99e0e42daa1df",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TA74FE69251878CB4-001": {
+      "task": "TA74FE69251878CB4-001",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-11 14:18:47",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261011-141846-doc-hygiene-0c1f2d-2.md"
+      ],
+      "last_input_hash": "03f88c334dbfdaed",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:T2A8C900D6DFB5577-001": {
+      "task": "T2A8C900D6DFB5577-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-11 15:09:37",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261011-150937-daily-plan-triage-c9fb22.md"
+      ],
+      "last_input_hash": "70c355d3652c0cd7",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:T2A8C900D6DFB5577-001": {
+      "task": "T2A8C900D6DFB5577-001",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-11 15:23:22",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261011-152322-doc-hygiene-c9fb22.md"
+      ],
+      "last_input_hash": "cb59459276e0c002",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:T2A8C900D6DFB5577-001": {
+      "task": "T2A8C900D6DFB5577-001",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-11 15:23:23",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261011-152323-doc-hygiene-c9fb22.md"
+      ],
+      "last_input_hash": "c4976e7f4e084a7e",
       "strict": false,
       "trigger": "post-finish",
       "open_follow_up": null
