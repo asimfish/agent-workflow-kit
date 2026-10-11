@@ -402,6 +402,17 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-reopen-reviewer-01a129ca": {
+      "role": "review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/gates/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

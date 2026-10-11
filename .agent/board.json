@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-11 14:18:46",
+  "updated_at": "2026-10-11 15:10:22",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -729,6 +729,19 @@
       "created_at": "2026-10-11 14:03:03",
       "updated_at": "2026-10-11 14:18:46",
       "claim_id": "d498845a73b2fdcbdfce7d8f8dcdc7fd"
+    },
+    "T2A8C900D6DFB5577-001": {
+      "title": "Independent frozen reopen review 1e4b073",
+      "type": "review",
+      "status": "in_progress",
+      "owner": "independent-reopen-reviewer-01a129ca",
+      "scope": [
+        ".agent/gates/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-11 15:09:36",
+      "updated_at": "2026-10-11 15:10:22",
+      "claim_id": "e4deeaaea2e66d0bbd96ef498d43f6bf"
     }
   },
   "updated": ""
