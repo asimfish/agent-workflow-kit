@@ -21,6 +21,10 @@ without stepping on each other.
 It is one Python script and a folder of plain files committed to Git. No
 daemon, no server, no dependency beyond Python 3.9.
 
+[Architecture drawings](docs/architecture/README.md): a six-panel engineering
+sheet, editable flow diagrams, state ownership, multi-session boundaries, and
+source references. The drawings distinguish implemented behavior from limits.
+
 ## Install
 
 ```bash

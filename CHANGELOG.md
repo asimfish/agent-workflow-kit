@@ -6,6 +6,12 @@ pull requests.
 
 ## Unreleased
 
+- Architecture documentation adds a six-panel engineering sheet, offline HTML
+  source, PNG preview and GitHub-readable Mermaid diagrams for state ownership,
+  multi-session isolation, acceptance and bounded feedback loops. Stdlib checks
+  catch broken local links and deleted or renamed Python source references;
+  runtime policy and project installation dependencies are unchanged.
+
 - Bilingual entry instructions put installation commits and workflow commands
   with the agent, make human inspection optional, and state client-side hook
   trust and session identity prerequisites. Examples authorize their test
