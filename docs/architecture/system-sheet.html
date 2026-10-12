@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Workflow Kit · 系统工程总图</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 24px; background: #f4f6f8; color: #202a35; font: 14px/1.6 system-ui, sans-serif; letter-spacing: 0; }
+    main { max-width: 1880px; margin: auto; padding: 24px; background: white; border: 1px solid #65717e; }
+    header { display: flex; align-items: start; justify-content: space-between; gap: 24px; border-bottom: 2px solid #202a35; padding-bottom: 16px; }
+    h1 { font-size: 26px; line-height: 1.4; margin: 0; }
+    h2 { margin: 0; font-size: 16px; line-height: 1.5; }
+    p { margin: 8px 0; }
+    a { color: #21679b; text-underline-offset: 3px; }
+    code { font: 12px/1.6 ui-monospace, monospace; overflow-wrap: anywhere; }
+    .muted { color: #586777; font-size: 12px; }
+    .legend { display: flex; flex-wrap: wrap; gap: 8px 24px; margin: 12px 0; font-size: 12px; }
+    .legend b { color: #21679b; }
+    .sheet { display: grid; grid-template-columns: 1.1fr 1.25fr 1fr; gap: 18px; }
+    section { min-width: 0; border: 1px solid #65717e; }
+    .heading { display: flex; align-items: stretch; border-bottom: 1px solid #65717e; }
+    .letter { width: 36px; flex: 0 0 36px; display: grid; place-items: center; background: #202a35; color: white; font: bold 16px ui-monospace, monospace; }
+    .heading h2 { padding: 8px 12px; }
+    .content { padding: 12px 16px; }
+    .diagram { overflow-x: auto; }
+    svg { width: 100%; display: block; min-width: 420px; }
+    svg text { fill: #202a35; font: 13px system-ui, sans-serif; }
+    svg .small { font-size: 11px; fill: #586777; }
+    svg .node { fill: white; stroke: #65717e; stroke-width: 1; }
+    svg .primary { fill: #eaf3fa; stroke: #21679b; }
+    svg .line { fill: none; stroke: #65717e; stroke-width: 1.3; }
+    svg .feedback { fill: none; stroke: #21679b; stroke-width: 1.3; stroke-dasharray: 5 3; }
+    table { border-collapse: collapse; width: 100%; font-size: 12px; text-align: left; }
+    th { font-weight: 600; color: #586777; }
+    td, th { padding: 7px 8px; vertical-align: top; border-bottom: 1px solid #dce2e8; overflow-wrap: anywhere; }
+    tbody tr:nth-child(odd) { background: #f4f6f8; }
+    ul { padding-left: 18px; margin: 8px 0; }
+    li { margin-bottom: 4px; }
+    .note { border-top: 1px solid #dce2e8; margin-top: 12px; padding-top: 8px; }
+    .warning { color: #a53232; }
+    .phases { list-style: none; padding: 0; margin: 4px 0 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; }
+    .phases li { border-left: 2px solid #21679b; padding-left: 10px; }
+    .phases strong { display: block; font-size: 14px; }
+    footer { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-top: 18px; border-top: 2px solid #202a35; padding-top: 12px; }
+    details { border-top: 1px solid #dce2e8; margin-top: 14px; padding-top: 8px; }
+    summary { cursor: pointer; color: #21679b; }
+    .evidence { columns: 2; font-size: 12px; }
+    .evidence p { break-inside: avoid; }
+    @media (max-width: 1100px) { .sheet { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 740px) {
+      body { padding: 8px; } main { padding: 12px; } header { display: block; }
+      h1 { font-size: 22px; } .sheet, footer { grid-template-columns: 1fr; }
+      .evidence { columns: 1; } .content { padding: 12px; }
+    }
+    @media print {
+      @page { size: A3 landscape; margin: 8mm; }
+      body { padding: 0; background: white; } main { padding: 12px; max-width: none; }
+      .sheet { grid-template-columns: 1.1fr 1.25fr 1fr; gap: 12px; }
+      section { break-inside: avoid; } details { display: none; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <div><h1>Agent Workflow Kit · 系统工程总图</h1><p>项目级协作控制：目标 → 任务授权 → 执行与证据 → 独立验收 → 有界下一轮</p></div>
+    <div class="muted">AS-BUILT / 已实现视图<br>核对基线 <code>df586ac</code> · 2026-10-12<br>协议 3 · 图纸 AWK-01</div>
+  </header>
+  <nav class="legend" aria-label="图纸分区">
+    <a href="#A">A 系统边界</a><a href="#B">B 事实源</a><a href="#C">C 多会话</a>
+    <a href="#D">D 任务验收</a><a href="#E">E 反馈闭环</a><a href="#F">F 失败边界</a>
+    <span>实线：调用 / 状态更新　<b>虚线：反馈 / 方向调整</b></span>
+  </nav>
+  <div class="sheet">
+    <section id="A">
+      <div class="heading"><span class="letter">A</span><h2>系统边界 · 调用与存储</h2></div>
+      <div class="content">
+        <div class="diagram"><svg viewBox="0 0 470 300" role="img" aria-labelledby="context-title">
+          <title id="context-title">会话通过生命周期 hook 和 agentctl 协作；Git hooks 与 CI 检查交付</title>
+          <defs><marker id="arrow-a" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="#65717e"/></marker></defs>
+          <rect class="node" x="10" y="8" width="190" height="44"/><text x="105" y="27" text-anchor="middle">人 / 监督者：给目标、改方向</text><text class="small" x="105" y="43" text-anchor="middle">按需检查，不逐条推动命令</text>
+          <rect class="node" x="260" y="8" width="200" height="44"/><text x="360" y="27" text-anchor="middle">PROJECT_PLAN / rules</text><text class="small" x="360" y="43" text-anchor="middle">人工正文；任务行由控制器生成</text>
+          <path class="feedback" d="M200 30H258" marker-end="url(#arrow-a)"/>
+          <rect class="node" x="10" y="86" width="190" height="44"/><text x="105" y="105" text-anchor="middle">Codex / Claude Code / Cursor</text><text class="small" x="105" y="121" text-anchor="middle">原生身份 · 每个会话分别授权</text>
+          <rect class="node" x="260" y="86" width="200" height="44"/><text x="360" y="105" text-anchor="middle">Hook bridge</text><text class="small" x="360" y="121" text-anchor="middle">注入上下文 / 写入前检查</text>
+          <path class="line" d="M200 108H258M360 52V84" marker-end="url(#arrow-a)"/>
+          <rect class="primary" x="110" y="161" width="260" height="43"/><text x="240" y="180" text-anchor="middle">agentctl：任务 / 租约 / 循环 / 验收</text><text class="small" x="240" y="196" text-anchor="middle">集中规则入口；内部仍以一个 Python 文件为主</text>
+          <path class="line" d="M105 130V181H108M360 130V159" marker-end="url(#arrow-a)"/>
+          <path class="line" d="M240 204V220H78V239M240 220V239M240 220H399V239" marker-end="url(#arrow-a)"/>
+          <rect class="node" x="8" y="242" width="140" height="46"/><text x="78" y="262" text-anchor="middle">.agent / Git 账本</text><text class="small" x="78" y="278" text-anchor="middle">合同、状态、证据</text>
+          <rect class="node" x="170" y="242" width="140" height="46"/><text x="240" y="262" text-anchor="middle">Git common dir</text><text class="small" x="240" y="278" text-anchor="middle">本地会话 / 运行租约</text>
+          <rect class="node" x="330" y="242" width="138" height="46"/><text x="399" y="262" text-anchor="middle">主机资源锁 / SSH</text><text class="small" x="399" y="278" text-anchor="middle">声明的稀缺资源</text>
+        </svg></div>
+        <p class="note"><strong>交付链：</strong>Git hooks → push / PR → CI → 合并。远端保护需仓库配置；客户端须信任 hooks。</p>
+        <p class="muted">A 依据：<a href="../../tools/agentctl.py" data-symbol="cmd_work">cmd_work</a> · <a href="../../tools/agent_workflow_hook.py" data-symbol="pre_tool_use">pre_tool_use</a> · <a href="../enforcement.md">执行约束</a></p>
+      </div>
+    </section>
+    <section id="B">
+      <div class="heading"><span class="letter">B</span><h2>事实源 · 谁写、谁读、保存在哪</h2></div>
+      <div class="content">
+        <table><thead><tr><th>记录 / 事实源</th><th>写入职责</th><th>边界 / 读者</th></tr></thead><tbody>
+          <tr><td><code>.agent/board.json</code><br>任务 ID / 状态 / owner / scope / deps</td><td>agentctl<br>规范任务元数据</td><td>Git 中的账本；各 clone 只有各自快照</td></tr>
+          <tr><td><code>PROJECT_PLAN.md</code><br><code>TASKS.md</code></td><td>人 / 监督者：计划正文<br>控制器：索引、计划任务行</td><td>可读视图，不反向覆盖 board；正文修改须重读</td></tr>
+          <tr><td><code>tasks/&lt;task&gt;.md</code></td><td>本任务 worker：合同 / 记录<br>控制器：状态 / 完成证据</td><td>每任务一份；其他任务不可任意写</td></tr>
+          <tr><td><code>loops/state.json</code><br><code>loops/runs/ · gates/</code></td><td>loop / gate 命令</td><td>Git 中的反馈与验收证据；不能手改伪造成功</td></tr>
+          <tr><td><code>&lt;git-common-dir&gt;/agent-workflow/</code></td><td>会话 / run / worktree 控制器</td><td>同 common dir 共享；不进 Git、不复制身份</td></tr>
+          <tr><td>主机资源锁 / SSH 锁目录</td><td>声明资源的 holder / supervisor</td><td>协调同一资源，不是分布式任务调度器</td></tr>
+        </tbody></table>
+        <p class="note"><code>SESSIONS.md</code> 只是生成的本地观察视图。<code>reconcile check</code> 双向检查 board、索引与任务文档是否一致。</p>
+        <p class="muted">B 依据：<a href="../../tools/agentctl.py" data-symbol="_session_runtime_dir">_session_runtime_dir</a> · <a href="../../tools/agentctl.py" data-symbol="_runtime_lease_paths">_runtime_lease_paths</a> · <a href="../../tools/agentctl.py" data-symbol="_task_reconcile_problems">_task_reconcile_problems</a></p>
+      </div>
+    </section>
+    <section id="C">
+      <div class="heading"><span class="letter">C</span><h2>多会话 · 各司其职的隔离单元</h2></div>
+      <div class="content">
+        <div class="diagram"><svg viewBox="0 0 440 244" role="img" aria-labelledby="sessions-title">
+          <title id="sessions-title">四个示意任务各有身份、任务文档、业务范围和 worktree，共享本地协调锁</title>
+          <defs><marker id="arrow-c" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="#65717e"/></marker></defs>
+          <rect class="primary" x="50" y="4" width="340" height="42"/><text x="220" y="22" text-anchor="middle">同一 Git common dir：协调锁 + 归属检查</text><text class="small" x="220" y="38" text-anchor="middle">每个 worktree 有自己的 .agent 账本副本</text>
+          <path class="line" d="M220 46V62H105V77M220 62H335V77" marker-end="url(#arrow-c)"/>
+          <rect class="node" x="5" y="80" width="200" height="64"/><text x="105" y="99" text-anchor="middle">会话 A / Task A / worktree A</text><text class="small" x="105" y="118" text-anchor="middle">collect/liyufeng4090/</text><text class="small" x="105" y="134" text-anchor="middle">tasks/A.md · claim A</text>
+          <rect class="node" x="235" y="80" width="200" height="64"/><text x="335" y="99" text-anchor="middle">会话 B / Task B / worktree B</text><text class="small" x="335" y="118" text-anchor="middle">collect/daisi4090/</text><text class="small" x="335" y="134" text-anchor="middle">tasks/B.md · claim B</text>
+          <path class="line" d="M220 62V158H105V173M220 158H335V173" marker-end="url(#arrow-c)"/>
+          <rect class="node" x="5" y="176" width="200" height="64"/><text x="105" y="195" text-anchor="middle">会话 C / Task C / worktree C</text><text class="small" x="105" y="214" text-anchor="middle">collect/5090/</text><text class="small" x="105" y="230" text-anchor="middle">tasks/C.md · claim C</text>
+          <rect class="node" x="235" y="176" width="200" height="64"/><text x="335" y="195" text-anchor="middle">会话 D / Task D / worktree D</text><text class="small" x="335" y="214" text-anchor="middle">tests/full_pipeline/</text><text class="small" x="335" y="230" text-anchor="middle">tasks/D.md · claim D</text>
+        </svg></div>
+        <ul>
+          <li>图为 ChemBench 任务划分示意，不是机器实时审计。</li>
+          <li>code / experiment 默认 worktree；托管 worktree 的重叠 scope 也拒绝，不能借分支抢文件。</li>
+          <li>同目录共享仅适合不相交的明确写入；脚本、测试、Git 写入要求独占 checkout。</li>
+          <li>复制 A 的历史给 B：带走知识，不能带走身份和 claim。失活归属须核实后显式接管。</li>
+        </ul>
+        <p class="muted">C 依据：<a href="../../tools/agentctl.py" data-symbol="_session_start_conflicts">_session_start_conflicts</a> · <a href="../../tools/agentctl.py" data-symbol="_worktree_bootstrap_task">_worktree_bootstrap_task</a> · <a href="../multi-session-execution.md">多会话规范</a></p>
+      </div>
+    </section>
+    <section id="D">
+      <div class="heading"><span class="letter">D</span><h2>任务验收 · 主路径与责任分离</h2></div>
+      <div class="content">
+        <div class="diagram"><svg viewBox="0 0 470 236" role="img" aria-labelledby="task-title">
+          <title id="task-title">worker 从任务进入执行与 review；另一 runtime 的 reviewer 决定通过或返工</title>
+          <defs><marker id="arrow-d" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="#65717e"/></marker></defs>
+          <rect class="node" x="8" y="10" width="120" height="42"/><text x="68" y="28" text-anchor="middle">todo / ready</text><text class="small" x="68" y="44" text-anchor="middle">合同 + scope + deps</text>
+          <rect class="primary" x="186" y="10" width="135" height="42"/><text x="253" y="28" text-anchor="middle">in_progress</text><text class="small" x="253" y="44" text-anchor="middle">原生身份 + claim_id</text>
+          <path class="line" d="M128 31H184" marker-end="url(#arrow-d)"/><text class="small" x="155" y="24" text-anchor="middle">work</text>
+          <path class="feedback" d="M321 21H365V68H280V54" marker-end="url(#arrow-d)"/><text class="small" x="365" y="86" text-anchor="middle">note / 阶段证据</text>
+          <path class="line" d="M253 52V105" marker-end="url(#arrow-d)"/><text class="small" x="132" y="83">finish：DoD + tests + pre-finish</text>
+          <rect class="node" x="186" y="108" width="135" height="42"/><text x="253" y="128" text-anchor="middle">review</text><text class="small" x="253" y="143" text-anchor="middle">待验收，不等于 done</text>
+          <rect class="primary" x="350" y="108" width="110" height="42"/><text x="405" y="134" text-anchor="middle">done</text>
+          <path class="line" d="M321 129H348" marker-end="url(#arrow-d)"/>
+          <text class="small" x="335" y="97" text-anchor="middle">gate approve</text>
+          <rect class="node" x="8" y="108" width="120" height="42"/><text x="68" y="134" text-anchor="middle">failed / 返工</text>
+          <path class="feedback" d="M186 129H130M68 108V66H210V54" marker-end="url(#arrow-d)"/>
+          <text class="small" x="155" y="162" text-anchor="middle">gate reject → 显式 work 重开</text>
+          <rect class="node" x="8" y="184" width="452" height="42"/><text x="234" y="201" text-anchor="middle">Reviewer：独立 checkout + 独立 review 任务 + 不同原生 runtime</text><text class="small" x="234" y="217" text-anchor="middle">核对合同与候选代码；可 gate approve --rerun-tests 复跑记录的命令</text>
+        </svg></div>
+        <p class="note">这是常用主路径，非完整状态机。失败测试阻止 finish；blocked / approved 等分支见规范。Milestone 只组织子任务，不能领作执行任务；最后一个子任务批准后自动闭合。</p>
+        <p class="muted">D 依据：<a href="../../tools/agentctl.py" data-symbol="cmd_complete">cmd_complete</a> · <a href="../../tools/agentctl.py" data-symbol="_cmd_gate_unlocked">_cmd_gate_unlocked</a> · <a href="../../tools/agentctl.py" data-symbol="_cascade_milestones">_cascade_milestones</a></p>
+      </div>
+    </section>
+    <section id="E">
+      <div class="heading"><span class="letter">E</span><h2>反馈闭环 · 六环节与下一轮</h2></div>
+      <div class="content">
+        <ol class="phases">
+          <li data-phase="Trigger"><strong>1 · Trigger / 触发</strong>work-start / pre-finish / post-finish；显式监测或外部调度。</li>
+          <li data-phase="Execute"><strong>2 · Execute / 执行</strong>已授权 worker 推进任务；loop 执行内置检查或声明的命令。</li>
+          <li data-phase="Check"><strong>3 · Check / 检查</strong>合同、测试结果、文档一致性、实验声明输出与运行结果。</li>
+          <li data-phase="Feedback"><strong>4 · Feedback / 反馈</strong>失败生成 follow-up；持续失败升级 / 阻断，不能机械重试。</li>
+          <li data-phase="Memory"><strong>5 · Memory / 记忆</strong>任务文档、loop report / state 保存结论；按任务过滤反馈与缓存。</li>
+          <li data-phase="Next"><strong>6 · Next / 下一轮</strong>有限 cycle / 安全 resume / 下一 checkpoint；满足停止条件就停。</li>
+        </ol>
+        <div class="diagram"><svg viewBox="0 0 520 68" role="img" aria-labelledby="loop-title">
+          <title id="loop-title">本轮记忆反馈到下一次触发；停止条件优先于继续</title>
+          <defs><marker id="arrow-e" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0 0L6 3L0 6" fill="#65717e"/></marker></defs>
+          <path class="feedback" d="M480 12V42H40V12" marker-end="url(#arrow-e)"/>
+          <text x="260" y="26" text-anchor="middle">本轮结果 / 历史结论 → 下一轮策略与检查输入</text>
+          <text class="small" x="260" y="58" text-anchor="middle">停止优先：预算 / 失败上限 / 升级阻断 / 人工 stop / 未知执行结果</text>
+        </svg></div>
+        <p class="note"><strong>不是常驻自主服务：</strong>cycle 有界且协作式停止；无内置 cron 或无限 LLM 调度。下一业务任务仍由 agent 再次 work；周期唤醒需外部调度。</p>
+        <p class="muted">E 依据：<a href="../../tools/agentctl.py" data-symbol="_run_loop_checkpoint">_run_loop_checkpoint</a> · <a href="../../tools/agentctl.py" data-symbol="_create_loop_follow_up">_create_loop_follow_up</a> · <a href="../../tools/agentctl.py" data-symbol="_loop_context_key">_loop_context_key</a> · <a href="../../tools/agentctl.py" data-symbol="_loop_resume">_loop_resume</a></p>
+      </div>
+    </section>
+    <section id="F">
+      <div class="heading"><span class="letter">F</span><h2>失败边界 · 拒绝、恢复与非目标</h2></div>
+      <div class="content">
+        <table><thead><tr><th>情形</th><th>处理 / 不作的保证</th></tr></thead><tbody>
+          <tr><td>计划或本任务文档改变</td><td>重读 + refresh；同伴任务行变动不要求全员刷新。</td></tr>
+          <tr><td>身份复制 / claim 被撤销</td><td>拒绝写入；refresh / rebind 不能恢复所有权。</td></tr>
+          <tr><td>会话失活 / 后台进程仍活</td><td>租约与输出仍需检查；不因心跳超时自动转移任务。</td></tr>
+          <tr><td>执行结果未知 / 中途崩溃</td><td>禁止自动重放；核实进程与副作用后 ack-inflight。</td></tr>
+          <tr><td>协议升级</td><td>先升级屏障、排空旧写者，再迁移并 rebind。</td></tr>
+          <tr><td>另一台机器 / 独立 clone</td><td>Git sync 传账本，live identity 不同步；不是实时分布式锁。</td></tr>
+          <tr><td>绕过 hooks / 不受信任代码</td><td class="warning">不是 OS sandbox。分支保护、权限、容器仍是外部职责。</td></tr>
+        </tbody></table>
+        <p class="note">可选 supervisor guidance / transport 不等于默认能遥控任意会话。图纸描述现有机制，不宣称所有组合均已实机验证。</p>
+        <p class="muted">F 依据：<a href="../../tools/agentctl.py" data-symbol="_check_receipt">_check_receipt</a> · <a href="../../tools/agentctl.py" data-symbol="_session_claim_error">_session_claim_error</a> · <a href="../../tools/agentctl.py" data-symbol="_upgrade_command_error">_upgrade_command_error</a> · <a href="../install-and-upgrade.md">升级规范</a></p>
+      </div>
+    </section>
+  </div>
+  <footer>
+    <div><strong>设计判断：</strong>身份、任务、文档、进程与资源的归属要连贯；本地协调和跨机同步不能混为一谈。图中的职责划分不是已经拆开的 Python 包，控制器仍是主要维护集中点。</div>
+    <div class="muted">Owner：Agent Workflow Kit<br>范围：Git 项目 · 合作式多会话<br>维护：改机制时同步此页、Mermaid 和 PNG<br><a href="README.md">详细图 / 依据 / 更新约定</a> · Sheet 1 of 1</div>
+  </footer>
+  <details><summary>实现依据与回归入口</summary><div class="evidence">
+    <p>A：<a href="../../tools/agent_workflow_hook.py" data-symbol="session_start">session_start</a>；<a href="../../.githooks/pre-commit">pre-commit</a>；<a href="../../.githooks/pre-push">pre-push</a>；<a href="../../.github/workflows/agent-workflow-check.yml">CI</a>。</p>
+    <p>B：<a href="../../tools/agentctl.py" data-symbol="_update_plan_task">_update_plan_task</a>；<a href="../../tools/agentctl.py" data-symbol="_resource_lock_location">_resource_lock_location</a>；<a href="../../tests/test_reconcile_workflow.py">reconcile 回归</a>。</p>
+    <p>C：<a href="../../tests/test_multi_session_e2e.py">四会话回归</a>；<a href="../../tests/test_claim_authority.py">claim 回归</a>；<a href="../../tests/test_worktree_workflow.py">worktree 回归</a>。</p>
+    <p>D：<a href="../../tests/test_task_contract.py">合同 / gate 回归</a>；<a href="../../tests/test_milestones.py">milestone 回归</a>；<a href="../../tests/test_task_lifecycle_views.py">视图 / 重开回归</a>。</p>
+    <p>E：<a href="../../tests/test_loop_workflow.py">loop 回归</a>；<a href="../../tests/test_task_loop_isolation.py">任务局部反馈回归</a>；<a href="../loop-engineering.md">loop 状态机</a>。</p>
+    <p>F：<a href="../../tests/test_upgrade_barrier_workflow.py">升级回归</a>；<a href="../../tests/test_execution_lease_workflow.py">进程租约回归</a>；<a href="../../tests/test_multi_checkout_sync.py">跨 clone 同步回归</a>。</p>
+  </div></details>
+</main>
+</body>
+</html>
