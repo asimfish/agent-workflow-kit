@@ -92,7 +92,7 @@
           <rect class="node" x="170" y="242" width="140" height="46"/><text x="240" y="262" text-anchor="middle">Git common dir</text><text class="small" x="240" y="278" text-anchor="middle">本地会话 / 运行租约</text>
           <rect class="node" x="330" y="242" width="138" height="46"/><text x="399" y="262" text-anchor="middle">主机资源锁 / SSH</text><text class="small" x="399" y="278" text-anchor="middle">声明的稀缺资源</text>
         </svg></div>
-        <p class="note"><strong>交付链：</strong>Git hooks → push / PR → CI → 合并。远端保护需仓库配置；客户端须信任 hooks。</p>
+        <p class="note"><strong>交付链：</strong>Git hooks 调用 agentctl check → push / PR → CI → 合并。远端保护需仓库配置；客户端须信任 hooks。</p>
         <p class="muted">A 依据：<a href="../../tools/agentctl.py" data-symbol="cmd_work">cmd_work</a> · <a href="../../tools/agent_workflow_hook.py" data-symbol="pre_tool_use">pre_tool_use</a> · <a href="../enforcement.md">执行约束</a></p>
       </div>
     </section>
@@ -149,12 +149,12 @@
           <rect class="primary" x="350" y="108" width="110" height="42"/><text x="405" y="134" text-anchor="middle">done</text>
           <path class="line" d="M321 129H348" marker-end="url(#arrow-d)"/>
           <text class="small" x="335" y="97" text-anchor="middle">gate approve</text>
-          <rect class="node" x="8" y="108" width="120" height="42"/><text x="68" y="134" text-anchor="middle">failed / 返工</text>
+          <rect class="node" x="8" y="108" width="120" height="42"/><text x="68" y="134" text-anchor="middle">blocked / 待修正</text>
           <path class="feedback" d="M186 129H130M68 108V66H210V54" marker-end="url(#arrow-d)"/>
           <text class="small" x="155" y="162" text-anchor="middle">gate reject → 显式 work 重开</text>
           <rect class="node" x="8" y="184" width="452" height="42"/><text x="234" y="201" text-anchor="middle">Reviewer：独立 checkout + 独立 review 任务 + 不同原生 runtime</text><text class="small" x="234" y="217" text-anchor="middle">核对合同与候选代码；可 gate approve --rerun-tests 复跑记录的命令</text>
         </svg></div>
-        <p class="note">这是常用主路径，非完整状态机。失败测试阻止 finish；blocked / approved 等分支见规范。Milestone 只组织子任务，不能领作执行任务；最后一个子任务批准后自动闭合。</p>
+        <p class="note">这是常用主路径，非完整状态机。失败测试阻止 finish；gate reject 进入 blocked。独立 checkout 是推荐评审流程；gate 强制独立任务、角色和 runtime。Milestone 只组织子任务，最后一个子任务批准后自动闭合。</p>
         <p class="muted">D 依据：<a href="../../tools/agentctl.py" data-symbol="cmd_complete">cmd_complete</a> · <a href="../../tools/agentctl.py" data-symbol="_cmd_gate_unlocked">_cmd_gate_unlocked</a> · <a href="../../tools/agentctl.py" data-symbol="_cascade_milestones">_cascade_milestones</a></p>
       </div>
     </section>

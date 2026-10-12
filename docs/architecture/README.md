@@ -33,7 +33,8 @@ flowchart TB
     Controller -->|contract and evidence| Docs[Own task document / gates / loop reports]
     Controller -->|local authority| Runtime[Git common dir: sessions and leases]
     Controller -->|resource ownership| Locks[Host or SSH resource locks]
-    Controller -->|checks| Git[Local Git hooks]
+    Agent -->|commit / push| Git[Local Git hooks]
+    Git -->|agentctl check| Controller
     Git -->|push / PR| CI[GitHub CI and branch protection]
 ```
 
@@ -100,7 +101,7 @@ Source: `_session_start_conflicts`, `_worktree_bootstrap_task`,
 ## 3. Delivery And Independent Acceptance
 
 This is the **usual path**, not the entire status transition graph. The vocabulary
-also includes `blocked` and `approved`.
+also includes `failed` and `approved`.
 
 ```mermaid
 flowchart LR
@@ -111,15 +112,18 @@ flowchart LR
     Reviewer[Separate review task and independent native runtime] --> Gate[gate decision]
     Review --> Gate
     Gate -->|approve| Done[done]
-    Gate -->|reject| Failed[failed]
-    Failed -->|explicit work restart| Work
+    Gate -->|reject| Blocked[blocked]
+    Blocked -->|explicit work restart| Work
     Done --> Children[All milestone children done]
     Children --> Closed[Controller closes planning-only milestone]
 ```
 
 The reviewer inspects the **actual frozen candidate code**, not just an imported
-ledger. A separate checkout and native runtime prevents the worker approving
-itself. `gate approve --rerun-tests` reruns the recorded test command; the option
+ledger. A separate checkout is the recommended safe review workflow; the gate
+specifically enforces a distinct active review task, reviewer role and native
+runtime that did not work the candidate. It is not a universal separate-checkout
+check for all shared-document workflows. Rejection sets `blocked`, not `failed`.
+`gate approve --rerun-tests` reruns the recorded test command; the option
 is available, not silently mandatory for every approval. Worker `finish` cannot
 turn failing tests into a review-ready result. An independent gate still needs
 semantic evidence; exit 0 alone is not proof of the user's goal.

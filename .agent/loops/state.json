@@ -150,16 +150,16 @@
     "daily-plan-triage:T16156EA9FCE985E5-001": {
       "task": "T16156EA9FCE985E5-001",
       "loop": "daily-plan-triage",
-      "last_run_at": "2026-10-12 21:10:35",
+      "last_run_at": "2026-10-12 21:31:51",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20261012-211035-daily-plan-triage-950377.md"
+      "last_report": ".agent/loops/runs/20261012-213151-daily-plan-triage-950377.md"
     },
     "doc-hygiene:T16156EA9FCE985E5-001": {
       "task": "T16156EA9FCE985E5-001",
       "loop": "doc-hygiene",
-      "last_run_at": "2026-10-12 21:20:26",
+      "last_run_at": "2026-10-12 21:34:33",
       "last_status": "success",
-      "last_report": ".agent/loops/runs/20261012-212026-doc-hygiene-950377.md"
+      "last_report": ".agent/loops/runs/20261012-213433-doc-hygiene-950377-2.md"
     },
     "daily-plan-triage:T98255863DC3EEDAE-001": {
       "task": "T98255863DC3EEDAE-001",
@@ -573,12 +573,12 @@
     "work-start:T16156EA9FCE985E5-001": {
       "task": "T16156EA9FCE985E5-001",
       "checkpoint": "work-start",
-      "last_run_at": "2026-10-12 21:10:35",
+      "last_run_at": "2026-10-12 21:31:51",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20261012-211035-daily-plan-triage-950377.md"
+        ".agent/loops/runs/20261012-213151-daily-plan-triage-950377.md"
       ],
-      "last_input_hash": "829f850c61762d87",
+      "last_input_hash": "e536e0765f830911",
       "strict": false,
       "trigger": "work-start",
       "open_follow_up": null
@@ -586,12 +586,12 @@
     "pre-finish:T16156EA9FCE985E5-001": {
       "task": "T16156EA9FCE985E5-001",
       "checkpoint": "pre-finish",
-      "last_run_at": "2026-10-12 21:20:25",
+      "last_run_at": "2026-10-12 21:34:33",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20261012-212025-doc-hygiene-950377.md"
+        ".agent/loops/runs/20261012-213433-doc-hygiene-950377.md"
       ],
-      "last_input_hash": "05ba23c7d3fcaac1",
+      "last_input_hash": "6e8ff0d76a2c8c6b",
       "strict": true,
       "trigger": "pre-finish",
       "open_follow_up": null
@@ -599,12 +599,12 @@
     "post-finish:T16156EA9FCE985E5-001": {
       "task": "T16156EA9FCE985E5-001",
       "checkpoint": "post-finish",
-      "last_run_at": "2026-10-12 21:20:26",
+      "last_run_at": "2026-10-12 21:34:33",
       "last_status": "success",
       "last_reports": [
-        ".agent/loops/runs/20261012-212026-doc-hygiene-950377.md"
+        ".agent/loops/runs/20261012-213433-doc-hygiene-950377-2.md"
       ],
-      "last_input_hash": "c2526b3bd6fc9130",
+      "last_input_hash": "2220cf4a9eb49b43",
       "strict": false,
       "trigger": "post-finish",
       "open_follow_up": null
