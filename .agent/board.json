@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-12 21:34:33",
+  "updated_at": "2026-10-12 21:39:21",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -777,7 +777,7 @@
     "T16156EA9FCE985E5-001": {
       "title": "Publish traceable engineering architecture diagrams",
       "type": "code",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "scope": [
         "docs/architecture/",
@@ -788,7 +788,7 @@
       ],
       "deps": [],
       "created_at": "2026-10-12 21:10:07",
-      "updated_at": "2026-10-12 21:34:33",
+      "updated_at": "2026-10-12 21:38:11",
       "claim_id": "ecf846e3056199c10ba17b0ddd98528d"
     },
     "T98255863DC3EEDAE-001": {
@@ -803,6 +803,19 @@
       "created_at": "2026-10-12 21:23:47",
       "updated_at": "2026-10-12 21:29:14",
       "claim_id": "209598e2df5f639cb5785a0cbc89067b"
+    },
+    "T98255863DC3EEDAE-002": {
+      "title": "Independent bounded architecture re-review 62ce1a4",
+      "type": "review",
+      "status": "done",
+      "owner": "independent-architecture-reviewer-3d6c545-native",
+      "scope": [
+        ".agent/gates/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-12 21:36:28",
+      "updated_at": "2026-10-12 21:39:21",
+      "claim_id": "5898db9135abddf70e2006f1fead2c11"
     }
   },
   "updated": ""
