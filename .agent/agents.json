@@ -424,6 +424,17 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "independent-architecture-reviewer-3d6c545-native": {
+      "role": "review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/gates/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }
