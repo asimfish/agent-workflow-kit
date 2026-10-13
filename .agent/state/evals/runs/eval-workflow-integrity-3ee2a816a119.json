@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "id": "eval-workflow-integrity-3ee2a816a119",
+  "suite": "workflow-integrity",
+  "suite_hash": "1cc914f29a7bb136bf9f773402449fcb2c30f6bfda24f222a57780421587ae04",
+  "suite_source": "/private/tmp/awk-native-independent-review-20261013-qFnygz/repo/.agent/evals/suites.json",
+  "policy_root": "/private/tmp/awk-native-independent-review-20261013-qFnygz/repo",
+  "policy_commit": "d1b9685a92c513636cb228f49b26ce20f7ee7c9d",
+  "policy_dirty": false,
+  "target_root": "/private/tmp/awk-simulated-collaboration-baseline-866b99c",
+  "target_commit": "866b99c767e967e3e4747734538b3535dc3fc43b",
+  "target_dirty": false,
+  "target_commit_after": "866b99c767e967e3e4747734538b3535dc3fc43b",
+  "target_dirty_after": false,
+  "started_at": "2026-10-13 16:28:27",
+  "finished_at": "2026-10-13 16:28:28",
+  "duration_seconds": 0.662363,
+  "status": "passed",
+  "metrics": {
+    "held_in": {
+      "total": 1,
+      "passed": 1,
+      "score": 1.0,
+      "required_failures": []
+    },
+    "held_out": {
+      "total": 1,
+      "passed": 1,
+      "score": 1.0,
+      "required_failures": []
+    },
+    "overall": {
+      "total": 2,
+      "passed": 2,
+      "score": 1.0,
+      "required_failures": []
+    }
+  },
+  "cases": [
+    {
+      "id": "manual-workflow-check",
+      "split": "held_in",
+      "required": true,
+      "argv": [
+        "python3",
+        "tools/agentctl.py",
+        "check",
+        "--mode",
+        "manual"
+      ],
+      "timeout_seconds": 120.0,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "timed_out": false,
+      "start_error": "",
+      "duration_seconds": 0.3134,
+      "artifacts": [],
+      "stdout": "agentctl check (manual): OK",
+      "stderr": ""
+    },
+    {
+      "id": "controller-compiles",
+      "split": "held_out",
+      "required": true,
+      "argv": [
+        "python3",
+        "-m",
+        "py_compile",
+        "tools/agentctl.py",
+        "tools/agent_workflow_hook.py"
+      ],
+      "timeout_seconds": 120.0,
+      "expected_exit_codes": [
+        0
+      ],
+      "exit_code": 0,
+      "passed": true,
+      "timed_out": false,
+      "start_error": "",
+      "duration_seconds": 0.296078,
+      "artifacts": [],
+      "stdout": "",
+      "stderr": ""
+    }
+  ],
+  "integrity": {
+    "algorithm": "hmac-sha256",
+    "signature": "302aed1cd8ecfe19070e40aa36ece0dc8ec67895156da894370c3fa61de72ad7"
+  }
+}

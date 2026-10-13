@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "suite": "workflow-integrity",
+  "suite_hash": "1cc914f29a7bb136bf9f773402449fcb2c30f6bfda24f222a57780421587ae04",
+  "policy_commit": "d1b9685a92c513636cb228f49b26ce20f7ee7c9d",
+  "baseline": "eval-workflow-integrity-3ee2a816a119",
+  "baseline_target_commit": "866b99c767e967e3e4747734538b3535dc3fc43b",
+  "candidate": "eval-workflow-integrity-b7ea3d1d4d5c",
+  "candidate_target_commit": "43dccb3a1fb5f2b77d87b3066101f250e39138ca",
+  "accepted": true,
+  "reasons": [],
+  "metrics": {
+    "held_in": {
+      "baseline": 1.0,
+      "candidate": 1.0
+    },
+    "held_out": {
+      "baseline": 1.0,
+      "candidate": 1.0
+    },
+    "overall": {
+      "baseline": 1.0,
+      "candidate": 1.0
+    }
+  },
+  "decided_at": "2026-10-13 16:28:54",
+  "id": "eval-decision-03f03ad16a14",
+  "by": "native-simulation-reviewer-qfnygz",
+  "note": "Independent native review of exact clean baseline 866b99c and frozen clean candidate 43dccb3; unchanged supervisor-owned workflow-integrity smoke only, supplemented by independent ten integration/ownership tests.",
+  "integrity": {
+    "algorithm": "hmac-sha256",
+    "signature": "d465b56905494d84c0ebe5b1a395cab666b3e0f96a3bc8a2c72babbea8b02118"
+  }
+}

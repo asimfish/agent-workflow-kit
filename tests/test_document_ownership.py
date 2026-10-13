@@ -246,6 +246,26 @@ class DocumentOwnershipRegressionTest(unittest.TestCase):
         allowed = self.guard("src/one/out.json", session="solo")
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
 
+    def test_multi_hyphen_ids_ignore_peers_but_require_own_rows_to_be_reread(self):
+        self.start("one", "T-SIM-CATALOG-001", "jobs/catalog/")
+        self.start("two", "T-SIM-PRICING-001", "jobs/pricing/")
+        self.agentctl("note", "peer creation must not need refresh", session="one")
+        for relative, pattern in (
+            ("TASKS.md", r"^(\| T-SIM-CATALOG-001 \|[^\n]*)$"),
+            ("PROJECT_PLAN.md", r"^(- \[[ x]\] T-SIM-CATALOG-001\b[^\n]*)$"),
+        ):
+            with self.subTest(document=relative):
+                path = self.root / ".agent" / relative
+                original = path.read_text(encoding="utf-8")
+                edited, count = re.subn(pattern, r"\1 (human clarification)", original, count=1, flags=re.M)
+                self.assertEqual(count, 1)
+                path.write_text(edited, encoding="utf-8")
+                denied = self.agentctl("note", "must not bypass own-row receipt", session="one", expect=1)
+                self.assertIn("documents changed", denied.stderr)
+                path.write_text(original, encoding="utf-8")
+                self.agentctl("refresh", session="one")
+                self.agentctl("note", "own row reread; continue", session="one")
+
     def test_plan_body_edits_and_own_row_changes_still_invalidate(self):
         self.start("one", "T-231", "src/one/")
         self.agentctl("refresh", session="one")
