@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-13 15:45:08",
+  "updated_at": "2026-10-13 15:53:30",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -820,19 +820,34 @@
     "T2638EC2576A695FB-001": {
       "title": "Verify concurrent collaboration in simulated installed projects",
       "type": "code",
-      "status": "in_progress",
+      "status": "todo",
       "owner": "codex",
       "scope": [
         "tests/test_simulated_collaboration.py",
+        "tests/test_document_ownership.py",
         "docs/simulated-project-acceptance.md",
         "README.md",
         "README_CN.md",
-        "CHANGELOG.md"
+        "CHANGELOG.md",
+        "tools/agentctl.py",
+        "templates/project/tools/agentctl.py"
       ],
       "deps": [],
-      "created_at": "2026-10-13 15:27:37",
-      "updated_at": "2026-10-13 15:45:08",
-      "claim_id": "09241a0178c830d3163b3ac28fb6b1ed"
+      "created_at": "2026-10-13 15:51:01",
+      "updated_at": "2026-10-13 15:51:01"
+    },
+    "TFFDBEACEE0010403-001": {
+      "title": "Prepare authorized scope handoff for synthetic acceptance repair",
+      "type": "generic",
+      "status": "in_progress",
+      "owner": "codex",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-13 15:52:21",
+      "updated_at": "2026-10-13 15:53:30",
+      "claim_id": "c6869c46abb675e61dbde84d05c1492b"
     }
   },
   "updated": ""
