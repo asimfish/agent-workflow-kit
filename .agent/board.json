@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-13 19:17:54",
+  "updated_at": "2026-10-13 19:21:59",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -875,7 +875,7 @@
       ],
       "deps": [],
       "created_at": "2026-10-13 19:01:42",
-      "updated_at": "2026-10-13 19:13:58",
+      "updated_at": "2026-10-13 19:21:59",
       "claim_id": "9beee76d6d680774149885226f68490f"
     },
     "T7BE6533FD0AF5D1E-001": {
