@@ -25,6 +25,11 @@ daemon, no server, no dependency beyond Python 3.9.
 sheet, editable flow diagrams, state ownership, multi-session boundaries, and
 source references. The drawings distinguish implemented behavior from limits.
 
+[Simulated project acceptance](docs/simulated-project-acceptance.md) replays
+concurrent document workers, isolated collectors and interrupted-loop recovery
+in disposable installed projects. Agents run these checks; no user project or
+extra daily command is required.
+
 ## Install
 
 ```bash

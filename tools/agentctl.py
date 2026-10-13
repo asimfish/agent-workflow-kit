@@ -2374,8 +2374,8 @@ def _doc_hash_targets(root: Path, task: str | None):
     return targets
 
 
-_TASKS_INDEX_ROW_RE = re.compile(r"^\|\s*([A-Za-z][A-Za-z0-9]*-[\w.]+)\s*\|")
-_PLAN_TASK_ROW_RE = re.compile(r"^- \[[ x]\]\s+([A-Za-z][A-Za-z0-9]*-[\w.]+)\b")
+_TASKS_INDEX_ROW_RE = re.compile(r"^\|\s*([A-Za-z][A-Za-z0-9]*-[\w.-]+)\s*\|")
+_PLAN_TASK_ROW_RE = re.compile(r"^- \[[ x]\]\s+([A-Za-z][A-Za-z0-9]*-[\w.-]+)(?=\s|$)")
 
 
 def _receipt_view(rel: str, data: bytes, task: str) -> bytes:

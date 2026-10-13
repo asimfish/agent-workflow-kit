@@ -6,6 +6,12 @@ pull requests.
 
 ## Unreleased
 
+- Read receipts recognize complete multi-hyphen task IDs, so peer task rows do
+  not falsely block progress and own plan rows remain guarded. Installed
+  synthetic-project journeys cover concurrent documents without lost updates,
+  worktree collectors, supervised resource ownership, normal Git delivery and
+  owner-only interrupted-loop recovery. No new daily commands or dependencies.
+
 - Architecture documentation adds a six-panel engineering sheet, offline HTML
   source, PNG preview and GitHub-readable Mermaid diagrams for state ownership,
   multi-session isolation, acceptance and bounded feedback loops. Stdlib checks

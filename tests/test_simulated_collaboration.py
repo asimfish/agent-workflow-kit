@@ -80,6 +80,16 @@ class SimulatedCollaborationTest(_ContractTestCase):
             time.sleep(0.05)
         self.fail(message)
 
+    def cleanup_run(self, root, session, run):
+        def status():
+            return json.loads(self.ctl(root, session, "run", "show", run, "--json").stdout)["runs"][0]["status"]
+
+        terminal = {"succeeded", "failed", "cancelled"}
+        if status() not in terminal:
+            self.ctl(root, session, "run", "stop", run, "--reason", "synthetic test cleanup")
+            self.ctl(root, session, "run", "wait", run, "--timeout", "30", expect=None)
+        self.assertIn(status(), terminal, "cleanup left a live or unreconciled collector")
+
     def test_four_shared_document_sessions_preserve_all_updates_without_retries(self):
         labels = ("catalog", "pricing", "validation", "replay")
         barrier = threading.Barrier(len(labels))
@@ -96,12 +106,23 @@ class SimulatedCollaborationTest(_ContractTestCase):
         self.assertEqual(len({row["workflow_session_key"] for row in own_rows}), 4)
 
         def record(label):
-            for step in range(3):
-                barrier.wait(timeout=30)
-                self.ctl(self.root, label, "note", f"SIM[{label}][{step}]")
+            try:
+                for step in range(3):
+                    barrier.wait(timeout=30)
+                    self.ctl(self.root, label, "note", f"SIM[{label}][{step}]")
+            except Exception:
+                barrier.abort()
+                raise
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
-            list(pool.map(record, labels))
+            futures = {pool.submit(record, label): label for label in labels}
+            failures = []
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    future.result()
+                except Exception as error:
+                    failures.append(f"{futures[future]}: {error}")
+        self.assertEqual(failures, [], "\n".join(failures))
         progress = (self.root / ".agent/logs/progress.md").read_text(encoding="utf-8")
         for label, (_, task) in tasks.items():
             doc = self.doc(task)
@@ -199,7 +220,7 @@ class SimulatedCollaborationTest(_ContractTestCase):
             self.write(a, "worker-a", "jobs/batch-a/release", "continue")
             self.ctl(a, "worker-a", "run", "wait", run_a, "--timeout", "30")
         finally:
-            self.ctl(a, "worker-a", "run", "stop", run_a, "--reason", "synthetic test cleanup", expect=None)
+            self.cleanup_run(a, "worker-a", run_a)
         self.assertEqual(json.loads((a / "jobs/batch-a/result.json").read_text()), list(range(1, 21)))
         released = self.ctl(b, "worker-b", "resource", "acquire", "synthetic:collector-slot:0")
         resource = re.search(r"\bresource-[0-9a-f]{16}\b", released.stdout).group()
@@ -213,7 +234,7 @@ class SimulatedCollaborationTest(_ContractTestCase):
         try:
             self.ctl(b, "worker-b", "run", "wait", run_b, "--timeout", "30")
         finally:
-            self.ctl(b, "worker-b", "run", "stop", run_b, "--reason", "synthetic test cleanup", expect=None)
+            self.cleanup_run(b, "worker-b", run_b)
         data_a = json.loads((a / "jobs/batch-a/result.json").read_text())
         data_b = json.loads((b / "jobs/batch-b/result.json").read_text())
         self.assertEqual(data_a + data_b, list(range(1, 41)))
