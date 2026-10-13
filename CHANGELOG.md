@@ -6,6 +6,12 @@ pull requests.
 
 ## Unreleased
 
+- Synthetic acceptance replays a copied-history SessionStart fork and a legal
+  released-owner handoff in one installed project. It checks preserved partial
+  outputs, a new successor claim, refusal of the old owner's writes and claim
+  recovery, and uninterrupted progress for the disjoint child task. Runtime,
+  hooks and verifier policy are unchanged.
+
 - Read receipts recognize complete multi-hyphen task IDs, so peer task rows do
   not falsely block progress and own plan rows remain guarded. Installed
   synthetic-project journeys cover concurrent documents without lost updates,

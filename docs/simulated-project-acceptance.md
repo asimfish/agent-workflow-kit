@@ -9,7 +9,7 @@ No SSH connection, GPU, cloud service or downloaded dataset is needed.
 
 ## Journeys
 
-`tests/test_simulated_collaboration.py` covers three end-to-end journeys:
+`tests/test_simulated_collaboration.py` covers four end-to-end journeys:
 
 - Four same-name document workers claim disjoint catalog, pricing, validation
   and replay tasks concurrently. Barriers coordinate three rounds of notes;
@@ -18,6 +18,16 @@ No SSH connection, GPU, cloud service or downloaded dataset is needed.
   theft, peer file/document writes and overlapping task creation are refused.
   Completing validation leaves other workers productive. A human plan-body
   change blocks progress until an explicit re-read/refresh.
+- A copied-history child carries its parent's workflow ID into the real
+  `SessionStart` hook, but has a different simulated host runtime. The hook
+  clears the inherited ID and records lineage. The child cannot claim its
+  parent's live task, but can start a disjoint task while the parent continues.
+  After the parent explicitly releases its task, a successor receives a new
+  claim and completes the existing partial output without losing prior notes.
+  The old parent cannot note, finish, refresh, rebind, reclaim or write to the
+  successor's files/document. Denials leave the task board and both documents
+  unchanged. The child retains its own claim and continues after the successor
+  finishes, without an unrelated receipt refresh.
 - Two experiment workers receive separate managed worktrees and collect exact
   synthetic record ranges 1-20 and 21-40. Files do not appear in each other's
   checkout. A real supervised collector holds a synthetic resource slot until
@@ -80,6 +90,10 @@ the quality or intentions of an LLM. They do not establish cross-machine
 realtime coordination, remote GPU telemetry, client-side hook trust, OS-level
 isolation, unlimited scheduling, performance budgets or Fable transport.
 Local fake resource slots exercise ownership, not GPU behavior.
+The fork payload, provider environment and historical notes are controlled
+fixtures. They prove the identity/claim protocol, not a model's comprehension
+of copied chat history. The local handoff uses an explicit inspected release;
+it does not simulate a crash or authorize automatic takeover of a live worker.
 
 Unchanged supervisor-owned `workflow-integrity` baseline/candidate evals and
 native independent review supplement the regressions. Its compile/manual

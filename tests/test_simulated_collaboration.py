@@ -173,6 +173,97 @@ class SimulatedCollaborationTest(_ContractTestCase):
         self.ctl(self.root, "catalog", "refresh")
         self.ctl(self.root, "catalog", "note", "human direction read; continue")
 
+    def test_copied_history_child_and_released_task_handoff_remain_isolated(self):
+        _, task = self.claim("parent", "handoff")
+        original = self.write(self.root, "parent", "jobs/handoff/result.txt", "parent partial\n")
+        self.ctl(self.root, "parent", "note", "SIM[parent] partial output ready for a verified handoff")
+        parent = json.loads(self.ctl(self.root, "parent", "status", "--json").stdout)
+
+        # Simulate a fork carrying the parent's workflow ID, but not its runtime.
+        child_env = self.env("parent", CODEX_THREAD_ID="thread-history-child")
+        started = subprocess.run(
+            [sys.executable, "tools/agent_workflow_hook.py", "session-start"],
+            cwd=self.root, env=child_env, text=True, capture_output=True, timeout=60,
+            input=json.dumps({"session_id": "parent", "parent_session_id": "parent", "source": "startup"}),
+        )
+        self.assertEqual(started.returncode, 0, started.stdout + started.stderr)
+        exported = json.loads(started.stdout)["env"]
+        self.assertEqual(exported["AGENT_WORKFLOW_SESSION_ID"], "")
+        child_env.update(exported)
+
+        def child(*args, expect=0):
+            result = subprocess.run(
+                [sys.executable, "tools/agentctl.py", *args], cwd=self.root,
+                env=child_env, text=True, capture_output=True, timeout=120,
+            )
+            self.assertEqual(result.returncode, expect, f"{args}\n{result.stdout}\n{result.stderr}")
+            return result
+
+        before = self.doc(task)
+        child("work", "--agent", "codex", "--task", task, expect=1)
+        self.assertEqual(self.doc(task), before)
+        peer_task = "T-SIM-HISTORY-CHILD-001"
+        child("work", "--agent", "codex", "--auto-create", "--new-id", peer_task,
+              "--type", "docs", "--title", "independent child task", "--scope", "jobs/child/",
+              "--done", "child notes belong only to the child task")
+        peer = json.loads(child("status", "--json").stdout)
+        self.assertEqual(peer["task"], peer_task)
+        self.assertNotEqual(peer["workflow_session_key"], parent["workflow_session_key"])
+        self.assertRegex(peer["parent_session_key"], r"^lineage-[0-9a-f]{24}$")
+        focus = child("focus").stdout
+        self.assertIn(peer_task, focus)
+        self.assertNotIn(f"FOCUS [{task}]", focus)
+        child("note", "SIM[child] independent work after copied history")
+        self.ctl(self.root, "parent", "note", "SIM[parent] still owns its task without refreshing for the child")
+
+        # A legal handoff retains the partial files and rotates claim authority.
+        peer_doc = self.doc(peer_task)
+        reason = "parent stopped; task document and partial output inspected; no background process"
+        self.ctl(self.root, "parent", "sessions", "release", "--reason", reason)
+        self.assertEqual(original.read_text(), "parent partial\n")
+        self.ctl(self.root, "successor", "work", "--agent", "codex", "--task", task)
+        successor = json.loads(self.ctl(self.root, "successor", "status", "--json").stdout)
+        self.assertEqual(successor["task"], task)
+        self.assertNotEqual(successor["claim_id"], parent["claim_id"])
+        self.assertNotEqual(successor["workflow_session_key"], parent["workflow_session_key"])
+        self.assertIn("SIM[parent] partial output", self.doc(task))
+        self.ctl(self.root, "successor", "note", f"SIM[successor] verified handoff: {reason}")
+        self.write(self.root, "successor", "jobs/handoff/result.txt", "parent partial\nsuccessor completed\n")
+        self.assertEqual(self.doc(peer_task), peer_doc)
+
+        board = (self.root / ".agent/board.json").read_bytes()
+        task_doc = self.doc(task)
+        for args in (
+            ("note", "SIM[revoked] must not be recorded"),
+            ("finish", "--summary", "SIM[revoked] must not finish"),
+            ("refresh",), ("upgrade", "rebind"),
+            ("work", "--agent", "codex", "--task", task),
+        ):
+            with self.subTest(old_owner=args):
+                denied = self.ctl(self.root, "parent", *args, expect=None)
+                self.assertNotEqual(denied.returncode, 0, denied.stdout + denied.stderr)
+                self.assertRegex(denied.stdout + denied.stderr, r"released.*claim|claim authority|session conflict|already claimed")
+                self.assertEqual(self.doc(task), task_doc)
+                self.assertEqual(self.doc(peer_task), peer_doc)
+                self.assertEqual((self.root / ".agent/board.json").read_bytes(), board)
+        self.write_guard(self.root, "parent", "jobs/handoff/result.txt", expect=2)
+        self.write_guard(self.root, "parent", f".agent/tasks/{task}.md", expect=2)
+        self.assertEqual(original.read_text(), "parent partial\nsuccessor completed\n")
+        self.assertEqual(self.doc(task), task_doc)
+        self.assertEqual(self.doc(peer_task), peer_doc)
+        self.assertEqual((self.root / ".agent/board.json").read_bytes(), board)
+
+        self.ctl(self.root, "successor", "finish", "--summary", "verified partial output preserved and completed")
+        child("note", "SIM[child] continues after successor finish without refreshing")
+        self.assertEqual(self.status(task), "review")
+        self.assertEqual(self.status(peer_task), "in_progress")
+        self.assertEqual(json.loads(child("status", "--json").stdout)["claim_id"], peer["claim_id"])
+        self.assertNotIn("SIM[revoked]", self.doc(task))
+        self.assertNotIn("SIM[child]", self.doc(task))
+        self.assertNotIn("SIM[parent]", self.doc(peer_task))
+        self.assertNotIn("SIM[successor]", self.doc(peer_task))
+        self.ctl(self.root, "successor", "reconcile", "check")
+
     def test_isolated_collectors_own_outputs_resources_and_normal_git_delivery(self):
         for args in (
             ("add", *agentctl.ADOPTION_COMMIT_ADD_PATHS),

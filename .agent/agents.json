@@ -446,6 +446,15 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "codex-native-handoff-review-j2nng1d3": {
+      "role": "review",
+      "backend": "codex",
+      "write_scope": [],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }
