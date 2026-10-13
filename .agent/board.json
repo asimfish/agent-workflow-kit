@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-13 16:46:36",
+  "updated_at": "2026-10-13 19:08:44",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -862,6 +862,21 @@
       "created_at": "2026-10-13 16:25:10",
       "updated_at": "2026-10-13 16:35:54",
       "claim_id": "779d96249a1d8f2a4063d6dee031dd98"
+    },
+    "T42C4B3C72343ADD6-001": {
+      "title": "Verify cloned-history task separation and lawful handoff in a synthetic project",
+      "type": "code",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tests/test_simulated_collaboration.py",
+        "docs/simulated-project-acceptance.md",
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-13 19:01:42",
+      "updated_at": "2026-10-13 19:08:44",
+      "claim_id": "9beee76d6d680774149885226f68490f"
     }
   },
   "updated": ""
