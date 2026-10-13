@@ -36,9 +36,9 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] TBC9D06D0DCB01934-001 - Native independent frozen acceptance review 43dccb3 (owner: native-simulation-reviewer-qfnygz)
-- [ ] TFFDBEACEE0010403-001 - Prepare authorized scope handoff for synthetic acceptance repair (owner: codex)
-- [ ] T2638EC2576A695FB-001 - Verify concurrent collaboration in simulated installed projects (owner: codex)
+- [x] TBC9D06D0DCB01934-001 - Native independent frozen acceptance review 43dccb3 (owner: native-simulation-reviewer-qfnygz)
+- [x] TFFDBEACEE0010403-001 - Prepare authorized scope handoff for synthetic acceptance repair (owner: codex)
+- [x] T2638EC2576A695FB-001 - Verify concurrent collaboration in simulated installed projects (owner: codex)
 - [x] T98255863DC3EEDAE-002 - Independent bounded architecture re-review 62ce1a4 (owner: independent-architecture-reviewer-3d6c545-native)
 - [x] T98255863DC3EEDAE-001 - Independent frozen architecture review 3d6c545 (owner: independent-architecture-reviewer-3d6c545-native)
 - [x] T16156EA9FCE985E5-001 - Publish traceable engineering architecture diagrams (owner: codex)
