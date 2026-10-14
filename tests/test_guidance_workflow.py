@@ -941,7 +941,7 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         packet_id = re.search(r"guidance packet created: (\S+)", created.stdout).group(1)
         self.commit("chore(agent): prepare managed guidance test\n\nRefs: T-210")
 
-        worker = self.root.parent / "worker"
+        worker = self.root.parent / (self.root.name + "-worker")
         self.addCleanup(shutil.rmtree, worker, ignore_errors=True)
         leased = self.agentctl(
             "worktree", "create",
@@ -1026,6 +1026,15 @@ raise SystemExit(int(os.environ.get("FAKE_CODEX_EXIT", "0")))
         )
         self.assertTrue(common_acceptance)
 
+        refused = self.agentctl("worktree", "release", lease_id, expect=1)
+        self.assertIn("held by session", refused.stderr)
+        self.assertTrue(worker.is_dir())
+        worker_env = self.env.copy()
+        worker_env["AGENT_WORKFLOW_SESSION_ID"] = "session-worktree"
+        self.agentctl(
+            "sessions", "release", "--reason", "worker acceptance verified; no runs remain",
+            cwd=worker, env=worker_env, expect=0,
+        )
         self.agentctl("worktree", "release", lease_id, expect=0)
         self.assertFalse(worker.exists())
         self.assertTrue(all(path.is_file() for path in common_acceptance))

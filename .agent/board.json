@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-14 11:43:57",
+  "updated_at": "2026-10-14 11:50:16",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -907,6 +907,19 @@
       "created_at": "2026-10-14 11:34:25",
       "updated_at": "2026-10-14 11:43:57",
       "claim_id": "dbc951ccbb867d949c043d42c7a77c9a"
+    },
+    "TBF677A18D074AD84-001": {
+      "title": "Use lawful worker-session retirement in guidance acceptance regression",
+      "type": "code",
+      "status": "review",
+      "owner": "codex",
+      "scope": [
+        "tests/test_guidance_workflow.py"
+      ],
+      "deps": [],
+      "created_at": "2026-10-14 11:48:53",
+      "updated_at": "2026-10-14 11:50:16",
+      "claim_id": "2ab51acfc8b8e01fa05c4e05f284525b"
     }
   },
   "updated": ""
