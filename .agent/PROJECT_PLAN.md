@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TB4CDAE5DCCCABB66-002 - Publish native390e1d5 re-review rejection and eval ledger (owner: codex-native-retirement-review-z9zb1r)
+- [x] TB4CDAE5DCCCABB66-001 - Independent native repaired retirement review exact390e1d5 (owner: codex-native-retirement-review-z9zb1r)
 - [ ] TB57732629AEA08EB-002 - Publish stored retirement race probes and native review ledger (owner: codex-native-retirement-review-z9zb1r)
 - [x] TB57732629AEA08EB-001 - Independent native frozen retirement and guidance compatibility review 7c8146e (owner: codex-native-retirement-review-z9zb1r)
 - [x] TBF677A18D074AD84-001 - Use lawful worker-session retirement in guidance acceptance regression (owner: codex)

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-14 12:29:51",
+  "updated_at": "2026-10-14 12:48:22",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -894,7 +894,7 @@
     "T0D2DB618740F19A9-001": {
       "title": "Protect clean managed worktrees while sessions or background runs still use them",
       "type": "code",
-      "status": "review",
+      "status": "blocked",
       "owner": "codex",
       "scope": [
         "tools/agentctl.py",
@@ -905,7 +905,7 @@
       ],
       "deps": [],
       "created_at": "2026-10-14 11:34:25",
-      "updated_at": "2026-10-14 12:29:51",
+      "updated_at": "2026-10-14 12:43:35",
       "claim_id": "dbc951ccbb867d949c043d42c7a77c9a"
     },
     "TBF677A18D074AD84-001": {
@@ -948,6 +948,35 @@
       "created_at": "2026-10-14 12:06:19",
       "updated_at": "2026-10-14 12:11:27",
       "claim_id": "294eda2060fd8d675cf98c35a26e7da6"
+    },
+    "TB4CDAE5DCCCABB66-001": {
+      "title": "Independent native repaired retirement review exact390e1d5",
+      "type": "review",
+      "status": "done",
+      "owner": "codex-native-retirement-review-z9zb1r",
+      "scope": [
+        ".agent/gates/",
+        ".agent/evals/runs/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-14 12:38:38",
+      "updated_at": "2026-10-14 12:48:21",
+      "claim_id": "0238b19104c83887156b1c05b92b2058"
+    },
+    "TB4CDAE5DCCCABB66-002": {
+      "title": "Publish native390e1d5 re-review rejection and eval ledger",
+      "type": "docs",
+      "status": "in_progress",
+      "owner": "codex-native-retirement-review-z9zb1r",
+      "scope": [
+        ".agent/gates/",
+        ".agent/bus/",
+        ".agent/handoffs/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-14 12:48:21",
+      "updated_at": "2026-10-14 12:48:22",
+      "claim_id": "d1b6e5ff7eaf7bfb694afff8cf0cbf57"
     }
   },
   "updated": ""
