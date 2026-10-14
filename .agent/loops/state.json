@@ -258,6 +258,104 @@
       "last_run_at": "2026-10-13 19:17:55",
       "last_status": "success",
       "last_report": ".agent/loops/runs/20261013-191755-doc-hygiene-f2ebb0.md"
+    },
+    "daily-plan-triage:T0D2DB618740F19A9-001": {
+      "task": "T0D2DB618740F19A9-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-14 12:54:52",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-125452-daily-plan-triage-9480f7.md"
+    },
+    "doc-hygiene:T0D2DB618740F19A9-001": {
+      "task": "T0D2DB618740F19A9-001",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-14 12:58:18",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-125818-doc-hygiene-9480f7-2.md"
+    },
+    "daily-plan-triage:TBF677A18D074AD84-001": {
+      "task": "TBF677A18D074AD84-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-14 11:49:08",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-114908-daily-plan-triage-7349d6.md"
+    },
+    "doc-hygiene:TBF677A18D074AD84-001": {
+      "task": "TBF677A18D074AD84-001",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-14 11:50:16",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-115016-doc-hygiene-7349d6-2.md"
+    },
+    "daily-plan-triage:TB57732629AEA08EB-001": {
+      "task": "TB57732629AEA08EB-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-14 11:54:40",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-115440-daily-plan-triage-2f911f.md"
+    },
+    "doc-hygiene:TB57732629AEA08EB-001": {
+      "task": "TB57732629AEA08EB-001",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-14 12:00:54",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-120054-doc-hygiene-2f911f-2.md"
+    },
+    "daily-plan-triage:TB57732629AEA08EB-002": {
+      "task": "TB57732629AEA08EB-002",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-14 12:06:20",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-120620-daily-plan-triage-2f911f.md"
+    },
+    "doc-hygiene:TB57732629AEA08EB-002": {
+      "task": "TB57732629AEA08EB-002",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-14 12:09:46",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-120946-doc-hygiene-2f911f-2.md"
+    },
+    "daily-plan-triage:TB4CDAE5DCCCABB66-001": {
+      "task": "TB4CDAE5DCCCABB66-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-14 12:38:38",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-123838-daily-plan-triage-ebed32.md"
+    },
+    "doc-hygiene:TB4CDAE5DCCCABB66-001": {
+      "task": "TB4CDAE5DCCCABB66-001",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-14 12:48:21",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-124821-doc-hygiene-ebed32-2.md"
+    },
+    "daily-plan-triage:TB4CDAE5DCCCABB66-002": {
+      "task": "TB4CDAE5DCCCABB66-002",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-14 12:48:22",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-124822-daily-plan-triage-ebed32.md"
+    },
+    "doc-hygiene:TB4CDAE5DCCCABB66-002": {
+      "task": "TB4CDAE5DCCCABB66-002",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-14 12:49:21",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-124921-doc-hygiene-ebed32-2.md"
+    },
+    "daily-plan-triage:TA688849DD2A68FB3-001": {
+      "task": "TA688849DD2A68FB3-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-14 13:01:49",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-130149-daily-plan-triage-36eb72.md"
+    },
+    "doc-hygiene:TA688849DD2A68FB3-001": {
+      "task": "TA688849DD2A68FB3-001",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-14 13:07:18",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-130718-doc-hygiene-36eb72-2.md"
     }
   },
   "checkpoints": {
@@ -962,6 +1060,279 @@
         ".agent/loops/runs/20261013-191755-doc-hygiene-f2ebb0.md"
       ],
       "last_input_hash": "74dde7569eeb261c",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:T0D2DB618740F19A9-001": {
+      "task": "T0D2DB618740F19A9-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-14 12:54:52",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-125452-daily-plan-triage-9480f7.md"
+      ],
+      "last_input_hash": "8a414fe9e9f34ba8",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:T0D2DB618740F19A9-001": {
+      "task": "T0D2DB618740F19A9-001",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-14 12:58:18",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-125818-doc-hygiene-9480f7.md"
+      ],
+      "last_input_hash": "8a2f1e9c0383cab0",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:T0D2DB618740F19A9-001": {
+      "task": "T0D2DB618740F19A9-001",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-14 12:58:18",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-125818-doc-hygiene-9480f7-2.md"
+      ],
+      "last_input_hash": "f58c3c90d8e5fa65",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:TBF677A18D074AD84-001": {
+      "task": "TBF677A18D074AD84-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-14 11:49:08",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-114908-daily-plan-triage-7349d6.md"
+      ],
+      "last_input_hash": "9101e6de22e4cbee",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TBF677A18D074AD84-001": {
+      "task": "TBF677A18D074AD84-001",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-14 11:50:16",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-115016-doc-hygiene-7349d6.md"
+      ],
+      "last_input_hash": "8c17832810d3604c",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TBF677A18D074AD84-001": {
+      "task": "TBF677A18D074AD84-001",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-14 11:50:16",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-115016-doc-hygiene-7349d6-2.md"
+      ],
+      "last_input_hash": "723038fceb0551f6",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:TB57732629AEA08EB-001": {
+      "task": "TB57732629AEA08EB-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-14 11:54:40",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-115440-daily-plan-triage-2f911f.md"
+      ],
+      "last_input_hash": "35c508729886273b",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TB57732629AEA08EB-001": {
+      "task": "TB57732629AEA08EB-001",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-14 12:00:54",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-120054-doc-hygiene-2f911f.md"
+      ],
+      "last_input_hash": "6dd9c239148b6106",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TB57732629AEA08EB-001": {
+      "task": "TB57732629AEA08EB-001",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-14 12:00:54",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-120054-doc-hygiene-2f911f-2.md"
+      ],
+      "last_input_hash": "a9f7935bb8915f96",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:TB57732629AEA08EB-002": {
+      "task": "TB57732629AEA08EB-002",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-14 12:06:20",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-120620-daily-plan-triage-2f911f.md"
+      ],
+      "last_input_hash": "b4494e4238e0e244",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TB57732629AEA08EB-002": {
+      "task": "TB57732629AEA08EB-002",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-14 12:09:46",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-120946-doc-hygiene-2f911f.md"
+      ],
+      "last_input_hash": "b9dfefb003f90457",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TB57732629AEA08EB-002": {
+      "task": "TB57732629AEA08EB-002",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-14 12:09:46",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-120946-doc-hygiene-2f911f-2.md"
+      ],
+      "last_input_hash": "2de1a4db0b2c81e6",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:TB4CDAE5DCCCABB66-001": {
+      "task": "TB4CDAE5DCCCABB66-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-14 12:38:38",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-123838-daily-plan-triage-ebed32.md"
+      ],
+      "last_input_hash": "dcc220208b58953e",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TB4CDAE5DCCCABB66-001": {
+      "task": "TB4CDAE5DCCCABB66-001",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-14 12:48:21",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-124821-doc-hygiene-ebed32.md"
+      ],
+      "last_input_hash": "5954dda4a8d245e7",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TB4CDAE5DCCCABB66-001": {
+      "task": "TB4CDAE5DCCCABB66-001",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-14 12:48:21",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-124821-doc-hygiene-ebed32-2.md"
+      ],
+      "last_input_hash": "27807dbb44df11d9",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:TB4CDAE5DCCCABB66-002": {
+      "task": "TB4CDAE5DCCCABB66-002",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-14 12:48:22",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-124822-daily-plan-triage-ebed32.md"
+      ],
+      "last_input_hash": "51162446ba8f3586",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TB4CDAE5DCCCABB66-002": {
+      "task": "TB4CDAE5DCCCABB66-002",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-14 12:49:21",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-124921-doc-hygiene-ebed32.md"
+      ],
+      "last_input_hash": "7a19e59bdcbd32fb",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TB4CDAE5DCCCABB66-002": {
+      "task": "TB4CDAE5DCCCABB66-002",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-14 12:49:21",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-124921-doc-hygiene-ebed32-2.md"
+      ],
+      "last_input_hash": "fb1561ec717aaf22",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:TA688849DD2A68FB3-001": {
+      "task": "TA688849DD2A68FB3-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-14 13:01:49",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-130149-daily-plan-triage-36eb72.md"
+      ],
+      "last_input_hash": "57d423629d401c85",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TA688849DD2A68FB3-001": {
+      "task": "TA688849DD2A68FB3-001",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-14 13:07:18",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-130718-doc-hygiene-36eb72.md"
+      ],
+      "last_input_hash": "1d03a0c0dfadd690",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TA688849DD2A68FB3-001": {
+      "task": "TA688849DD2A68FB3-001",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-14 13:07:18",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-130718-doc-hygiene-36eb72-2.md"
+      ],
+      "last_input_hash": "9a8ca13db0efb33d",
       "strict": false,
       "trigger": "post-finish",
       "open_follow_up": null
