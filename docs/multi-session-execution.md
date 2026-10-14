@@ -164,6 +164,10 @@ Retirement and run admission never wait for an inner registry lock while
 holding coordination: contention returns an explicit retry without changing
 ownership. This prevents allocation/retirement lock inversion and allows
 unrelated conversations to progress during a slow startup.
+Admission also rejects a task scope changed by `start --scope` since the
+launcher prepared its outputs, even when the task and claim ID are unchanged.
+The agent re-reads the task and prepares a new bounded request rather than
+writing under stale permissions.
 This is cooperative CLI/hook protection, not containment of arbitrary external
 processes. Bounded-loop interruption recovery remains the separate owner-only
 `loop status` / `loop stop` workflow; this change does not alter that engine.

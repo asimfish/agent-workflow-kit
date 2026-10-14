@@ -9776,6 +9776,8 @@ def _admit_run(root: Path, session: dict, lease: dict, coordination_lock: Path) 
             for key in ("task", "claim_id", "workflow_session_key")
         ):
             return "run owner changed before admission; read the task and retry work"
+        if current.get("scope") != session.get("scope"):
+            return "run scope changed before admission; re-read the task and retry work"
         _registry, runtime_lock = _runtime_lease_paths(root)
         if runtime_lock is None:
             return "run admission requires the original Git checkout"

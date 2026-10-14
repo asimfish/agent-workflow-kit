@@ -423,3 +423,56 @@ sys.exit(agentctl.main(["run", "start", "--output", ".agent-artifacts/T-701/revo
                 text=True, capture_output=True, timeout=120,
             )
             self.assertEqual(committed.returncode, 0, committed.stdout + committed.stderr)
+
+
+class SharedRunAdmissionScopeTest(_ContractTestCase):
+    def test_public_scope_narrowing_rejects_a_pending_old_scope_launcher(self):
+        task = self.open_task(
+            "scope-writer", "mutable generic writer", "src/a/", "--new-id", "T-704",
+            "--done", "only current scope receives output",
+        )
+        before = json.loads(self.agentctl("status", "--json", session="scope-writer").stdout)
+        control = self.root / ".agent-artifacts/scope-admission"
+        control.mkdir(parents=True)
+        ready, resume = control / "ready", control / "resume"
+        script = """import sys,time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import agentctl
+original = agentctl._admit_run
+def delayed(*args, **kwargs):
+    Path(sys.argv[2]).touch()
+    deadline = time.monotonic() + 30
+    while not Path(sys.argv[3]).exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return original(*args, **kwargs)
+agentctl._admit_run = delayed
+sys.exit(agentctl.main(["run", "start", "--output", "src/a/result.txt", "--", sys.executable, "-c", "from pathlib import Path; p=Path('src/a/result.txt'); p.parent.mkdir(parents=True,exist_ok=True); p.write_text('old scope')"]))
+"""
+        process = subprocess.Popen(
+            [sys.executable, "-B", "-c", script, str(self.root / "tools"), str(ready), str(resume)],
+            cwd=str(self.root), env=self.env("scope-writer"), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 15
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(ready.exists(), "launcher did not reach admission")
+            self.agentctl("start", "--task", task, "--agent", "codex", "--scope", "src/b/", session="scope-writer")
+            after = json.loads(self.agentctl("status", "--json", session="scope-writer").stdout)
+            self.assertEqual(after["claim_id"], before["claim_id"])
+            self.assertEqual(after["scope"], ["src/b/"])
+        finally:
+            resume.touch()
+        stdout, stderr = process.communicate(timeout=120)
+        # On the broken implementation, settle its short-lived diagnostic run
+        # before reporting the failure so no fixture supervisor is orphaned.
+        runs = json.loads(self.agentctl("run", "list", "--json", session="scope-writer").stdout)["runs"]
+        for run in runs:
+            self.agentctl("run", "wait", run["id"], "--timeout", "15", session="scope-writer")
+        self.assertEqual(process.returncode, 1, stdout + stderr)
+        self.assertIn("scope changed", stderr)
+        self.assertFalse((self.root / "src/a/result.txt").exists())
+        self.assertEqual(runs, [])
+        self.agentctl("note", "new scope remains usable after old admission refusal", session="scope-writer")
