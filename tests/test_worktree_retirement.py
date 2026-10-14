@@ -216,3 +216,210 @@ class WorktreeRetirementTest(_ContractTestCase):
         self.addCleanup(self.cleanup_run, run)
         self.assertTrue(self.worker.is_dir())
         self.ok(self.root, "planner", "worktree", "list", "--json")
+
+    def test_retirement_defers_to_allocation_without_blocking_its_child(self):
+        self.claim_clean_worker()
+        self.ok(self.worker, "writer", "sessions", "release", "--reason", "writer drained")
+        _registry, lock = agentctl._worktree_lease_paths(self.root)
+        fd = agentctl._acquire_lock_file(lock)
+        try:
+            refused = self.ctl(self.root, "planner", "worktree", "release", self.lease["id"])
+            self.assertEqual(refused.returncode, 1, refused.stdout + refused.stderr)
+            self.assertNotIn("Traceback", refused.stderr)
+            self.assertIn("retry", refused.stderr)
+            self.assertTrue(self.worker.is_dir())
+            # Bootstrap holds this inner lock while its task-create child needs
+            # coordination. Retirement must not keep coordination while waiting.
+            self.ok(
+                self.root, "allocator", "task", "create", "--id", "T-702",
+                "--title", "allocation child", "--owner", "codex", "--scope", "src/child/",
+            )
+        finally:
+            agentctl._release_lock_file(lock, fd)
+        self.ok(self.root, "planner", "worktree", "release", self.lease["id"])
+
+    def test_slow_supervisor_wait_does_not_block_a_disjoint_peer_note(self):
+        self.claim_clean_worker()
+        self.open_task("peer", "peer during delayed startup", ".agent-artifacts/peer/")
+        control = self.root / ".agent-artifacts/control"
+        control.mkdir(parents=True)
+        ready, resume = control / "ready", control / "resume"
+        script = """import sys,time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import agentctl
+original = agentctl._await_supervisor_claim
+def delayed(*args, **kwargs):
+    Path(sys.argv[2]).touch()
+    deadline = time.monotonic() + 30
+    while not Path(sys.argv[3]).exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return original(*args, **kwargs)
+agentctl._await_supervisor_claim = delayed
+sys.exit(agentctl.main(["run", "start", "--output", ".agent-artifacts/T-701/ready.txt", "--", sys.executable, "-c", "import time; time.sleep(60)"]))
+"""
+        process = subprocess.Popen(
+            [sys.executable, "-B", "-c", script, str(self.worker / "tools"), str(ready), str(resume)],
+            cwd=str(self.worker), env=self.env("writer"), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.addCleanup(self.cleanup_process, process)
+        try:
+            deadline = time.monotonic() + 15
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(ready.exists(), "launcher did not reach post-admission wait")
+            peer = self.ctl(self.root, "peer", "note", "peer progresses while supervisor admission is delayed")
+        finally:
+            resume.touch()
+        stdout, stderr = process.communicate(timeout=120)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        run = re.search(r"\brun-[0-9a-f]{16}\b", stdout).group()
+        self.addCleanup(self.cleanup_run, run)
+        self.assertEqual(peer.returncode, 0, peer.stdout + peer.stderr)
+
+    def test_preparation_is_visible_and_cancellable_before_payload_launch(self):
+        self.claim_clean_worker()
+        self.open_task("peer", "peer during preparation", ".agent-artifacts/peer/")
+        control = self.root / ".agent-artifacts/preparation"
+        control.mkdir(parents=True)
+        ready, resume = control / "ready", control / "resume"
+        output = ".agent-artifacts/T-701/must-not-run.txt"
+        script = """import sys,time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import agentctl
+original = agentctl._prune_terminal_run_state
+def delayed(*args, **kwargs):
+    Path(sys.argv[2]).touch()
+    deadline = time.monotonic() + 30
+    while not Path(sys.argv[3]).exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return original(*args, **kwargs)
+agentctl._prune_terminal_run_state = delayed
+sys.exit(agentctl.main(["run", "start", "--output", sys.argv[4], "--", sys.executable, "-c", "from pathlib import Path; p=Path(" + repr(sys.argv[4]) + "); p.parent.mkdir(parents=True,exist_ok=True); p.write_text('unexpected'); import time; time.sleep(60)"]))
+"""
+        process = subprocess.Popen(
+            [sys.executable, "-B", "-c", script, str(self.worker / "tools"), str(ready), str(resume), output],
+            cwd=str(self.worker), env=self.env("writer"), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.addCleanup(self.cleanup_process, process)
+        try:
+            deadline = time.monotonic() + 15
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(ready.exists(), "launcher did not reach preparation")
+            rows = json.loads(self.ok(self.root, "planner", "run", "list", "--json").stdout)["runs"]
+            self.assertEqual(len(rows), 1, rows)
+            run = rows[0]["id"]
+            self.assertEqual(rows[0]["status"], "starting", rows[0])
+            self.assertEqual(rows[0]["launcher_process"]["pid"], process.pid)
+            self.ok(self.root, "peer", "note", "peer progresses during slow preparation")
+            self.ok(self.worker, "writer", "sessions", "release", "--reason", "registered run keeps checkout")
+            self.refuse_retirement(run)
+            premature = self.ctl(self.worker, "writer", "run", "finish", run, "--status", "succeeded", "--reason", "must be refused")
+            self.assertEqual(premature.returncode, 1, premature.stdout + premature.stderr)
+            self.ok(self.worker, "writer", "run", "stop", run, "--reason", "cancel preparation")
+        finally:
+            resume.touch()
+        stdout, stderr = process.communicate(timeout=120)
+        self.assertEqual(process.returncode, 0, stdout + stderr)
+        self.addCleanup(self.cleanup_run, run)
+        self.wait_for_run_exit(run)
+        state = json.loads(self.ok(self.root, "planner", "run", "show", run, "--json").stdout)["runs"][0]
+        self.assertEqual(state["status"], "cancelled")
+        self.assertFalse((self.worker / output).exists())
+
+    def test_partial_resource_failure_rolls_back_without_launching_payload(self):
+        self.claim_clean_worker()
+        self.open_task("peer", "resource holder", ".agent-artifacts/peer/")
+        held = self.ok(self.root, "peer", "resource", "acquire", "host:retirement:gpu:2")
+        resource = re.search(r"\bresource-[0-9a-f]{16}\b", held.stdout).group()
+        try:
+            result = self.ctl(
+                self.worker, "writer", "run", "start", "--output", ".agent-artifacts/T-701/failure.txt",
+                "--resource", "host:retirement:gpu:1", "--resource", "host:retirement:gpu:2",
+                "--", sys.executable, "-c", "raise RuntimeError('must not launch')",
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            runs = json.loads(self.ok(self.root, "planner", "run", "list", "--json").stdout)["runs"]
+            self.assertEqual(len(runs), 1)
+            self.assertEqual(runs[0]["status"], "failed")
+            self.assertEqual(runs[0]["processes"], [])
+            self.assertFalse((self.worker / ".agent-artifacts/T-701/failure.txt").exists())
+            rows = json.loads(self.ok(self.root, "planner", "resource", "status", "--json").stdout)["resources"]
+            first = next(row for row in rows if "host:retirement:gpu:1" in row["resources"])
+            second = next(row for row in rows if row["id"] == resource)
+            self.assertEqual(first["status"], "released")
+            self.assertEqual(second["status"], "active")
+            self.ok(self.root, "peer", "note", "peer retains its resource after failed admission")
+        finally:
+            self.ok(self.root, "peer", "resource", "release", resource, "--reason", "test complete")
+
+    def test_busy_runtime_registry_does_not_hold_coordination_or_create_a_run(self):
+        self.claim_clean_worker()
+        _registry, lock = agentctl._runtime_lease_paths(self.root)
+        fd = agentctl._acquire_lock_file(lock)
+        try:
+            result = self.ctl(
+                self.worker, "writer", "run", "start", "--output", ".agent-artifacts/T-701/busy.txt",
+                "--", sys.executable, "-c", "raise RuntimeError('must not launch')",
+            )
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            self.assertIn("registry is busy", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.ok(self.root, "peer", "task", "create", "--id", "T-703", "--title", "peer during busy registry", "--owner", "codex", "--scope", "src/peer/")
+        finally:
+            agentctl._release_lock_file(lock, fd)
+        self.assertEqual(json.loads(self.ok(self.root, "planner", "run", "list", "--json").stdout)["runs"], [])
+
+    def test_handoff_before_admission_rejects_the_old_launcher_without_a_run(self):
+        self.claim_clean_worker()
+        control = self.root / ".agent-artifacts/admission"
+        control.mkdir(parents=True)
+        ready, resume = control / "ready", control / "resume"
+        script = """import sys,time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import agentctl
+original = agentctl._admit_run
+def delayed(*args, **kwargs):
+    Path(sys.argv[2]).touch()
+    deadline = time.monotonic() + 30
+    while not Path(sys.argv[3]).exists() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    return original(*args, **kwargs)
+agentctl._admit_run = delayed
+sys.exit(agentctl.main(["run", "start", "--output", ".agent-artifacts/T-701/revoked.txt", "--", sys.executable, "-c", "raise RuntimeError('must not launch')"]))
+"""
+        process = subprocess.Popen(
+            [sys.executable, "-B", "-c", script, str(self.worker / "tools"), str(ready), str(resume)],
+            cwd=str(self.worker), env=self.env("writer"), text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        )
+        self.addCleanup(self.cleanup_process, process)
+        try:
+            deadline = time.monotonic() + 15
+            while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                time.sleep(0.02)
+            self.assertTrue(ready.exists(), "launcher did not reach admission")
+            self.ok(self.worker, "writer", "sessions", "release", "--reason", "explicit inspected handoff before admission")
+            self.ok(self.worker, "successor", "work", "--agent", "codex", "--task", "T-701")
+            self.addCleanup(self.ok, self.worker, "successor", "sessions", "release", "--reason", "test cleanup")
+        finally:
+            resume.touch()
+        stdout, stderr = process.communicate(timeout=120)
+        self.assertEqual(process.returncode, 1, stdout + stderr)
+        self.assertRegex(stderr, r"released.*claim|claim authority changed")
+        self.assertEqual(json.loads(self.ok(self.root, "planner", "run", "list", "--json").stdout)["runs"], [])
+        self.ok(self.worker, "successor", "note", "successor progresses after old admission was refused")
+        for args in (
+            ("add", ".agent"),
+            ("commit", "-q", "-m", "chore(agent): preserve fixture handoff\n\nRefs: T-701"),
+        ):
+            committed = subprocess.run(
+                ["git", *args], cwd=str(self.worker), env=self.env("successor"),
+                text=True, capture_output=True, timeout=120,
+            )
+            self.assertEqual(committed.returncode, 0, committed.stdout + committed.stderr)

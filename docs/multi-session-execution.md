@@ -155,8 +155,15 @@ The agent performs ordinary cleanup, without another required human step:
    branch. Never force-release a peer or bypass a dirty-tree refusal.
 
 Run start/adoption and retirement use the existing repository coordination
-lock. It covers admission, not the lifetime of a background job, and prevents
-a new registered run from appearing between the retirement check and removal.
+lock. A short ownership recheck registers the run before slow resource,
+cleanup or supervisor work. A supervised lease records the launcher's PID and
+birth marker, so live preparation remains `starting`, cannot be falsely
+finished and can receive an owner-only stop before the payload is launched.
+The lock does not cover those waits or the lifetime of a background job.
+Retirement and run admission never wait for an inner registry lock while
+holding coordination: contention returns an explicit retry without changing
+ownership. This prevents allocation/retirement lock inversion and allows
+unrelated conversations to progress during a slow startup.
 This is cooperative CLI/hook protection, not containment of arbitrary external
 processes. Bounded-loop interruption recovery remains the separate owner-only
 `loop status` / `loop stop` workflow; this change does not alter that engine.

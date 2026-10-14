@@ -7575,7 +7575,11 @@ def _worktree_release(root: Path, args: argparse.Namespace) -> int:
     coordination_fd = _acquire_lock_file(coordination_lock)
     fd = None
     try:
-        fd = _acquire_lock_file(lock)
+        try:
+            fd = _acquire_lock_file(lock, timeout_seconds=0.0)
+        except TimeoutError:
+            print("agentctl: worktree allocation is busy; retry retirement after it completes", file=sys.stderr)
+            return 1
         data = _load_worktree_leases(root)
         try:
             worktrees = _git_worktrees(root)
@@ -7619,6 +7623,7 @@ def _worktree_release(root: Path, args: argparse.Namespace) -> int:
                 _runtime_observed_status(row) not in {"succeeded", "failed", "cancelled", "released"}
                 or any(_runtime_process_alive(process) for process in row.get("processes") or [])
                 or _runtime_process_alive(row.get("supervisor_process"))
+                or _runtime_process_alive(row.get("launcher_process"))
             )
         ]
         if sessions or runs:
@@ -7633,7 +7638,8 @@ def _worktree_release(root: Path, args: argparse.Namespace) -> int:
             for row in runs:
                 print(
                     f"agentctl: worktree {path} is held by run {row.get('id')} "
-                    f"({_runtime_observed_status(row)}); its owner must stop it or "
+                    f"({_runtime_observed_status(row)}); wait for its launcher/supervisor to exit; "
+                    "its owner must stop it or "
                     "reconcile its result with 'agentctl run finish' before retirement",
                     file=sys.stderr,
                 )
@@ -7775,6 +7781,8 @@ def _runtime_observed_status(lease: dict) -> str:
     if lease.get("mode") == "adopted":
         return "running" if _runtime_process_alive(child) else "exited_unknown"
     if _runtime_process_alive(supervisor):
+        return status
+    if status in {"starting", "stopping"} and _runtime_process_alive(lease.get("launcher_process")):
         return status
     if _runtime_process_alive(child):
         return "interrupted"
@@ -9751,13 +9759,46 @@ def _run_supervise(root: Path, lease_id: str, token: str) -> int:
     return 0 if final_status == "succeeded" else 1
 
 
-def _run_start(root: Path, args: argparse.Namespace) -> int:
-    session = _require_session(root)
+def _admit_run(root: Path, session: dict, lease: dict, coordination_lock: Path) -> str | None:
+    """Revalidate ownership and reserve a run without waiting on inner locks."""
+    fd = _acquire_lock_file(coordination_lock)
+    runtime_fd = None
+    runtime_lock = None
     try:
-        _prune_terminal_run_state(root)
-    except Exception:
-        # Opportunistic hygiene must never block starting new work.
-        pass
+        if not root.is_dir() or _session_coordination_lock_path(root) != coordination_lock:
+            return "run checkout changed before admission; inspect and retry work"
+        current = _load_session(root)
+        error = _session_claim_error(root, current)
+        if error:
+            return error
+        if not current.get("task") or any(
+            current.get(key) != session.get(key)
+            for key in ("task", "claim_id", "workflow_session_key")
+        ):
+            return "run owner changed before admission; read the task and retry work"
+        _registry, runtime_lock = _runtime_lease_paths(root)
+        if runtime_lock is None:
+            return "run admission requires the original Git checkout"
+        try:
+            runtime_fd = _acquire_lock_file(runtime_lock, timeout_seconds=0.0)
+        except TimeoutError:
+            return "execution registry is busy; retry run admission"
+        if lease.get("mode") == "supervised":
+            stdout_path, stderr_path = _run_log_paths(root, lease["id"])
+            lease["stdout"], lease["stderr"] = str(stdout_path), str(stderr_path)
+        data = _load_runtime_leases(root)
+        data.setdefault("leases", []).append(lease)
+        _save_runtime_leases(root, data)
+    finally:
+        if runtime_fd is not None:
+            _release_lock_file(runtime_lock, runtime_fd)
+        _release_lock_file(coordination_lock, fd)
+    return None
+
+
+def _run_start(root: Path, args: argparse.Namespace) -> int:
+    coordination_lock = _session_coordination_lock_path(root)
+    session = _require_session(root)
     task = args.task or session.get("task")
     if task != session.get("task"):
         print("agentctl: a background run must belong to this conversation's active task", file=sys.stderr)
@@ -9844,29 +9885,6 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
     ).hexdigest()[:16]
     if request_fd is not None:
         _submission_request_note(root, request_token, {"run": lease_id})
-    resource_leases = []
-    for resource in args.resource or []:
-        lease, error = _resource_acquire_one(
-            root, str(task), resource, "run", lease_id,
-        )
-        if error:
-            for acquired in resource_leases:
-                _resource_release_by_id(
-                    root, acquired["id"], "run start rolled back",
-                    holder_type="run", holder_id=lease_id,
-                )
-            print(f"agentctl: {error}", file=sys.stderr)
-            if request_fd is not None:
-                _submission_request_abandon(root, request_token, request_fd)
-            return 1
-        resource_leases.append(lease)
-    stdout_path, stderr_path = _run_log_paths(root, lease_id)
-    payload_path = _run_payload_path(root, lease_id)
-    _save_json(payload_path, {"command": command, "cwd": str(cwd)})
-    try:
-        os.chmod(payload_path, 0o600)
-    except OSError:
-        pass
     # hex, not urlsafe: a urlsafe token starts with "-" one time in 64 and
     # argparse then rejected it as a missing option value, so the
     # supervisor died at start-up and the run never launched.
@@ -9877,19 +9895,20 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
         "task": task,
         "holder": {"type": "conversation", "id": _workflow_session_key()},
         "mode": "supervised",
+        "launcher_process": {
+            "pid": os.getpid(), "birth_marker": _process_birth_marker(os.getpid()),
+        },
         "checkout": str(root.resolve()),
         "scope": session.get("scope") or [],
         "outputs": outputs,
         "resources": [item for item in args.resource or []],
-        "resource_lease_ids": [item["id"] for item in resource_leases],
+        "resource_lease_ids": [],
         "processes": [],
         "command_sha256": hashlib.sha256(
             json.dumps(command, ensure_ascii=False).encode("utf-8")
         ).hexdigest(),
         "executable": Path(str(command[0])).name,
         "cwd": str(cwd),
-        "stdout": str(stdout_path),
-        "stderr": str(stderr_path),
         "progress": {
             "phase": "starting",
             "token": "",
@@ -9912,7 +9931,12 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
             "low_samples": 0,
             "created_at_ns": time.time_ns(),
         }
-    _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(lease))
+    admission_error = _admit_run(root, session, lease, coordination_lock)
+    if admission_error:
+        if request_fd is not None:
+            _submission_request_abandon(root, request_token, request_fd)
+        print(f"agentctl: {admission_error}", file=sys.stderr)
+        return 1
     if request_fd is not None:
         # The run lease is durable from here on; even if the supervisor fails
         # to launch, this request maps to exactly this run and must never
@@ -9921,6 +9945,36 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
             root, request_token, request_fd, "confirmed", {"run": lease_id},
         )
         request_fd = None
+    # The durable starting lease protects the checkout while preparation and
+    # remote resource operations run without delaying unrelated conversations.
+    try:
+        _prune_terminal_run_state(root)
+    except Exception:
+        pass
+    resource_leases = []
+    for resource in args.resource or []:
+        acquired, error = _resource_acquire_one(root, str(task), resource, "run", lease_id)
+        if error:
+            for item in resource_leases:
+                _resource_release_by_id(
+                    root, item["id"], "run start rolled back", holder_type="run", holder_id=lease_id,
+                )
+            _run_update(root, lease_id, lambda item: item.update({
+                "status": "failed", "error": error, "finished_at": _now(),
+            }))
+            print(f"agentctl: {error}; run {lease_id} failed before launch", file=sys.stderr)
+            return 1
+        resource_leases.append(acquired)
+        _run_update(root, lease_id, lambda item: item.update({
+            "resource_lease_ids": [row["id"] for row in resource_leases],
+        }))
+    stdout_path, stderr_path = Path(lease["stdout"]), Path(lease["stderr"])
+    payload_path = _run_payload_path(root, lease_id)
+    _save_json(payload_path, {"command": command, "cwd": str(cwd)})
+    try:
+        os.chmod(payload_path, 0o600)
+    except OSError:
+        pass
     supervisor_log_path = _runtime_runs_dir(root) / f"{lease_id}.supervisor.log"
     outcome = "pending"
     for spawn_attempt in (1, 2):
@@ -10021,6 +10075,7 @@ def _run_start(root: Path, args: argparse.Namespace) -> int:
 
 
 def _run_adopt(root: Path, args: argparse.Namespace) -> int:
+    coordination_lock = _session_coordination_lock_path(root)
     session = _require_session(root)
     try:
         pid = int(args.pid)
@@ -10054,18 +10109,6 @@ def _run_adopt(root: Path, args: argparse.Namespace) -> int:
     lease_id = "run-" + hashlib.sha256(
         f"adopt:{task}:{pid}:{birth}:{time.time_ns()}".encode("utf-8")
     ).hexdigest()[:16]
-    resource_leases = []
-    for resource in args.resource or []:
-        lease, error = _resource_acquire_one(root, task, resource, "run", lease_id)
-        if error:
-            for acquired in resource_leases:
-                _resource_release_by_id(
-                    root, acquired["id"], "adopt rolled back",
-                    holder_type="run", holder_id=lease_id,
-                )
-            print(f"agentctl: {error}", file=sys.stderr)
-            return 1
-        resource_leases.append(lease)
     lease = {
         "id": lease_id,
         "kind": "run",
@@ -10076,7 +10119,7 @@ def _run_adopt(root: Path, args: argparse.Namespace) -> int:
         "scope": session.get("scope") or [],
         "outputs": outputs,
         "resources": list(args.resource or []),
-        "resource_lease_ids": [item["id"] for item in resource_leases],
+        "resource_lease_ids": [],
         "processes": [{"role": "adopted", "pid": pid, "birth_marker": birth}],
         "cwd": str(declared_cwd),
         "command_sha256": args.command_sha256 or "",
@@ -10084,7 +10127,27 @@ def _run_adopt(root: Path, args: argparse.Namespace) -> int:
         "heartbeat_at": _now(),
         "status": "running",
     }
-    _update_runtime_leases(root, lambda data: data.setdefault("leases", []).append(lease))
+    admission_error = _admit_run(root, session, lease, coordination_lock)
+    if admission_error:
+        print(f"agentctl: {admission_error}", file=sys.stderr)
+        return 1
+    resource_leases = []
+    for resource in args.resource or []:
+        acquired, error = _resource_acquire_one(root, task, resource, "run", lease_id)
+        if error:
+            for item in resource_leases:
+                _resource_release_by_id(
+                    root, item["id"], "adopt rolled back", holder_type="run", holder_id=lease_id,
+                )
+            _run_update(root, lease_id, lambda item: item.update({
+                "status": "interrupted", "error": error,
+            }))
+            print(f"agentctl: {error}; inspect adopted run {lease_id} before retrying", file=sys.stderr)
+            return 1
+        resource_leases.append(acquired)
+        _run_update(root, lease_id, lambda item: item.update({
+            "resource_lease_ids": [row["id"] for row in resource_leases],
+        }))
     print(f"agentctl: adopted process {pid} as run lease {lease_id}")
     return 0
 
@@ -10300,6 +10363,19 @@ def _run_stop(root: Path, args: argparse.Namespace) -> int:
         getattr(args, "kill_seconds", None) or watchdog_policy.get("kill_seconds") or 30.0
     )
     if not _runtime_process_alive(child):
+        if child is None and lease.get("mode") == "supervised" and not lease.get("supervisor_process") and str(
+            lease.get("status") or ""
+        ) in {"starting", "stopping"} and _runtime_process_alive(lease.get("launcher_process")):
+            def stop_preparation(item: dict) -> None:
+                if item.get("status") in {"starting", "running", "stopping"}:
+                    item.update({
+                        "status": "stopping", "stop_reason": args.reason,
+                        "termination_deadline_ns": time.time_ns() + int(kill_seconds * 1_000_000_000),
+                    })
+
+            _run_update(root, args.lease, stop_preparation)
+            print(f"agentctl: stop recorded for run {args.lease} during preparation")
+            return 0
         if child is None and _runtime_process_alive(lease.get("supervisor_process")) and str(
             lease.get("status") or ""
         ) in {"starting", "running"}:
@@ -10343,17 +10419,10 @@ def cmd_run(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve() if args.run_action == "_supervise" else _repo_root()
     if args.run_action == "_supervise":
         return _run_supervise(root, args.lease, args.token)
-    if args.run_action in {"start", "adopt"}:
-        # Admission and checkout retirement share the same outer lock. The
-        # supervisor uses only the runtime lock and never holds this for the job.
-        lock = _session_coordination_lock_path(root)
-        fd = _acquire_lock_file(lock)
-        try:
-            if args.run_action == "start":
-                return _run_start(root, args)
-            return _run_adopt(root, args)
-        finally:
-            _release_lock_file(lock, fd)
+    if args.run_action == "start":
+        return _run_start(root, args)
+    if args.run_action == "adopt":
+        return _run_adopt(root, args)
     if args.run_action in {"list", "show"}:
         return _run_list(root, args)
     if args.run_action == "wait":

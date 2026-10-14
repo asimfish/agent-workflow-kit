@@ -12,6 +12,9 @@ pull requests.
   coordination lock; ordinary owner cleanup still preserves the Git branch.
   Fresh installed-project regressions cover refusal, adopted unknown exits,
   normal cleanup, peer progress and concurrent admission.
+  Registry contention returns an explicit retry; slow resource/supervisor
+  preparation runs outside the coordination lock. Launcher birth markers keep
+  pending runs observable and cancellable without launching their payload.
 
 - Synthetic acceptance replays a copied-history SessionStart fork and a legal
   released-owner handoff in one installed project. It checks preserved partial
