@@ -307,6 +307,13 @@
       "last_run_at": "2026-10-14 12:06:20",
       "last_status": "success",
       "last_report": ".agent/loops/runs/20261014-120620-daily-plan-triage-2f911f.md"
+    },
+    "doc-hygiene:TB57732629AEA08EB-002": {
+      "task": "TB57732629AEA08EB-002",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-14 12:09:46",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261014-120946-doc-hygiene-2f911f-2.md"
     }
   },
   "checkpoints": {
@@ -1143,6 +1150,32 @@
       "last_input_hash": "b4494e4238e0e244",
       "strict": false,
       "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TB57732629AEA08EB-002": {
+      "task": "TB57732629AEA08EB-002",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-14 12:09:46",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-120946-doc-hygiene-2f911f.md"
+      ],
+      "last_input_hash": "b9dfefb003f90457",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TB57732629AEA08EB-002": {
+      "task": "TB57732629AEA08EB-002",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-14 12:09:46",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261014-120946-doc-hygiene-2f911f-2.md"
+      ],
+      "last_input_hash": "2de1a4db0b2c81e6",
+      "strict": false,
+      "trigger": "post-finish",
       "open_follow_up": null
     }
   },

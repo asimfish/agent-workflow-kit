@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-14 12:09:17",
+  "updated_at": "2026-10-14 12:09:46",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -938,7 +938,7 @@
     "TB57732629AEA08EB-002": {
       "title": "Publish stored retirement race probes and native review ledger",
       "type": "docs",
-      "status": "in_progress",
+      "status": "review",
       "owner": "codex-native-retirement-review-z9zb1r",
       "scope": [
         ".agent/tmp/retirement-review-probes/",
@@ -946,7 +946,7 @@
       ],
       "deps": [],
       "created_at": "2026-10-14 12:06:19",
-      "updated_at": "2026-10-14 12:09:17",
+      "updated_at": "2026-10-14 12:09:46",
       "claim_id": "294eda2060fd8d675cf98c35a26e7da6"
     }
   },
