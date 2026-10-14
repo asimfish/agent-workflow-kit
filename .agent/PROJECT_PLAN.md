@@ -36,7 +36,9 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] TBF677A18D074AD84-001 - Use lawful worker-session retirement in guidance acceptance regression (owner: codex)
+- [ ] TB57732629AEA08EB-002 - Publish stored retirement race probes and native review ledger (owner: codex-native-retirement-review-z9zb1r)
+- [x] TB57732629AEA08EB-001 - Independent native frozen retirement and guidance compatibility review 7c8146e (owner: codex-native-retirement-review-z9zb1r)
+- [x] TBF677A18D074AD84-001 - Use lawful worker-session retirement in guidance acceptance regression (owner: codex)
 - [ ] T0D2DB618740F19A9-001 - Protect clean managed worktrees while sessions or background runs still use them (owner: codex)
 - [x] T7BE6533FD0AF5D1E-001 - Bounded native independent fork/handoff acceptance review 7e8a944 (owner: codex-native-handoff-review-j2nng1d3)
 - [x] T42C4B3C72343ADD6-001 - Verify cloned-history task separation and lawful handoff in a synthetic project (owner: codex)

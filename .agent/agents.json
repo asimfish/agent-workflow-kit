@@ -455,6 +455,18 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "codex-native-retirement-review-z9zb1r": {
+      "role": "review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/gates/",
+        ".agent/evals/runs/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }
