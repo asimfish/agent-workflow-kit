@@ -134,6 +134,33 @@ claim therefore leaves no board row, task document, or generated plan entry.
 
 ## Runs, Outputs, And Resources
 
+### Retiring A Managed Checkout
+
+A clean `git status` is not proof that a checkout is idle. `worktree release`
+refuses every unreleased session in its target checkout, including stale and
+review/done sessions, and any live or unresolved supervised/adopted run there.
+The refusal identifies the holder and preserves its checkout, task claim and
+branch. `--ack-missing` acknowledges missing Git metadata only; it never
+overrides a run whose result is unknown. Disjoint peer checkouts do not block
+retirement.
+
+The agent performs ordinary cleanup, without another required human step:
+
+1. Inspect `run list` and finish or stop its own runs. A stop request is
+   asynchronous: wait for exit and reconcile `exited_unknown` before proceeding.
+2. Preserve needed ignored outputs elsewhere; Git branches do not retain them.
+3. Release its own session with `sessions release --reason <why>` in that
+   checkout, and ensure all intended changes are committed.
+4. From another checkout, run `worktree release <lease-id>`. Git retains the
+   branch. Never force-release a peer or bypass a dirty-tree refusal.
+
+Run start/adoption and retirement use the existing repository coordination
+lock. It covers admission, not the lifetime of a background job, and prevents
+a new registered run from appearing between the retirement check and removal.
+This is cooperative CLI/hook protection, not containment of arbitrary external
+processes. Bounded-loop interruption recovery remains the separate owner-only
+`loop status` / `loop stop` workflow; this change does not alter that engine.
+
 Long-running commands use `agentctl run start`. The run owns its command hash,
 cwd, supervisor and child PID birth markers, logs, declared outputs, heartbeat,
 and resources. Outputs must be in the task scope or under the task-specific

@@ -66,6 +66,9 @@ jobs:
       - name: Verify Windows task reopen views and receipts
         run: python -m unittest tests.test_task_lifecycle_views -v
 
+      - name: Verify Windows managed-worktree retirement
+        run: python -m unittest tests.test_worktree_retirement -v
+
       - name: Replay bilingual README task and review examples
         run: python -m unittest tests.test_readme_workflow -v
 

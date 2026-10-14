@@ -6,6 +6,13 @@ pull requests.
 
 ## Unreleased
 
+- Managed-worktree retirement checks session and background-run ownership, not
+  just Git cleanliness. Active, stale and unreleased conversations or live and
+  unresolved runs prevent deletion. Admission and retirement share the existing
+  coordination lock; ordinary owner cleanup still preserves the Git branch.
+  Fresh installed-project regressions cover refusal, adopted unknown exits,
+  normal cleanup, peer progress and concurrent admission.
+
 - Synthetic acceptance replays a copied-history SessionStart fork and a legal
   released-owner handoff in one installed project. It checks preserved partial
   outputs, a new successor claim, refusal of the old owner's writes and claim

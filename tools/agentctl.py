@@ -7571,8 +7571,11 @@ def _worktree_release(root: Path, args: argparse.Namespace) -> int:
     if registry is None or lock is None:
         print("agentctl: worktree release requires a Git repository", file=sys.stderr)
         return 2
-    fd = _acquire_lock_file(lock)
+    coordination_lock = _session_coordination_lock_path(root)
+    coordination_fd = _acquire_lock_file(coordination_lock)
+    fd = None
     try:
+        fd = _acquire_lock_file(lock)
         data = _load_worktree_leases(root)
         try:
             worktrees = _git_worktrees(root)
@@ -7600,6 +7603,40 @@ def _worktree_release(root: Path, args: argparse.Namespace) -> int:
                 "inspect it manually",
                 file=sys.stderr,
             )
+            return 1
+        # Git cleanliness says nothing about conversation or background ownership.
+        # Hold admission's lock through removal, so a new run cannot slip in.
+        sessions = [
+            row for row in _session_rows_unlocked(root)
+            if _same_checkout(path, row)
+            and row.get("observed_status") not in {"released", "orphaned"}
+        ]
+        runs = [
+            row for row in _load_runtime_leases(root).get("leases") or []
+            if isinstance(row, dict) and row.get("kind") == "run"
+            and _same_checkout(path, row)
+            and (
+                _runtime_observed_status(row) not in {"succeeded", "failed", "cancelled", "released"}
+                or any(_runtime_process_alive(process) for process in row.get("processes") or [])
+                or _runtime_process_alive(row.get("supervisor_process"))
+            )
+        ]
+        if sessions or runs:
+            for row in sessions:
+                print(
+                    f"agentctl: worktree {path} is held by session "
+                    f"{row.get('workflow_session_key')} ({row.get('observed_status')}, "
+                    f"task={row.get('task')}); its owner must drain work and run "
+                    "'agentctl sessions release --reason <why>' in that checkout",
+                    file=sys.stderr,
+                )
+            for row in runs:
+                print(
+                    f"agentctl: worktree {path} is held by run {row.get('id')} "
+                    f"({_runtime_observed_status(row)}); its owner must stop it or "
+                    "reconcile its result with 'agentctl run finish' before retirement",
+                    file=sys.stderr,
+                )
             return 1
         if observed == "active":
             if _path_contains(path, Path.cwd()):
@@ -7642,7 +7679,9 @@ def _worktree_release(root: Path, args: argparse.Namespace) -> int:
         lease["last_error"] = None
         _save_worktree_leases(root, data)
     finally:
-        _release_lock_file(lock, fd)
+        if fd is not None:
+            _release_lock_file(lock, fd)
+        _release_lock_file(coordination_lock, coordination_fd)
     print(f"agentctl: worktree lease {args.lease} released; branch {lease.get('branch')} preserved")
     return 0
 
@@ -10304,10 +10343,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     root = Path(args.root).resolve() if args.run_action == "_supervise" else _repo_root()
     if args.run_action == "_supervise":
         return _run_supervise(root, args.lease, args.token)
-    if args.run_action == "start":
-        return _run_start(root, args)
-    if args.run_action == "adopt":
-        return _run_adopt(root, args)
+    if args.run_action in {"start", "adopt"}:
+        # Admission and checkout retirement share the same outer lock. The
+        # supervisor uses only the runtime lock and never holds this for the job.
+        lock = _session_coordination_lock_path(root)
+        fd = _acquire_lock_file(lock)
+        try:
+            if args.run_action == "start":
+                return _run_start(root, args)
+            return _run_adopt(root, args)
+        finally:
+            _release_lock_file(lock, fd)
     if args.run_action in {"list", "show"}:
         return _run_list(root, args)
     if args.run_action == "wait":
