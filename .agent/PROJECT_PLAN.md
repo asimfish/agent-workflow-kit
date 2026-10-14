@@ -36,12 +36,13 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] TA688849DD2A68FB3-001 - Independent final scope-admission review exactc557637 (owner: codex-native-retirement-review-z9zb1r)
 - [ ] TB4CDAE5DCCCABB66-002 - Publish native390e1d5 re-review rejection and eval ledger (owner: codex-native-retirement-review-z9zb1r)
 - [x] TB4CDAE5DCCCABB66-001 - Independent native repaired retirement review exact390e1d5 (owner: codex-native-retirement-review-z9zb1r)
 - [ ] TB57732629AEA08EB-002 - Publish stored retirement race probes and native review ledger (owner: codex-native-retirement-review-z9zb1r)
 - [x] TB57732629AEA08EB-001 - Independent native frozen retirement and guidance compatibility review 7c8146e (owner: codex-native-retirement-review-z9zb1r)
 - [x] TBF677A18D074AD84-001 - Use lawful worker-session retirement in guidance acceptance regression (owner: codex)
-- [ ] T0D2DB618740F19A9-001 - Protect clean managed worktrees while sessions or background runs still use them (owner: codex)
+- [x] T0D2DB618740F19A9-001 - Protect clean managed worktrees while sessions or background runs still use them (owner: codex)
 - [x] T7BE6533FD0AF5D1E-001 - Bounded native independent fork/handoff acceptance review 7e8a944 (owner: codex-native-handoff-review-j2nng1d3)
 - [x] T42C4B3C72343ADD6-001 - Verify cloned-history task separation and lawful handoff in a synthetic project (owner: codex)
 - [x] TBC9D06D0DCB01934-001 - Native independent frozen acceptance review 43dccb3 (owner: native-simulation-reviewer-qfnygz)
