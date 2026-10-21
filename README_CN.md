@@ -262,6 +262,7 @@ Linux CI 运行完整回归，Windows job 运行选定的进程处理、指导�
 - `docs/worktree-merge-back.md` —— 从完成的 worktree 任务到被批准的合并
 - `docs/loop-engineering.md` —— 检查点循环
 - `docs/harness-evaluation.md` —— 如何评估对套件本身的修改
+- [IdeaScientist 设计研究](docs/research/ideascientist-design.md) —— 阶段合同、多角色闭环与绘图参考库设计，尚未实现
 - `CHANGELOG.md`、`CONTRIBUTING.md`、`LICENSE`
 
 MIT 许可。贡献走套件自己强制的那套任务加评审流程，见 `CONTRIBUTING.md`。
