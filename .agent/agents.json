@@ -467,6 +467,22 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "codex-native-ideascientist-review-z9zb1r": {
+      "role": "review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/gates/",
+        ".agent/handoffs/"
+      ],
+      "tools": [
+        "agentctl gate",
+        "agentctl note",
+        "agentctl finish"
+      ],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

@@ -36,6 +36,8 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [x] T2CCB56E65D69B108-001 - Independent frozen IdeaScientist documentation review b85cba8 (owner: codex-native-ideascientist-review-z9zb1r)
+- [x] T8D1FE3A06A6C0D8D-001 - Publish IdeaScientist design study and closed-loop comparison (owner: codex)
 - [x] TA688849DD2A68FB3-001 - Independent final scope-admission review exactc557637 (owner: codex-native-retirement-review-z9zb1r)
 - [ ] TB4CDAE5DCCCABB66-002 - Publish native390e1d5 re-review rejection and eval ledger (owner: codex-native-retirement-review-z9zb1r)
 - [x] TB4CDAE5DCCCABB66-001 - Independent native repaired retirement review exact390e1d5 (owner: codex-native-retirement-review-z9zb1r)

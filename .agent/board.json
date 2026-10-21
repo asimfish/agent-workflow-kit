@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-14 13:07:18",
+  "updated_at": "2026-10-21 16:48:25",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -993,6 +993,35 @@
       "created_at": "2026-10-14 13:01:49",
       "updated_at": "2026-10-14 13:07:18",
       "claim_id": "3543f8f978cb9035f2b6047b3d17ff82"
+    },
+    "T8D1FE3A06A6C0D8D-001": {
+      "title": "Publish IdeaScientist design study and closed-loop comparison",
+      "type": "docs",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "docs/research/ideascientist-design.md",
+        "README.md",
+        "README_CN.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-21 16:40:17",
+      "updated_at": "2026-10-21 16:47:31",
+      "claim_id": "683c35762729501603046203b5b1c208"
+    },
+    "T2CCB56E65D69B108-001": {
+      "title": "Independent frozen IdeaScientist documentation review b85cba8",
+      "type": "review",
+      "status": "done",
+      "owner": "codex-native-ideascientist-review-z9zb1r",
+      "scope": [
+        ".agent/gates/",
+        ".agent/handoffs/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-21 16:43:44",
+      "updated_at": "2026-10-21 16:48:25",
+      "claim_id": "3f6b0ef0afd0c4529be61332debb3207"
     }
   },
   "updated": ""

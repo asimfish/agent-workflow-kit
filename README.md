@@ -315,6 +315,8 @@ automatically; remote (`ssh://`) GPU locks are report-only.
 - `docs/worktree-merge-back.md` -- from a finished worktree task to an approved merge
 - `docs/loop-engineering.md` -- checkpoint loops
 - `docs/harness-evaluation.md` -- evaluating changes to the kit itself
+- [IdeaScientist design study](docs/research/ideascientist-design.md) -- proposed
+  stage contracts, role collaboration, and a drawing-reference profile; not yet implemented
 - `CHANGELOG.md`, `CONTRIBUTING.md`, `LICENSE`
 
 MIT licensed. Contributions go through the same task-and-review workflow
