@@ -62,12 +62,21 @@ Every worker update must include:
 - A conversation fork/clone is a new runtime owner. Never reuse an inherited
   parent session record; let the native hook/runtime identity select the child
   instance, then read the generated lineage and peer status before claiming work.
+  Copied history does not transfer runtime identity or claim authority.
 - Read `.agent/state/SESSIONS.md` when starting or resuming. It is a generated
   presence view; durable goals and decisions remain in committed `.agent` docs.
 - Prefer separate branches or worktrees for parallel implementation; assign each
   parallel agent a dedicated worktree + branch to avoid index/HEAD contention.
-- Do not assign overlapping write scopes to different agents.
-- If two tasks must touch the same file, serialize them in the dependency map.
+- Do not assign overlapping write scopes to different agents in the same checkout.
+  If two tasks must touch the same physical file there, serialize them in the
+  dependency map.
+- Distinct tasks in separate managed worktrees may use the same relative scope,
+  such as `src/` or `tests/`, because their physical files and Git indexes are
+  separate. Resolve same-file branch conflicts during integration and rerun the
+  affected tests.
+- Same-task ownership and `maintenance` exclusivity remain repository-wide across
+  linked worktrees. Declared external output collisions and resource claims retain
+  their existing protections; worktree isolation does not make them independent.
 - If an agent finds scope drift, update the task doc before editing outside scope.
 - Never force-release an active session. A stale session may be released only
   after its task document, status, and working files have been inspected; resume

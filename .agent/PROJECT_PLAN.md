@@ -111,6 +111,7 @@ instead of relying on chat memory or repeated human prompts.
 - [x] TA08B0CC413F151F5-025 - add a day-one quick start walkthrough to both READMEs (owner: cursor)
 - [x] TA08B0CC413F151F5-024 - refresh README for real-world use and document the worktree merge-back path (owner: cursor)
 - [x] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) (owner: cursor)
+- [ ] TBA75EAA601A8248F-001 - Clarify checkout-local scope overlap in installed and template rules (owner: codex-scope-rules)
 
 ## Agent Allocation
 

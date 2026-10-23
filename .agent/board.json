@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-23 01:52:56",
+  "updated_at": "2026-10-23 01:57:05",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -1048,7 +1048,7 @@
     "T18444DD96FC4773D-001": {
       "title": "Integrate checkout-local scope templates with the tested runtime candidate",
       "type": "docs",
-      "status": "in_progress",
+      "status": "review",
       "owner": "codex",
       "scope": [
         ".agent/WORKFLOW_ENTRY.md",
@@ -1058,8 +1058,24 @@
       ],
       "deps": [],
       "created_at": "2026-10-23 01:52:56",
-      "updated_at": "2026-10-23 01:52:56",
+      "updated_at": "2026-10-23 01:57:05",
       "claim_id": "803312015c6a17ce5e3e6bf343ed62e2"
+    },
+    "TBA75EAA601A8248F-001": {
+      "title": "Clarify checkout-local scope overlap in installed and template rules",
+      "type": "docs",
+      "status": "review",
+      "owner": "codex-scope-rules",
+      "scope": [
+        ".agent/rules/agent-operating-rules.md",
+        "templates/project/.agent/rules/agent-operating-rules.md",
+        ".agent/WORKFLOW_ENTRY.md",
+        "templates/project/.agent/WORKFLOW_ENTRY.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-23 01:42:41",
+      "updated_at": "2026-10-23 01:45:33",
+      "claim_id": "ab1a7b4e31488546c12a3f6aed64d702"
     }
   },
   "updated": ""
