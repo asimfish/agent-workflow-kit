@@ -483,6 +483,17 @@
       "model": "",
       "reasoning_effort": "",
       "session_id": ""
+    },
+    "codex-native-scope-review": {
+      "role": "review",
+      "backend": "codex",
+      "write_scope": [
+        ".agent/"
+      ],
+      "tools": [],
+      "model": "",
+      "reasoning_effort": "",
+      "session_id": ""
     }
   }
 }

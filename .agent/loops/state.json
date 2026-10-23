@@ -426,6 +426,20 @@
       "last_run_at": "2026-10-23 02:17:14",
       "last_status": "success",
       "last_report": ".agent/loops/runs/20261023-021714-doc-hygiene-47cf22-2.md"
+    },
+    "daily-plan-triage:TC351C61753E04D38-001": {
+      "task": "TC351C61753E04D38-001",
+      "loop": "daily-plan-triage",
+      "last_run_at": "2026-10-23 02:21:36",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261023-022136-daily-plan-triage-afa617.md"
+    },
+    "doc-hygiene:TC351C61753E04D38-001": {
+      "task": "TC351C61753E04D38-001",
+      "loop": "doc-hygiene",
+      "last_run_at": "2026-10-23 02:38:31",
+      "last_status": "success",
+      "last_report": ".agent/loops/runs/20261023-023831-doc-hygiene-afa617.md"
     }
   },
   "checkpoints": {
@@ -1598,6 +1612,45 @@
         ".agent/loops/runs/20261023-021714-doc-hygiene-47cf22-2.md"
       ],
       "last_input_hash": "aa57871b90114e9c",
+      "strict": false,
+      "trigger": "post-finish",
+      "open_follow_up": null
+    },
+    "work-start:TC351C61753E04D38-001": {
+      "task": "TC351C61753E04D38-001",
+      "checkpoint": "work-start",
+      "last_run_at": "2026-10-23 02:21:36",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261023-022136-daily-plan-triage-afa617.md"
+      ],
+      "last_input_hash": "eb1d59a7fb4df8a9",
+      "strict": false,
+      "trigger": "work-start",
+      "open_follow_up": null
+    },
+    "pre-finish:TC351C61753E04D38-001": {
+      "task": "TC351C61753E04D38-001",
+      "checkpoint": "pre-finish",
+      "last_run_at": "2026-10-23 02:38:30",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261023-023830-doc-hygiene-afa617.md"
+      ],
+      "last_input_hash": "579b8765a92f3526",
+      "strict": true,
+      "trigger": "pre-finish",
+      "open_follow_up": null
+    },
+    "post-finish:TC351C61753E04D38-001": {
+      "task": "TC351C61753E04D38-001",
+      "checkpoint": "post-finish",
+      "last_run_at": "2026-10-23 02:38:31",
+      "last_status": "success",
+      "last_reports": [
+        ".agent/loops/runs/20261023-023831-doc-hygiene-afa617.md"
+      ],
+      "last_input_hash": "b48b83e8a29ab3bd",
       "strict": false,
       "trigger": "post-finish",
       "open_follow_up": null

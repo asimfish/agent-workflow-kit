@@ -36,9 +36,10 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
-- [ ] T18444DD96FC4773D-002 - Fence worktree allocation against exclusive maintenance before Git side effects (owner: codex)
-- [ ] T18444DD96FC4773D-001 - Integrate checkout-local scope templates with the tested runtime candidate (owner: codex)
-- [ ] TB64C7FAF94ECE480-001 - Allow checkout-local scope overlap across isolated worktrees without weakening shared ownership (owner: codex)
+- [x] TC351C61753E04D38-001 - Independent final frozen evaluation and four-task review of exact801d7fe (owner: codex-native-scope-review)
+- [x] T18444DD96FC4773D-002 - Fence worktree allocation against exclusive maintenance before Git side effects (owner: codex)
+- [x] T18444DD96FC4773D-001 - Integrate checkout-local scope templates with the tested runtime candidate (owner: codex)
+- [x] TB64C7FAF94ECE480-001 - Allow checkout-local scope overlap across isolated worktrees without weakening shared ownership (owner: codex)
 - [x] T2CCB56E65D69B108-001 - Independent frozen IdeaScientist documentation review b85cba8 (owner: codex-native-ideascientist-review-z9zb1r)
 - [x] T8D1FE3A06A6C0D8D-001 - Publish IdeaScientist design study and closed-loop comparison (owner: codex)
 - [x] TA688849DD2A68FB3-001 - Independent final scope-admission review exactc557637 (owner: codex-native-retirement-review-z9zb1r)
@@ -112,7 +113,7 @@ instead of relying on chat memory or repeated human prompts.
 - [x] TA08B0CC413F151F5-025 - add a day-one quick start walkthrough to both READMEs (owner: cursor)
 - [x] TA08B0CC413F151F5-024 - refresh README for real-world use and document the worktree merge-back path (owner: cursor)
 - [x] TA08B0CC413F151F5-023 - pave the worktree finish-to-gate path: merge-back tooling and doc (B-2) (owner: cursor)
-- [ ] TBA75EAA601A8248F-001 - Clarify checkout-local scope overlap in installed and template rules (owner: codex-scope-rules)
+- [x] TBA75EAA601A8248F-001 - Clarify checkout-local scope overlap in installed and template rules (owner: codex-scope-rules)
 
 ## Agent Allocation
 
