@@ -90,6 +90,81 @@ class SimulatedCollaborationTest(_ContractTestCase):
             self.ctl(root, session, "run", "wait", run, "--timeout", "30", expect=None)
         self.assertIn(status(), terminal, "cleanup left a live or unreconciled collector")
 
+    def test_same_relative_code_scopes_progress_in_separate_worktrees(self):
+        self.git_at(self.root, None, "add", *agentctl.ADOPTION_COMMIT_ADD_PATHS)
+        self.git_at(self.root, None, "commit", "-q", "-m", agentctl.ADOPTION_COMMIT_MESSAGE)
+        barrier = threading.Barrier(2)
+
+        def allocate(session):
+            task = f"T-SIM-{session.upper()}-001"
+            barrier.wait(timeout=30)
+            created = self.ctl(
+                self.root, session, "work", "--agent", "codex", "--auto-create",
+                "--new-id", task, "--type", "code", "--title", session,
+                "--scope", "src/", "--done", "own code and task evidence remain isolated",
+            )
+            root = Path(re.search(r"^\s*path=(.+)$", created.stdout, re.MULTILINE).group(1))
+            self.ctl(root, session, "work", "--agent", "codex", "--task", task)
+            return session, (root, task)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            workers = dict(pool.map(allocate, ("code-a", "code-b")))
+        a, task_a = workers["code-a"]
+        b, task_b = workers["code-b"]
+        self.assertNotEqual(a, b)
+        self.assertEqual(self.git_at(self.root, None, "status", "--porcelain").stdout, "")
+
+        barrier = threading.Barrier(2)
+
+        def develop(session):
+            root, task = workers[session]
+            self.write(root, session, "src/result.txt", session + "\n")
+            barrier.wait(timeout=30)
+            self.ctl(root, session, "note", f"SIM[{session}] same path, independent output")
+            command = shlex.join([
+                sys.executable, "-c",
+                f"from pathlib import Path; assert Path('src/result.txt').read_text() == {session + chr(10)!r}",
+            ])
+            self.ctl(root, session, "contract", "--tests-cmd", command)
+            self.ctl(root, session, "finish", "--summary", f"{session} verified locally")
+            board = json.loads((root / ".agent/board.json").read_text())
+            self.assertEqual(board["tasks"][task]["status"], "review")
+            return root
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            list(pool.map(develop, workers))
+        for session, (root, task) in workers.items():
+            peer = "code-b" if session == "code-a" else "code-a"
+            self.assertEqual((root / "src/result.txt").read_text(), session + "\n")
+            doc = (root / f".agent/tasks/{task}.md").read_text()
+            self.assertIn(f"SIM[{session}]", doc)
+            self.assertNotIn(f"SIM[{peer}]", doc)
+            self.assertIn("- Tests-exit: 0", doc)
+        self.write_guard(a, "code-a", str(b / "src/result.txt"), expect=2)
+        self.write_guard(b, "code-b", str(a / f".agent/tasks/{task_a}.md"), expect=2)
+        denied = self.ctl(b, "code-b", "run", "start", "--output", str(a / "src/result.txt"),
+                           "--", sys.executable, "-c", "raise AssertionError('must not run')", expect=1)
+        self.assertIn("output", denied.stderr)
+        self.assertEqual((a / "src/result.txt").read_text(), "code-a\n")
+        resource = self.ctl(a, "code-a", "resource", "acquire", "synthetic:same-scope-slot:0")
+        lease = re.search(r"\bresource-[0-9a-f]{16}\b", resource.stdout).group()
+        try:
+            locked = self.ctl(b, "code-b", "resource", "acquire", "synthetic:same-scope-slot:0", expect=1)
+            self.assertIn("already locked", locked.stderr)
+        finally:
+            self.ctl(a, "code-a", "resource", "release", lease, "--reason", "synthetic check complete")
+        heads = []
+        for session, (root, task) in workers.items():
+            self.git_at(root, session, "add", ".agent", "src/")
+            self.git_at(root, session, "commit", "-q", "-m", f"feat(simulation): deliver {session}\n\nRefs: {task}")
+            heads.append(self.git_at(root, session, "rev-parse", "HEAD").stdout.strip())
+        merged = self.git_at(self.root, None, "merge-tree", "--write-tree", *heads, expect=1)
+        self.assertIn("CONFLICT (add/add)", merged.stdout)
+        self.assertIn("src/result.txt", merged.stdout)
+        self.assertEqual((a / "src/result.txt").read_text(), "code-a\n")
+        self.assertEqual((b / "src/result.txt").read_text(), "code-b\n")
+        self.assertEqual(self.git_at(self.root, None, "status", "--porcelain").stdout, "")
+
     def test_four_shared_document_sessions_preserve_all_updates_without_retries(self):
         labels = ("catalog", "pricing", "validation", "replay")
         barrier = threading.Barrier(len(labels))

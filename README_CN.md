@@ -72,7 +72,8 @@ agentctl work --agent codex --auto-create --type code \
     --tests-cmd "python3 -m unittest discover -s tests/data -v" # 或者新开一个
 ```
 
-第二个会话如果想领同一个任务，或者申请 `src/data/` 之内的路径，会被拒绝。
+第二个会话如果想领同一个任务，会被拒绝。同一检出内的重叠路径会被拒绝；
+不同任务在独立 worktree 中可以使用相同的相对路径。
 新建的 `code` 和 `experiment` 任务会自动分到独立 Git worktree，跟随打印的
 路径和任务 ID，在那里恢复任务。`docs`、`review`、`generic` 可以在写范围
 不重叠时共用检出，但 Git 修改和无法枚举写入的测试、脚本需要独占检出。
@@ -165,8 +166,9 @@ flowchart LR
 - **计划和任务都是 Git 里的文件。** `.agent/PROJECT_PLAN.md` 是计划，
   `.agent/board.json` 是任务板，`.agent/tasks/` 下每个任务一份文档。智能体通过
   `agentctl` 更新它们；人直接改计划和规则，智能体继续之前会重新读。
-- **一次认领 = 一个任务 + 一个写范围。** 两个会话不能持有同一个任务，写范围
-  不能重叠。hooks 会拒绝范围之外的写入。
+- **一次认领 = 一个任务 + 一个写范围。** 两个会话不能持有同一个任务。同一检出
+  的写范围不能重叠；不同任务在独立 worktree 中可以修改同名相对路径。hooks
+  仍拒绝越出自己的检出和范围，分支间同文件冲突在集成时解决并重新测试。
 - **任务说清什么叫做完，一条命令来证明。** Definition of Done 和测试命令在干活
   之前就写进任务文档；`finish` 没有前者就拒绝，会去执行后者；评审者再跑一遍。
   交付物对照的是契约，永远不是干活者自己的总结。

@@ -30,6 +30,15 @@ task or receive an explicit handoff. Same-task claims fail across every linked
 worktree; overlapping-scope claims fail inside a shared checkout. Exclusive
 maintenance blocks every other active or stale repository session.
 
+Different tasks in separate managed worktrees may declare the same relative
+scope (`src/`, `tests/`) and edit the same relative filename independently.
+Their physical files, Git indexes, task documents and loop runtimes differ.
+The same task still cannot acquire a second lease under another agent name.
+Absolute peer-checkout writes, undeclared outputs and shared-resource conflicts
+remain refused. Merge conflicts are integration work: reconcile both intents
+and rerun affected tests before accepting the combined result. Existing shared
+tasks are not silently moved. See [ADR-002](architecture/ADR-002-worktree-local-write-scopes.md).
+
 A stale record remains authoritative while its checkout still exists. If its
 persisted absolute checkout path no longer exists, it is reported as
 `orphaned`: the audit record is retained, but it cannot block a new claim
@@ -40,7 +49,9 @@ Migration compatibility and work admission are separate decisions. An
 identifiable stale peer is an advisory warning from `agentctl migrate`; this
 prevents one expired conversation from denying every new task in the checkout.
 The stale claim is not released. `work/start` remains the enforcement point and
-still rejects same-task, overlapping-scope, and exclusive-maintenance conflicts.
+still rejects same-task, shared-checkout overlapping-scope, and
+exclusive-maintenance conflicts. Unknown active board claims in an unmanaged
+shared checkout retain the conservative scope backstop.
 Pre-identity peer records remain a blocking migration inspection because their
 owner and compatibility cannot be established safely.
 

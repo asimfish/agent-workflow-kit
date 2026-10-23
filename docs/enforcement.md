@@ -122,8 +122,10 @@ Scope membership for a single write target is directional and glob-aware: a
 path is in scope only when it is the scope entry or a descendant of it, so a
 parent directory (`src`) or a glob whose expansion spans siblings (`src/*`,
 bare `*`) is rejected when the task is scoped to `src/one/` — such a write
-would reach a peer's `src/two/`. The symmetric disjointness check between two
-task scopes is separate and unchanged.
+would reach a peer's `src/two/`. Overlap detection between task scopes is
+separate: shared-checkout scopes must be disjoint, while different tasks in
+separate managed worktrees may use the same relative paths. Same-task ownership
+remains repository-wide.
 
 Shell parsing itself is hardened against composition tricks: newlines
 separate commands exactly like `;`, `&>`/`&>>`/`>|`/`>&file` redirects are

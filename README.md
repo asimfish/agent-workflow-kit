@@ -87,8 +87,9 @@ agentctl work --agent codex --auto-create --type code \
     --tests-cmd "python3 -m unittest discover -s tests/data -v" # or open a new one
 ```
 
-A second conversation that asks for the same task, or for a path inside
-`src/data/`, is refused. Tasks of type `code` and `experiment` get their own
+A second conversation that asks for the same task is refused. Overlapping
+paths are refused in a shared checkout, not across separate managed worktrees.
+Tasks of type `code` and `experiment` get their own
 Git worktree automatically for new tasks (follow the printed path and resume
 the printed task ID there). `docs`, `review`, and `generic` tasks may share a
 checkout with disjoint scopes, but Git mutations and opaque test/script
@@ -196,8 +197,10 @@ flowchart LR
   task. Agents update them through `agentctl`; humans edit the plan and the
   rules directly, and agents re-read them before continuing.
 - **A claim is a task plus a write scope.** Two conversations cannot hold
-  the same task, and scopes may not overlap. Hooks reject writes outside
-  the claimed scope.
+  the same task. Scopes must be disjoint in a shared checkout; different tasks
+  in separate worktrees may edit the same relative paths. Hooks reject writes
+  outside the claimed checkout/scope. Same-file branch conflicts still require
+  integration and retesting.
 - **A task says what done means, and a command proves it.** The Definition
   of Done and the tests command are fixed in the task document before the
   work; `finish` refuses without the former and executes the latter; the

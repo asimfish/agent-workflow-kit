@@ -6,6 +6,15 @@ pull requests.
 
 ## Unreleased
 
+- Different tasks in separate managed worktrees may use the same repository-relative
+  scope. Allocation and task start no longer mistake independent `src/` paths for
+  shared files; one unreleased lease per task remains enforced across agent names.
+  Shared-checkout, external-output, resource, fork and retirement guards remain.
+  Installed synthetic-project tests exercise parallel same-path work and refusals.
+  Bootstrap now takes coordination and lease locks in the same order as start
+  and retirement, without waiting on a child process under the lease lock.
+  Checkout revalidation prevents writes after a between-phase retirement.
+
 - Managed-worktree retirement checks session and background-run ownership, not
   just Git cleanliness. Active, stale and unreleased conversations or live and
   unresolved runs prevent deletion. Admission and retirement share the existing

@@ -1,5 +1,6 @@
 """Fresh-install regression tests for managed Git worktree leases."""
 
+import argparse
 import json
 import os
 import re
@@ -11,6 +12,8 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+
+from tools import agentctl
 
 
 KIT = Path(__file__).resolve().parents[1]
@@ -604,7 +607,7 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
         self.assertIn("unresolved dependencies", refused.stdout + refused.stderr)
         self.assertFalse(self.worktree.exists())
 
-    def test_create_rejects_active_write_scope_conflicts(self):
+    def test_create_allows_relative_scope_overlap_with_an_active_shared_task(self):
         self.agentctl(
             "task", "create", "--id", "T-100", "--title", "active phase",
             "--owner", "alice", "--scope", "src/", expect=0,
@@ -614,15 +617,24 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             "task", "create", "--id", "T-101", "--title", "parallel phase",
             "--owner", "worker", "--scope", "src/", expect=0,
         )
-        self.commit("chore(agent): plan conflicting workers\n\nRefs: T-100 T-101")
-        refused = self.agentctl(
+        self.commit("chore(agent): plan independent workers\n\nRefs: T-100 T-101")
+        self.agentctl(
             "worktree", "create", "--task", "T-101", "--agent", "worker",
-            "--path", str(self.worktree), expect=1,
+            "--path", str(self.worktree), expect=0,
         )
-        self.assertIn("write-scope conflict", refused.stdout + refused.stderr)
-        self.assertFalse(self.worktree.exists())
+        env = os.environ.copy()
+        env["AGENT_WORKFLOW_SESSION_ID"] = "independent-worktree-worker"
+        self.agentctl("start", "--task", "T-101", "--agent", "worker",
+                      cwd=self.worktree, env=env, expect=0)
+        self.agentctl("note", "isolated worker progressed despite active shared src/ task",
+                      cwd=self.worktree, env=env, expect=0)
+        self.agentctl("note", "shared worker still owns its task", expect=0)
+        board = json.loads((self.root / ".agent/board.json").read_text())
+        self.assertEqual(board["tasks"]["T-100"]["status"], "in_progress")
+        worker_board = json.loads((self.worktree / ".agent/board.json").read_text())
+        self.assertEqual(worker_board["tasks"]["T-101"]["status"], "in_progress")
 
-    def test_create_rejects_scope_conflicts_from_an_active_shared_lease(self):
+    def test_create_allows_relative_scope_overlap_with_an_active_worktree(self):
         self.agentctl(
             "task", "create", "--id", "T-100", "--title", "first worker",
             "--owner", "alice", "--scope", "src/", expect=0,
@@ -643,14 +655,15 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             "chore(agent): claim first worker\n\nRefs: T-100", cwd=self.worktree,
         )
 
-        refused = self.agentctl(
+        self.agentctl(
             "worktree", "create", "--task", "T-101", "--agent", "bob",
-            "--path", str(self.temp / "bob"), expect=1,
+            "--path", str(self.temp / "bob"), expect=0,
         )
-        self.assertIn(first["id"], refused.stdout + refused.stderr)
-        self.assertIn("write-scope conflict", refused.stdout + refused.stderr)
+        leases = json.loads(self.agentctl("worktree", "list", "--json", expect=0).stdout)["worktrees"]
+        self.assertEqual({row["task"] for row in leases}, {"T-100", "T-101"})
+        self.assertIn(first["id"], {row["id"] for row in leases})
 
-    def test_create_rejects_overlapping_leases_for_the_same_agent_id(self):
+    def test_create_allows_distinct_tasks_with_same_scope_and_agent_name(self):
         self.agentctl(
             "task", "create", "--id", "T-100", "--title", "first codex",
             "--owner", "codex", "--scope", "src/", expect=0,
@@ -661,12 +674,54 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
         )
         self.commit("chore(agent): plan codex workers\n\nRefs: T-100 T-101")
         first = self.create_lease(self.worktree, task="T-100", agent="codex")
-        refused = self.agentctl(
+        self.agentctl(
             "worktree", "create", "--task", "T-101", "--agent", "codex",
-            "--path", str(self.temp / "second"), expect=1,
+            "--path", str(self.temp / "second"), expect=0,
         )
-        self.assertIn(first["id"], refused.stdout + refused.stderr)
-        self.assertIn("write-scope conflict", refused.stdout + refused.stderr)
+        leases = json.loads(self.agentctl("worktree", "list", "--json", expect=0).stdout)["worktrees"]
+        self.assertEqual(len(leases), 2)
+        self.assertEqual({row["agent"] for row in leases}, {"codex"})
+        self.assertIn(first["id"], {row["id"] for row in leases})
+
+    def test_create_rejects_duplicate_task_even_with_a_different_agent_name(self):
+        self.create_committed_task(agent="any")
+        first = self.create_lease(self.worktree, agent="alice")
+        refused = self.agentctl(
+            "worktree", "create", "--task", "T-101", "--agent", "bob",
+            "--path", str(self.temp / "bob"), expect=1,
+        )
+        self.assertIn(first["id"], refused.stderr)
+        self.assertFalse((self.temp / "bob").exists())
+        leases = json.loads(self.agentctl("worktree", "list", "--json", expect=0).stdout)["worktrees"]
+        self.assertEqual(len(leases), 1)
+
+    def test_bootstrap_revalidates_retired_checkout_before_creating_task(self):
+        real_release = agentctl._release_lock_file
+        retired = []
+
+        def retire_between_phases(path, fd):
+            real_release(path, fd)
+            if retired or path != agentctl._worktree_lease_paths(self.root)[1]:
+                return
+            lease = agentctl._load_worktree_leases(self.root)["leases"][-1]
+            retired.append(lease["id"])
+            rc = agentctl._worktree_release(self.root, argparse.Namespace(
+                lease=lease["id"], reason="synthetic retirement before task bootstrap",
+                ack_missing=False,
+            ))
+            self.assertEqual(rc, 0)
+
+        args = argparse.Namespace(id="T-102", title="bootstrap retirement race", owner="worker",
+                                  scope="src/", deps="", task_type="code", force=False)
+        with mock.patch.object(agentctl, "_default_worktree_path", return_value=self.worktree), \
+                mock.patch.object(agentctl, "_release_lock_file", side_effect=retire_between_phases):
+            self.assertEqual(agentctl._worktree_bootstrap_task(self.root, args, "worker", "worktree"), 2)
+        self.assertEqual(len(retired), 1)
+        self.assertFalse(self.worktree.exists(), "bootstrap recreated a retired checkout")
+        board = json.loads((self.root / ".agent/board.json").read_text())
+        self.assertNotIn("T-102", board["tasks"])
+        leases = json.loads(self.agentctl("worktree", "list", "--json", expect=0).stdout)["worktrees"]
+        self.assertEqual(leases[0]["observed_status"], "released")
 
     def test_managed_worker_cannot_change_its_leased_scope(self):
         self.create_committed_task()

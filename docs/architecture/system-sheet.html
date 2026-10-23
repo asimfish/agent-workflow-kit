@@ -65,7 +65,7 @@
 <main>
   <header>
     <div><h1>Agent Workflow Kit · 系统工程总图</h1><p>项目级协作控制：目标 → 任务授权 → 执行与证据 → 独立验收 → 有界下一轮</p></div>
-    <div class="muted">AS-BUILT / 已实现视图<br>核对基线 <code>df586ac</code> · 2026-10-12<br>协议 3 · 图纸 AWK-01</div>
+    <div class="muted">AS-BUILT / 已实现视图<br>基线 <code>7a8d81b</code> + checkout-local scope · 2026-10-23<br>协议 3 · 图纸 AWK-01</div>
   </header>
   <nav class="legend" aria-label="图纸分区">
     <a href="#A">A 系统边界</a><a href="#B">B 事实源</a><a href="#C">C 多会话</a>
@@ -127,7 +127,7 @@
         </svg></div>
         <ul>
           <li>图为 ChemBench 任务划分示意，不是机器实时审计。</li>
-          <li>code / experiment 默认 worktree；托管 worktree 的重叠 scope 也拒绝，不能借分支抢文件。</li>
+          <li>code / experiment 默认 worktree；不同任务可在独立 worktree 修改同名相对路径，集成时解决合并冲突。</li>
           <li>同目录共享仅适合不相交的明确写入；脚本、测试、Git 写入要求独占 checkout。</li>
           <li>复制 A 的历史给 B：带走知识，不能带走身份和 claim。失活归属须核实后显式接管。</li>
         </ul>

@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] TB64C7FAF94ECE480-001 - Allow checkout-local scope overlap across isolated worktrees without weakening shared ownership (owner: codex)
 - [x] T2CCB56E65D69B108-001 - Independent frozen IdeaScientist documentation review b85cba8 (owner: codex-native-ideascientist-review-z9zb1r)
 - [x] T8D1FE3A06A6C0D8D-001 - Publish IdeaScientist design study and closed-loop comparison (owner: codex)
 - [x] TA688849DD2A68FB3-001 - Independent final scope-admission review exactc557637 (owner: codex-native-retirement-review-z9zb1r)

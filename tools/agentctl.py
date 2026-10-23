@@ -4181,7 +4181,9 @@ def cmd_start(
             if foreign_error:
                 print(f"agentctl: {foreign_error}", file=sys.stderr)
                 return 1
-        if scope:
+        # A managed checkout has its own files and index. Session admission
+        # above still enforces same-task ownership and repository exclusivity.
+        if scope and not managed_lease:
             for tid, other_task in tasks.items():
                 if tid == task or other_task.get("status") not in ACTIVE_STATUSES:
                     continue
@@ -7235,13 +7237,6 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
                     file=sys.stderr,
                 )
                 return 1
-            if _scopes_overlap(scope, existing.get("scope") or []):
-                print(
-                    f"agentctl: task {task} scope overlaps active worktree task "
-                    f"{existing.get('task')}; split or serialize the tasks",
-                    file=sys.stderr,
-                )
-                return 1
             if existing.get("branch") == branch or str(
                     Path(existing.get("path") or "").resolve()) == str(path):
                 print(
@@ -7302,39 +7297,38 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
             _save_worktree_leases(root, data)
             print(f"agentctl: git worktree add failed: {lease['last_error']}", file=sys.stderr)
             return 2
-        create_command = [
-            sys.executable, str(path / "tools" / "agentctl.py"),
-            "task", "create",
-            "--id", task,
-            "--title", str(create_args.title or task),
-            "--owner", str(create_args.owner or agent),
-            "--scope", str(create_args.scope),
-            "--type", str(create_args.task_type),
-        ]
-        if create_args.deps:
-            create_command.extend(["--deps", str(create_args.deps)])
-        for flag, attr in (("--goal", "goal"), ("--done", "done"), ("--tests-cmd", "tests_cmd"), ("--parent", "parent")):
-            value = getattr(create_args, attr, None)
-            if value and str(value).strip():
-                # --flag=value: a value that begins with '-' must not be read as an option.
-                create_command.append(f"{flag}={value}")
-        try:
-            created = subprocess.run(
-                create_command, cwd=str(path), text=True, capture_output=True,
-                timeout=git_budget,
-            )
-        except subprocess.TimeoutExpired:
-            lease["status"] = "failed"
-            lease["last_error"] = (
-                f"task bootstrap timed out after {git_budget}s inside {path}"
-            )
-            lease["updated_at"] = _now()
-            _save_worktree_leases(root, data)
-            print(f"agentctl: {lease['last_error']}", file=sys.stderr)
+        created_worktree = _git_worktrees(root).get(str(path)) or {}
+        lease["git_dir"] = created_worktree.get("git_dir")
+        _save_worktree_leases(root, data)
+    finally:
+        _release_lock_file(lock, fd)
+
+    # Start/release acquire coordination before the lease lock. Never wait for
+    # coordination in a child process while holding the lease lock in its parent.
+    coordination_lock = _session_coordination_lock_path(root)
+    try:
+        coordination_fd = _acquire_lock_file(coordination_lock)
+    except TimeoutError as exc:
+        print(f"agentctl: {exc}; inspect allocated worktree {path}", file=sys.stderr)
+        return 2
+    fd = None
+    try:
+        fd = _acquire_lock_file(lock)
+        data = _load_worktree_leases(root)
+        lease = next((row for row in data.get("leases") or []
+                      if row.get("id") == lease_id), None)
+        worktrees = _git_worktrees(root)
+        if (not lease or lease.get("status") == "released"
+                or _worktree_observed_status(lease, worktrees) != "active"
+                or (worktrees.get(str(path)) or {}).get("git_dir") != lease.get("git_dir")):
+            print("agentctl: allocated worktree changed before task bootstrap; inspect leases", file=sys.stderr)
             return 2
-        if created.returncode:
+        task_args = argparse.Namespace(**vars(create_args))
+        task_args.force = False
+        created_rc = _task_create_unlocked(path, task_args)
+        if created_rc:
             lease["status"] = "failed"
-            lease["last_error"] = (created.stderr or created.stdout).strip()[-2000:]
+            lease["last_error"] = f"task bootstrap exited {created_rc}; inspect {path}"
             lease["updated_at"] = _now()
             _save_worktree_leases(root, data)
             print(
@@ -7343,13 +7337,13 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
                 file=sys.stderr,
             )
             return 2
-        created_worktree = _git_worktrees(root).get(str(path)) or {}
-        lease["git_dir"] = created_worktree.get("git_dir")
         lease["status"] = "active"
         lease["updated_at"] = _now()
         _save_worktree_leases(root, data)
     finally:
-        _release_lock_file(lock, fd)
+        if fd is not None:
+            _release_lock_file(lock, fd)
+        _release_lock_file(coordination_lock, coordination_fd)
     print(f"agentctl: created isolated {create_args.task_type} task {task}")
     print(f"  worktree_lease={lease_id}")
     print(f"  branch={branch}")
@@ -7410,16 +7404,6 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
         for problem in scope_problems:
             print(f"agentctl: task {task}: {problem}", file=sys.stderr)
         return 1
-    for other_task, other_entry in (committed_board.get("tasks") or {}).items():
-        if other_task == task or other_entry.get("status") not in ACTIVE_STATUSES:
-            continue
-        if _scopes_overlap(task_scope, other_entry.get("scope") or []):
-            print(
-                f"agentctl: task {task} has a write-scope conflict with {other_task} "
-                f"(owner={other_entry.get('owner')})",
-                file=sys.stderr,
-            )
-            return 1
     dirty = _git_process(root, "status", "--porcelain", "--untracked-files=all")
     if dirty.returncode:
         print(f"agentctl: unable to inspect current worktree: {dirty.stderr.strip()}", file=sys.stderr)
@@ -7457,18 +7441,10 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
                 continue
             if existing.get("status") == "failed" and observed == "missing":
                 continue
-            if existing.get("task") == task and existing.get("agent") == agent:
+            if existing.get("task") == task:
                 print(
-                    f"agentctl: active worktree lease already exists for {task}/{agent}: "
+                    f"agentctl: active worktree lease already exists for {task}: "
                     f"{existing.get('id')} ({observed})",
-                    file=sys.stderr,
-                )
-                return 1
-            if _scopes_overlap(task_scope, existing.get("scope") or []):
-                print(
-                    f"agentctl: task {task} has a write-scope conflict with active lease "
-                    f"{existing.get('id')} (task={existing.get('task')}, "
-                    f"agent={existing.get('agent')})",
                     file=sys.stderr,
                 )
                 return 1
