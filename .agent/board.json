@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-23 01:51:26",
+  "updated_at": "2026-10-23 01:52:56",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -1044,6 +1044,22 @@
       "created_at": "2026-10-23 01:31:12",
       "updated_at": "2026-10-23 01:51:26",
       "claim_id": "fe305e09e015ef76540b9e65bcca42ed"
+    },
+    "T18444DD96FC4773D-001": {
+      "title": "Integrate checkout-local scope templates with the tested runtime candidate",
+      "type": "docs",
+      "status": "in_progress",
+      "owner": "codex",
+      "scope": [
+        ".agent/WORKFLOW_ENTRY.md",
+        ".agent/rules/agent-operating-rules.md",
+        "templates/project/.agent/WORKFLOW_ENTRY.md",
+        "templates/project/.agent/rules/agent-operating-rules.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-23 01:52:56",
+      "updated_at": "2026-10-23 01:52:56",
+      "claim_id": "803312015c6a17ce5e3e6bf343ed62e2"
     }
   },
   "updated": ""
