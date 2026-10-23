@@ -257,6 +257,31 @@ class InstallAndHookRegressionTest(unittest.TestCase):
         )
         self.assertIn("already been completed", json.loads(after_finish.stdout)["reason"])
 
+    def test_cursor_permission_hooks_get_explicit_allow(self):
+        self.init()
+        read_only_payloads = [
+            {"cursor_version": "1.7.2", "hook_event_name": "preToolUse",
+             "tool_name": "Shell", "tool_input": {"command": "git status"}},
+            {"cursor_version": "1.7.2", "hook_event_name": "beforeShellExecution",
+             "command": "git status"},
+        ]
+        for payload in read_only_payloads:
+            read_only = self.hook("pre-tool-use", payload)
+            self.assertEqual(read_only.returncode, 0, read_only.stderr)
+            self.assertEqual(json.loads(read_only.stdout), {"permission": "allow"})
+
+        self.agentctl(
+            "work", "--agent", "codex", "--auto-create", "--new-id", "T-101",
+            "--title", "cursor allow contract", "--scope", "src/",
+        )
+        allowed = self.hook(
+            "pre-tool-use",
+            {"cursor_version": "1.7.2", "hook_event_name": "preToolUse",
+             "tool_name": "Write", "tool_input": {"file_path": "src/new.py"}},
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(json.loads(allowed.stdout), {"permission": "allow"})
+
     def test_shipped_provider_hooks_cover_all_tools_mcp_and_clear(self):
         self.init()
         codex = json.loads((self.root / ".codex/hooks.json").read_text(encoding="utf-8"))

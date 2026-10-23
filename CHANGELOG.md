@@ -6,6 +6,15 @@ pull requests.
 
 ## Unreleased
 
+- Cursor permission hooks now receive an explicit `{"permission": "allow"}`
+  when the workflow allows an action. The shipped Cursor `preToolUse`,
+  `beforeShellExecution` and `beforeMCPExecution` hooks are fail-closed, and
+  Cursor treats an empty response as a hook failure, so every read-only call
+  and every in-scope write was blocked. Cursor is recognized from the
+  documented `cursor_version` and camelCase `hook_event_name` payload fields;
+  Claude Code and Codex keep the empty allow response and deny paths are
+  unchanged.
+
 - Managed-worktree retirement checks session and background-run ownership, not
   just Git cleanliness. Active, stale and unreleased conversations or live and
   unresolved runs prevent deletion. Admission and retirement share the existing

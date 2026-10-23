@@ -137,6 +137,34 @@ def emit_context(event: str, message: str, env_vars: dict | None = None) -> None
     print(json.dumps(payload, ensure_ascii=False))
 
 
+_CURSOR_PERMISSION_EVENTS = {"preToolUse", "beforeShellExecution", "beforeMCPExecution"}
+
+
+def is_cursor_permission_hook(payload: dict) -> bool:
+    return bool(payload.get("cursor_version")) or (
+        payload.get("hook_event_name") in _CURSOR_PERMISSION_EVENTS
+    )
+
+
+def allow(payload: dict, context: str = "") -> int:
+    # Cursor fail-closed permission hooks treat an empty response as a hook
+    # failure and block the action, so Cursor needs an explicit decision.
+    output: dict = {}
+    if context:
+        output = {
+            "additional_context": context,
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "additionalContext": context,
+            },
+        }
+    if is_cursor_permission_hook(payload):
+        output["permission"] = "allow"
+    if output:
+        print(json.dumps(output, ensure_ascii=False))
+    return 0
+
+
 def block(event: str, reason: str) -> int:
     print(
         json.dumps(
@@ -2309,9 +2337,9 @@ def session_start() -> int:
 
 def pre_tool_use() -> int:
     root = find_root()
-    if not (root / ".agent").exists():
-        return 0
     payload = read_input()
+    if not (root / ".agent").exists():
+        return allow(payload)
     initial_env = hook_environment(payload)
     mutating = is_mutating_tool(payload)
     controller_mutation = command_requires_agentctl_identity(payload_command(payload))
@@ -2320,7 +2348,7 @@ def pre_tool_use() -> int:
         # liveness current without paying status + heartbeat subprocesses for
         # every read; all mutations still take the full fail-closed path.
         heartbeat_if_due(root, initial_env)
-        return 0
+        return allow(payload)
     env = resolve_existing_session_environment(
         root, payload, initial_env,
         claim_runtime_binding=command_is_agentctl_start(payload_command(payload)),
@@ -2337,7 +2365,7 @@ def pre_tool_use() -> int:
         # before a task session exists. Provider binding above must complete;
         # after that the controller itself owns the state transition.
         heartbeat_if_due(root, env)
-        return 0
+        return allow(payload)
     active = has_session(root, env)
     if not active:
         return block(
@@ -2371,12 +2399,12 @@ def pre_tool_use() -> int:
             "Start a new task before making more code or document edits.",
         )
     if guard_message:
-        emit_context(
-            "PreToolUse",
+        return allow(
+            payload,
             "Agent Workflow Kit detected a changed peer-session snapshot. Re-read the live "
             "coordination view before continuing:\n" + guard_message,
         )
-    return 0
+    return allow(payload)
 
 
 def stop() -> int:
