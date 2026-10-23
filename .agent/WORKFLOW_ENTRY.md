@@ -184,6 +184,10 @@ the sole bootstrap exception because it installs the identity hook itself.
   are disjoint. Each conversation gets an independent session record under the
   Git common directory; one conversation never resumes another conversation's
   task merely because the agent name is the same.
+- Distinct tasks in separate managed worktrees may use the same relative scope,
+  such as `src/` or `tests/`, because their physical files and Git indexes are
+  separate. Same-checkout scopes must still be disjoint. Resolve same-file branch
+  conflicts during integration and rerun the affected tests.
 - Task creation, start, note, finish, and the generated session view use atomic
   writes and an advisory coordination lock. Hooks reject writes outside the
   active scope and reject a path already claimed by another live session.
@@ -223,6 +227,9 @@ the sole bootstrap exception because it installs the identity hook itself.
 - Same-task ownership and `maintenance` exclusivity are repository-wide across
   linked worktrees. A conversation that moves from planning into another task
   worktree must release its prior task session first.
+  Declared external output collisions and resource claims retain their existing
+  protections; worktree isolation does not make them independent. Copied history
+  does not transfer runtime identity or claim authority.
 - A stale session remains visible and keeps its claims. After inspecting its
   task document and working tree, an agent may transfer that task by running:
 

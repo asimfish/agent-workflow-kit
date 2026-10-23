@@ -1,9 +1,10 @@
 # Architecture Drawings
 
 The drawings explain the **implemented** organization, not a proposed agent
-platform. Source reviewed: `df586ac` (2026-10-12), protocol 3. Logical areas below
+platform. Source reviewed: `7a8d81b` plus checkout-local scope admission
+(2026-10-23), protocol 3. Logical areas below
 are responsibilities inside the existing controller, not independent services
-or already-separated Python packages. This change adds no runtime mechanism.
+or already-separated Python packages. The diagrams are documentation, not a runtime mechanism.
 
 ![Agent Workflow Kit engineering sheet](system-sheet.png)
 
@@ -75,8 +76,9 @@ flowchart TB
     Fork -->|must claim its own task| New[New task or explicitly verified handoff]
 ```
 
-Code and experiment tasks default to managed worktrees. Managed leases reject
-overlapping write scopes even across their worktrees. Same-task claims are
+Code and experiment tasks default to managed worktrees. Different tasks in
+separate worktrees may use overlapping relative scopes, such as `src/`, because
+they write different physical files and Git indexes. Same-task claims are
 refused across all linked worktrees. Shared-checkout tasks need disjoint scopes;
 opaque scripts, tests and Git mutations require an exclusive checkout. A scope
 must include the worker's implementation **and tests/declared outputs**.
@@ -90,8 +92,10 @@ acknowledge instructions/epoch, never confer ownership on a revoked claim.
 The ChemBench labels in panel C illustrate a possible scope split, **not** a
 live audit or a claim that four machines share a realtime coordinator. A full
 test must declare every output; if it changes common code, serialize or split
-that write from the collection tasks. Coordinate actual GPUs through declared
+that write from the collection tasks, or give it a separate worktree. Coordinate actual GPUs through declared
 resource leases; independent remote task ledgers synchronize through Git.
+Conflicting edits to the same relative file require normal integration and
+retesting, not silent overwrite. See [ADR-002](ADR-002-worktree-local-write-scopes.md).
 
 Source: `_session_start_conflicts`, `_worktree_bootstrap_task`,
 `_session_claim_error`, `_check_receipt`; see

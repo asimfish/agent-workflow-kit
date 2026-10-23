@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-10-21 16:48:25",
+  "updated_at": "2026-10-23 02:38:31",
   "tasks": {
     "TA08B0CC413F151F5-023": {
       "title": "pave the worktree finish-to-gate path: merge-back tooling and doc (B-2)",
@@ -1022,6 +1022,91 @@
       "created_at": "2026-10-21 16:43:44",
       "updated_at": "2026-10-21 16:48:25",
       "claim_id": "3f6b0ef0afd0c4529be61332debb3207"
+    },
+    "TB64C7FAF94ECE480-001": {
+      "title": "Allow checkout-local scope overlap across isolated worktrees without weakening shared ownership",
+      "type": "code",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/test_worktree_workflow.py",
+        "tests/test_simulated_collaboration.py",
+        "tests/test_multi_session_workflow.py",
+        "docs/multi-session-execution.md",
+        "docs/architecture/",
+        "docs/enforcement.md",
+        "README.md",
+        "README_CN.md",
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-23 01:31:12",
+      "updated_at": "2026-10-23 02:30:38",
+      "claim_id": "fe305e09e015ef76540b9e65bcca42ed"
+    },
+    "T18444DD96FC4773D-001": {
+      "title": "Integrate checkout-local scope templates with the tested runtime candidate",
+      "type": "docs",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        ".agent/WORKFLOW_ENTRY.md",
+        ".agent/rules/agent-operating-rules.md",
+        "templates/project/.agent/WORKFLOW_ENTRY.md",
+        "templates/project/.agent/rules/agent-operating-rules.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-23 01:52:56",
+      "updated_at": "2026-10-23 02:34:34",
+      "claim_id": "803312015c6a17ce5e3e6bf343ed62e2"
+    },
+    "TBA75EAA601A8248F-001": {
+      "title": "Clarify checkout-local scope overlap in installed and template rules",
+      "type": "docs",
+      "status": "done",
+      "owner": "codex-scope-rules",
+      "scope": [
+        ".agent/rules/agent-operating-rules.md",
+        "templates/project/.agent/rules/agent-operating-rules.md",
+        ".agent/WORKFLOW_ENTRY.md",
+        "templates/project/.agent/WORKFLOW_ENTRY.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-23 01:42:41",
+      "updated_at": "2026-10-23 02:28:14",
+      "claim_id": "ab1a7b4e31488546c12a3f6aed64d702"
+    },
+    "T18444DD96FC4773D-002": {
+      "title": "Fence worktree allocation against exclusive maintenance before Git side effects",
+      "type": "code",
+      "status": "done",
+      "owner": "codex",
+      "scope": [
+        "tools/agentctl.py",
+        "tests/test_worktree_workflow.py",
+        "tests/test_simulated_collaboration.py",
+        "docs/architecture/ADR-002-worktree-local-write-scopes.md",
+        "docs/multi-session-execution.md",
+        "CHANGELOG.md"
+      ],
+      "deps": [],
+      "created_at": "2026-10-23 02:05:59",
+      "updated_at": "2026-10-23 02:30:37",
+      "claim_id": "6ccc8c5ca5346651f794e80be7b4548a"
+    },
+    "TC351C61753E04D38-001": {
+      "title": "Independent final frozen evaluation and four-task review of exact801d7fe",
+      "type": "review",
+      "status": "done",
+      "owner": "codex-native-scope-review",
+      "scope": [
+        ".agent/"
+      ],
+      "deps": [],
+      "created_at": "2026-10-23 02:21:36",
+      "updated_at": "2026-10-23 02:38:31",
+      "claim_id": "563794e2186c9c1110490725ea859b68"
     }
   },
   "updated": ""

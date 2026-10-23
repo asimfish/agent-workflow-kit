@@ -1,5 +1,6 @@
 """Fresh-install regression tests for managed Git worktree leases."""
 
+import argparse
 import json
 import os
 import re
@@ -8,9 +9,12 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
+
+from tools import agentctl
 
 
 KIT = Path(__file__).resolve().parents[1]
@@ -356,6 +360,102 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
         )
         self.assertIn("already claimed", blocked.stderr)
 
+    def test_exclusive_maintenance_blocks_allocation_before_git_side_effects(self):
+        self.agentctl("task", "create", "--id", "T-612", "--title", "explicit code worker",
+                      "--owner", "worker", "--scope", "src/", "--type", "code", expect=0)
+        self.commit("chore(agent): plan explicit code worker\n\nRefs: T-612")
+        created = self.agentctl(
+            "work", "--agent", "maintainer", "--auto-create", "--new-id", "T-611",
+            "--title", "exclusive maintenance", "--scope", "src/", "--type", "maintenance", expect=0,
+        )
+        maintenance = Path(re.search(r"^  path=(.+)$", created.stdout, re.MULTILINE).group(1))
+        env = os.environ.copy()
+        env["AGENT_WORKFLOW_SESSION_ID"] = "exclusive-allocation-owner"
+        self.agentctl("work", "--agent", "maintainer", "--task", "T-611",
+                      cwd=maintenance, env=env, expect=0)
+        state = json.loads(self.agentctl("status", "--json", cwd=maintenance, env=env, expect=0).stdout)
+        self.assertEqual(state["isolation"], "exclusive")
+        session_path = agentctl._session_path(maintenance, state["workflow_session_key"])
+        for stale in (False, True):
+            if stale:
+                session = json.loads(session_path.read_text())
+                session["heartbeat_ns"] = 1
+                session["heartbeat_at"] = "2000-01-01 00:00:00"
+                session_path.write_text(json.dumps(session), encoding="utf-8")
+            before_refs = self.git("for-each-ref", "--format=%(refname)", "refs/heads/")
+            before_worktrees = self.git("worktree", "list", "--porcelain")
+            before_leases = self.agentctl("worktree", "list", "--json", expect=0).stdout
+            for scope in ("src/", "other/"):
+                with self.subTest(stale=stale, scope=scope):
+                    refused = self.agentctl(
+                        "work", "--agent", "worker", "--auto-create", "--new-id", "T-613",
+                        "--title", "automatic code worker", "--scope", scope, "--type", "code", expect=1,
+                    )
+                    self.assertIn("exclusive", refused.stderr)
+            refused = self.agentctl("worktree", "create", "--task", "T-612", "--agent", "worker",
+                                    "--path", str(self.worktree), expect=1)
+            self.assertIn("exclusive", refused.stderr)
+            self.assertEqual(self.git("for-each-ref", "--format=%(refname)", "refs/heads/"), before_refs)
+            self.assertEqual(self.git("worktree", "list", "--porcelain"), before_worktrees)
+            self.assertEqual(self.agentctl("worktree", "list", "--json", expect=0).stdout, before_leases)
+            self.assertFalse(self.worktree.exists())
+
+    def test_pending_maintenance_waits_for_git_allocation_then_fences_bootstrap(self):
+        created = self.agentctl(
+            "work", "--agent", "maintainer", "--auto-create", "--new-id", "T-621",
+            "--title", "pending maintenance", "--scope", "maintenance/", "--type", "maintenance", expect=0,
+        )
+        maintenance = Path(re.search(r"^  path=(.+)$", created.stdout, re.MULTILINE).group(1))
+        env = os.environ.copy()
+        env["AGENT_WORKFLOW_SESSION_ID"] = "pending-exclusive-owner"
+        coordination = agentctl._session_coordination_lock_path(self.root)
+        real_git = agentctl._git_process
+        pending = []
+
+        def start_maintenance_during_git(root, *cmd, **kwargs):
+            if cmd[:2] == ("worktree", "add"):
+                # Slow Git must not retain coordination, but maintenance must
+                # wait for this allocator's lease lock before starting.
+                fd = agentctl._acquire_lock_file(coordination, timeout_seconds=0.0)
+                agentctl._release_lock_file(coordination, fd)
+                child = subprocess.Popen(
+                    [sys.executable, "tools/agentctl.py", "work", "--agent", "maintainer", "--task", "T-621"],
+                    cwd=maintenance, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                pending.append(child)
+                deadline = time.monotonic() + 10
+                while True:
+                    self.assertIsNone(child.poll(), "maintenance did not wait for the in-flight Git allocation")
+                    try:
+                        fd = agentctl._acquire_lock_file(coordination, timeout_seconds=0.0)
+                    except TimeoutError:
+                        break
+                    agentctl._release_lock_file(coordination, fd)
+                    if time.monotonic() >= deadline:
+                        self.fail("maintenance never reached coordination admission")
+                    time.sleep(0.01)
+            return real_git(root, *cmd, **kwargs)
+
+        args = argparse.Namespace(id="T-622", title="code allocation race", owner="worker",
+                                  scope="src/", deps="", task_type="code", force=False)
+        try:
+            with mock.patch.object(agentctl, "_default_worktree_path", return_value=self.worktree), \
+                    mock.patch.object(agentctl, "_git_process", side_effect=start_maintenance_during_git):
+                self.assertEqual(agentctl._worktree_bootstrap_task(self.root, args, "worker", "worktree"), 2)
+            self.assertEqual(len(pending), 1)
+            stdout, stderr = pending[0].communicate(timeout=30)
+            self.assertEqual(pending[0].returncode, 0, stdout + stderr)
+            self.assertTrue(self.worktree.is_dir(), "an allocated checkout must remain inspectable")
+            self.assertFalse((self.worktree / ".agent/tasks/T-622.md").exists(), "bootstrap wrote after maintenance started")
+            state = json.loads(self.agentctl("status", "--json", cwd=maintenance, env=env, expect=0).stdout)
+            self.assertEqual(state["task"], "T-621")
+            self.assertEqual(state["isolation"], "exclusive")
+        finally:
+            for child in pending:
+                if child.poll() is None:
+                    child.terminate()
+                child.communicate(timeout=30)
+
     def test_exclusive_maintenance_blocks_sessions_in_other_worktrees(self):
         created = self.agentctl(
             "work", "--agent", "maintainer", "--auto-create",
@@ -604,7 +704,7 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
         self.assertIn("unresolved dependencies", refused.stdout + refused.stderr)
         self.assertFalse(self.worktree.exists())
 
-    def test_create_rejects_active_write_scope_conflicts(self):
+    def test_create_allows_relative_scope_overlap_with_an_active_shared_task(self):
         self.agentctl(
             "task", "create", "--id", "T-100", "--title", "active phase",
             "--owner", "alice", "--scope", "src/", expect=0,
@@ -614,15 +714,24 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             "task", "create", "--id", "T-101", "--title", "parallel phase",
             "--owner", "worker", "--scope", "src/", expect=0,
         )
-        self.commit("chore(agent): plan conflicting workers\n\nRefs: T-100 T-101")
-        refused = self.agentctl(
+        self.commit("chore(agent): plan independent workers\n\nRefs: T-100 T-101")
+        self.agentctl(
             "worktree", "create", "--task", "T-101", "--agent", "worker",
-            "--path", str(self.worktree), expect=1,
+            "--path", str(self.worktree), expect=0,
         )
-        self.assertIn("write-scope conflict", refused.stdout + refused.stderr)
-        self.assertFalse(self.worktree.exists())
+        env = os.environ.copy()
+        env["AGENT_WORKFLOW_SESSION_ID"] = "independent-worktree-worker"
+        self.agentctl("start", "--task", "T-101", "--agent", "worker",
+                      cwd=self.worktree, env=env, expect=0)
+        self.agentctl("note", "isolated worker progressed despite active shared src/ task",
+                      cwd=self.worktree, env=env, expect=0)
+        self.agentctl("note", "shared worker still owns its task", expect=0)
+        board = json.loads((self.root / ".agent/board.json").read_text())
+        self.assertEqual(board["tasks"]["T-100"]["status"], "in_progress")
+        worker_board = json.loads((self.worktree / ".agent/board.json").read_text())
+        self.assertEqual(worker_board["tasks"]["T-101"]["status"], "in_progress")
 
-    def test_create_rejects_scope_conflicts_from_an_active_shared_lease(self):
+    def test_create_allows_relative_scope_overlap_with_an_active_worktree(self):
         self.agentctl(
             "task", "create", "--id", "T-100", "--title", "first worker",
             "--owner", "alice", "--scope", "src/", expect=0,
@@ -643,14 +752,15 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             "chore(agent): claim first worker\n\nRefs: T-100", cwd=self.worktree,
         )
 
-        refused = self.agentctl(
+        self.agentctl(
             "worktree", "create", "--task", "T-101", "--agent", "bob",
-            "--path", str(self.temp / "bob"), expect=1,
+            "--path", str(self.temp / "bob"), expect=0,
         )
-        self.assertIn(first["id"], refused.stdout + refused.stderr)
-        self.assertIn("write-scope conflict", refused.stdout + refused.stderr)
+        leases = json.loads(self.agentctl("worktree", "list", "--json", expect=0).stdout)["worktrees"]
+        self.assertEqual({row["task"] for row in leases}, {"T-100", "T-101"})
+        self.assertIn(first["id"], {row["id"] for row in leases})
 
-    def test_create_rejects_overlapping_leases_for_the_same_agent_id(self):
+    def test_create_allows_distinct_tasks_with_same_scope_and_agent_name(self):
         self.agentctl(
             "task", "create", "--id", "T-100", "--title", "first codex",
             "--owner", "codex", "--scope", "src/", expect=0,
@@ -661,12 +771,54 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
         )
         self.commit("chore(agent): plan codex workers\n\nRefs: T-100 T-101")
         first = self.create_lease(self.worktree, task="T-100", agent="codex")
-        refused = self.agentctl(
+        self.agentctl(
             "worktree", "create", "--task", "T-101", "--agent", "codex",
-            "--path", str(self.temp / "second"), expect=1,
+            "--path", str(self.temp / "second"), expect=0,
         )
-        self.assertIn(first["id"], refused.stdout + refused.stderr)
-        self.assertIn("write-scope conflict", refused.stdout + refused.stderr)
+        leases = json.loads(self.agentctl("worktree", "list", "--json", expect=0).stdout)["worktrees"]
+        self.assertEqual(len(leases), 2)
+        self.assertEqual({row["agent"] for row in leases}, {"codex"})
+        self.assertIn(first["id"], {row["id"] for row in leases})
+
+    def test_create_rejects_duplicate_task_even_with_a_different_agent_name(self):
+        self.create_committed_task(agent="any")
+        first = self.create_lease(self.worktree, agent="alice")
+        refused = self.agentctl(
+            "worktree", "create", "--task", "T-101", "--agent", "bob",
+            "--path", str(self.temp / "bob"), expect=1,
+        )
+        self.assertIn(first["id"], refused.stderr)
+        self.assertFalse((self.temp / "bob").exists())
+        leases = json.loads(self.agentctl("worktree", "list", "--json", expect=0).stdout)["worktrees"]
+        self.assertEqual(len(leases), 1)
+
+    def test_bootstrap_revalidates_retired_checkout_before_creating_task(self):
+        real_release = agentctl._release_lock_file
+        retired = []
+
+        def retire_between_phases(path, fd):
+            real_release(path, fd)
+            if retired or path != agentctl._worktree_lease_paths(self.root)[1]:
+                return
+            lease = agentctl._load_worktree_leases(self.root)["leases"][-1]
+            retired.append(lease["id"])
+            rc = agentctl._worktree_release(self.root, argparse.Namespace(
+                lease=lease["id"], reason="synthetic retirement before task bootstrap",
+                ack_missing=False,
+            ))
+            self.assertEqual(rc, 0)
+
+        args = argparse.Namespace(id="T-102", title="bootstrap retirement race", owner="worker",
+                                  scope="src/", deps="", task_type="code", force=False)
+        with mock.patch.object(agentctl, "_default_worktree_path", return_value=self.worktree), \
+                mock.patch.object(agentctl, "_release_lock_file", side_effect=retire_between_phases):
+            self.assertEqual(agentctl._worktree_bootstrap_task(self.root, args, "worker", "worktree"), 2)
+        self.assertEqual(len(retired), 1)
+        self.assertFalse(self.worktree.exists(), "bootstrap recreated a retired checkout")
+        board = json.loads((self.root / ".agent/board.json").read_text())
+        self.assertNotIn("T-102", board["tasks"])
+        leases = json.loads(self.agentctl("worktree", "list", "--json", expect=0).stdout)["worktrees"]
+        self.assertEqual(leases[0]["observed_status"], "released")
 
     def test_managed_worker_cannot_change_its_leased_scope(self):
         self.create_committed_task()
