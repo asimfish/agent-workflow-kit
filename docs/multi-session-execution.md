@@ -29,6 +29,12 @@ identity and may read the parent's durable task record, but it must claim a new
 task or receive an explicit handoff. Same-task claims fail across every linked
 worktree; overlapping-scope claims fail inside a shared checkout. Exclusive
 maintenance blocks every other active or stale repository session.
+Both automatic and explicit worktree allocation also reject an existing
+exclusive holder before recording a lease or creating a branch/checkout.
+Allocation shares the coordination/lease ordering with maintenance admission;
+slow Git retains the lease lock, not coordination. If maintenance starts after
+Git allocation but before bootstrap metadata, bootstrap refuses and retains the
+allocated checkout for inspection instead of writing a new task or replaying.
 
 Different tasks in separate managed worktrees may declare the same relative
 scope (`src/`, `tests/`) and edit the same relative filename independently.

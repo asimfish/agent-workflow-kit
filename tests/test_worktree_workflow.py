@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -358,6 +359,102 @@ class WorktreeWorkflowRegressionTest(unittest.TestCase):
             cwd=second, env=env_b, expect=1,
         )
         self.assertIn("already claimed", blocked.stderr)
+
+    def test_exclusive_maintenance_blocks_allocation_before_git_side_effects(self):
+        self.agentctl("task", "create", "--id", "T-612", "--title", "explicit code worker",
+                      "--owner", "worker", "--scope", "src/", "--type", "code", expect=0)
+        self.commit("chore(agent): plan explicit code worker\n\nRefs: T-612")
+        created = self.agentctl(
+            "work", "--agent", "maintainer", "--auto-create", "--new-id", "T-611",
+            "--title", "exclusive maintenance", "--scope", "src/", "--type", "maintenance", expect=0,
+        )
+        maintenance = Path(re.search(r"^  path=(.+)$", created.stdout, re.MULTILINE).group(1))
+        env = os.environ.copy()
+        env["AGENT_WORKFLOW_SESSION_ID"] = "exclusive-allocation-owner"
+        self.agentctl("work", "--agent", "maintainer", "--task", "T-611",
+                      cwd=maintenance, env=env, expect=0)
+        state = json.loads(self.agentctl("status", "--json", cwd=maintenance, env=env, expect=0).stdout)
+        self.assertEqual(state["isolation"], "exclusive")
+        session_path = agentctl._session_path(maintenance, state["workflow_session_key"])
+        for stale in (False, True):
+            if stale:
+                session = json.loads(session_path.read_text())
+                session["heartbeat_ns"] = 1
+                session["heartbeat_at"] = "2000-01-01 00:00:00"
+                session_path.write_text(json.dumps(session), encoding="utf-8")
+            before_refs = self.git("for-each-ref", "--format=%(refname)", "refs/heads/")
+            before_worktrees = self.git("worktree", "list", "--porcelain")
+            before_leases = self.agentctl("worktree", "list", "--json", expect=0).stdout
+            for scope in ("src/", "other/"):
+                with self.subTest(stale=stale, scope=scope):
+                    refused = self.agentctl(
+                        "work", "--agent", "worker", "--auto-create", "--new-id", "T-613",
+                        "--title", "automatic code worker", "--scope", scope, "--type", "code", expect=1,
+                    )
+                    self.assertIn("exclusive", refused.stderr)
+            refused = self.agentctl("worktree", "create", "--task", "T-612", "--agent", "worker",
+                                    "--path", str(self.worktree), expect=1)
+            self.assertIn("exclusive", refused.stderr)
+            self.assertEqual(self.git("for-each-ref", "--format=%(refname)", "refs/heads/"), before_refs)
+            self.assertEqual(self.git("worktree", "list", "--porcelain"), before_worktrees)
+            self.assertEqual(self.agentctl("worktree", "list", "--json", expect=0).stdout, before_leases)
+            self.assertFalse(self.worktree.exists())
+
+    def test_pending_maintenance_waits_for_git_allocation_then_fences_bootstrap(self):
+        created = self.agentctl(
+            "work", "--agent", "maintainer", "--auto-create", "--new-id", "T-621",
+            "--title", "pending maintenance", "--scope", "maintenance/", "--type", "maintenance", expect=0,
+        )
+        maintenance = Path(re.search(r"^  path=(.+)$", created.stdout, re.MULTILINE).group(1))
+        env = os.environ.copy()
+        env["AGENT_WORKFLOW_SESSION_ID"] = "pending-exclusive-owner"
+        coordination = agentctl._session_coordination_lock_path(self.root)
+        real_git = agentctl._git_process
+        pending = []
+
+        def start_maintenance_during_git(root, *cmd, **kwargs):
+            if cmd[:2] == ("worktree", "add"):
+                # Slow Git must not retain coordination, but maintenance must
+                # wait for this allocator's lease lock before starting.
+                fd = agentctl._acquire_lock_file(coordination, timeout_seconds=0.0)
+                agentctl._release_lock_file(coordination, fd)
+                child = subprocess.Popen(
+                    [sys.executable, "tools/agentctl.py", "work", "--agent", "maintainer", "--task", "T-621"],
+                    cwd=maintenance, env=env, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                )
+                pending.append(child)
+                deadline = time.monotonic() + 10
+                while True:
+                    self.assertIsNone(child.poll(), "maintenance did not wait for the in-flight Git allocation")
+                    try:
+                        fd = agentctl._acquire_lock_file(coordination, timeout_seconds=0.0)
+                    except TimeoutError:
+                        break
+                    agentctl._release_lock_file(coordination, fd)
+                    if time.monotonic() >= deadline:
+                        self.fail("maintenance never reached coordination admission")
+                    time.sleep(0.01)
+            return real_git(root, *cmd, **kwargs)
+
+        args = argparse.Namespace(id="T-622", title="code allocation race", owner="worker",
+                                  scope="src/", deps="", task_type="code", force=False)
+        try:
+            with mock.patch.object(agentctl, "_default_worktree_path", return_value=self.worktree), \
+                    mock.patch.object(agentctl, "_git_process", side_effect=start_maintenance_during_git):
+                self.assertEqual(agentctl._worktree_bootstrap_task(self.root, args, "worker", "worktree"), 2)
+            self.assertEqual(len(pending), 1)
+            stdout, stderr = pending[0].communicate(timeout=30)
+            self.assertEqual(pending[0].returncode, 0, stdout + stderr)
+            self.assertTrue(self.worktree.is_dir(), "an allocated checkout must remain inspectable")
+            self.assertFalse((self.worktree / ".agent/tasks/T-622.md").exists(), "bootstrap wrote after maintenance started")
+            state = json.loads(self.agentctl("status", "--json", cwd=maintenance, env=env, expect=0).stdout)
+            self.assertEqual(state["task"], "T-621")
+            self.assertEqual(state["isolation"], "exclusive")
+        finally:
+            for child in pending:
+                if child.poll() is None:
+                    child.terminate()
+                child.communicate(timeout=30)
 
     def test_exclusive_maintenance_blocks_sessions_in_other_worktrees(self):
         created = self.agentctl(

@@ -7155,6 +7155,19 @@ def _default_worktree_path(root: Path, task: str, agent: str) -> Path:
     return pool / f"{task.lower()}-{_safe_segment(agent).lower()}"
 
 
+def _worktree_allocation_error(root: Path, isolation: str) -> str:
+    for row in _session_rows_unlocked(root):
+        if row.get("observed_status") not in {"active", "stale"}:
+            continue
+        if isolation == "exclusive" or row.get("isolation") == "exclusive":
+            return (
+                "exclusive maintenance conflicts with session "
+                f"{row.get('workflow_session_key')} task={row.get('task')}; "
+                "inspect and drain its owner before allocating a worktree"
+            )
+    return ""
+
+
 def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
                              agent: str, isolation: str) -> int:
     registry, lock = _worktree_lease_paths(root)
@@ -7199,24 +7212,21 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
             file=sys.stderr,
         )
         return 1
-    if isolation == "exclusive":
-        peers = [
-            row for row in _session_rows_unlocked(root)
-            if row.get("observed_status") in {"active", "stale"}
-        ]
-        if peers:
-            print(
-                "agentctl: exclusive maintenance cannot start while another session is active or stale",
-                file=sys.stderr,
-            )
-            return 1
     branch = _default_worktree_branch(task, agent)
     path = _default_worktree_path(root, task, agent).resolve()
     lease_id = "wt-" + hashlib.sha256(
         f"bootstrap:{task}:{agent}:{path}:{time.time_ns()}".encode("utf-8")
     ).hexdigest()[:16]
-    fd = _acquire_lock_file(lock)
+    coordination_lock = _session_coordination_lock_path(root)
+    coordination_fd = None
+    fd = None
     try:
+        coordination_fd = _acquire_lock_file(coordination_lock)
+        fd = _acquire_lock_file(lock)
+        allocation_error = _worktree_allocation_error(root, isolation)
+        if allocation_error:
+            print(f"agentctl: {allocation_error}", file=sys.stderr)
+            return 1
         data = _load_worktree_leases(root)
         try:
             worktrees = _git_worktrees(root)
@@ -7270,6 +7280,10 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
         }
         data.setdefault("leases", []).append(lease)
         _save_worktree_leases(root, data)
+        # Keep the lease lock across shared Git changes, not coordination.
+        # A new maintenance start must inspect this registry before admission.
+        _release_lock_file(coordination_lock, coordination_fd)
+        coordination_fd = None
         git_budget = _worktree_git_timeout()
         try:
             added = _git_process(
@@ -7300,12 +7314,17 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
         created_worktree = _git_worktrees(root).get(str(path)) or {}
         lease["git_dir"] = created_worktree.get("git_dir")
         _save_worktree_leases(root, data)
+    except TimeoutError as exc:
+        print(f"agentctl: {exc}; inspect worktree leases before retrying", file=sys.stderr)
+        return 2
     finally:
-        _release_lock_file(lock, fd)
+        if fd is not None:
+            _release_lock_file(lock, fd)
+        if coordination_fd is not None:
+            _release_lock_file(coordination_lock, coordination_fd)
 
     # Start/release acquire coordination before the lease lock. Never wait for
     # coordination in a child process while holding the lease lock in its parent.
-    coordination_lock = _session_coordination_lock_path(root)
     try:
         coordination_fd = _acquire_lock_file(coordination_lock)
     except TimeoutError as exc:
@@ -7322,6 +7341,10 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
                 or _worktree_observed_status(lease, worktrees) != "active"
                 or (worktrees.get(str(path)) or {}).get("git_dir") != lease.get("git_dir")):
             print("agentctl: allocated worktree changed before task bootstrap; inspect leases", file=sys.stderr)
+            return 2
+        allocation_error = _worktree_allocation_error(root, isolation)
+        if allocation_error:
+            print(f"agentctl: {allocation_error}; allocated checkout retained at {path}", file=sys.stderr)
             return 2
         task_args = argparse.Namespace(**vars(create_args))
         task_args.force = False
@@ -7340,6 +7363,9 @@ def _worktree_bootstrap_task(root: Path, create_args: argparse.Namespace,
         lease["status"] = "active"
         lease["updated_at"] = _now()
         _save_worktree_leases(root, data)
+    except TimeoutError as exc:
+        print(f"agentctl: {exc}; allocated checkout retained at {path}", file=sys.stderr)
+        return 2
     finally:
         if fd is not None:
             _release_lock_file(lock, fd)
@@ -7423,8 +7449,16 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
     lease_id = "wt-" + hashlib.sha256(
         f"{task}:{agent}:{path}:{time.time_ns()}".encode("utf-8")
     ).hexdigest()[:16]
-    fd = _acquire_lock_file(lock)
+    coordination_lock = _session_coordination_lock_path(root)
+    coordination_fd = None
+    fd = None
     try:
+        coordination_fd = _acquire_lock_file(coordination_lock)
+        fd = _acquire_lock_file(lock)
+        allocation_error = _worktree_allocation_error(root, _task_isolation(root, task_entry, "auto"))
+        if allocation_error:
+            print(f"agentctl: {allocation_error}", file=sys.stderr)
+            return 1
         data = _load_worktree_leases(root)
         try:
             worktrees = _git_worktrees(root)
@@ -7487,6 +7521,8 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
         }
         data.setdefault("leases", []).append(lease)
         _save_worktree_leases(root, data)
+        _release_lock_file(coordination_lock, coordination_fd)
+        coordination_fd = None
         proc = _git_process(root, "worktree", "add", "-b", branch, str(path), base_sha)
         lease["updated_at"] = _now()
         if proc.returncode:
@@ -7509,8 +7545,14 @@ def _worktree_create(root: Path, args: argparse.Namespace) -> int:
         lease["git_dir"] = created.get("git_dir")
         lease["status"] = "active"
         _save_worktree_leases(root, data)
+    except TimeoutError as exc:
+        print(f"agentctl: {exc}; inspect worktree leases before retrying", file=sys.stderr)
+        return 2
     finally:
-        _release_lock_file(lock, fd)
+        if fd is not None:
+            _release_lock_file(lock, fd)
+        if coordination_fd is not None:
+            _release_lock_file(coordination_lock, coordination_fd)
     print(f"agentctl: worktree lease {lease_id} active")
     print(f"  task={task} agent={agent}")
     print(f"  branch={branch}")

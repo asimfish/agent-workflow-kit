@@ -14,6 +14,10 @@ pull requests.
   Bootstrap now takes coordination and lease locks in the same order as start
   and retirement, without waiting on a child process under the lease lock.
   Checkout revalidation prevents writes after a between-phase retirement.
+  Independent review also exposed an exclusive-maintenance allocation gap:
+  automatic and explicit allocators now refuse existing active/stale exclusive
+  holders before Git side effects and recheck before task bootstrap. A real
+  competing maintenance subprocess verifies the allocation/metadata boundary.
 
 - Managed-worktree retirement checks session and background-run ownership, not
   just Git cleanliness. Active, stale and unreleased conversations or live and

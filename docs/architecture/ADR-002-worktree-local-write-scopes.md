@@ -47,6 +47,17 @@ for short, in-process task creation. It reloads the lease and verifies the
 registered checkout before writing, so retirement in between cannot recreate a
 deleted checkout. Slow Git allocation does not hold the coordination lock.
 
+Independent review found that scope exclusion had also incidentally refused
+allocation during overlapping-scope maintenance. Removing it exposed shared
+Git side effects before the eventual task-start refusal. Both allocators now
+check active/stale exclusive ownership under coordination followed by the lease
+lock before recording a reservation or creating Git refs/checkouts. The lease
+lock spans Git allocation, which maintenance start must inspect; coordination
+is released during slow Git. Bootstrap rechecks ownership after reacquiring
+both locks. If maintenance wins after Git allocation, the inspectable checkout
+is retained but no task metadata is created and the command does not report
+success. Ordinary different-task, separate-worktree scopes are not compared.
+
 No public CLI, lease schema, or protocol epoch changes. Older controllers remain
 conservatively restrictive; drain/rebind normally when an installer requires it.
 Existing shared tasks are not silently relocated, and unknown board claims in
@@ -72,6 +83,9 @@ an unmanaged shared checkout retain their conservative scope backstop.
 
 `tests/test_worktree_workflow.py` covers committed active board snapshots,
 explicit leases, shared agent names, and duplicate task rejection.
+It also checks active/stale exclusive refusal with unchanged refs/checkouts/
+leases, and deterministically pauses allocation while a real maintenance
+subprocess enters admission to verify the Git/metadata transition boundary.
 `tests/test_simulated_collaboration.py` installs a synthetic project through
 normal hooks, reproduces the original false rejection, then develops the same
 relative path in two worktrees while checking task evidence and cross-path

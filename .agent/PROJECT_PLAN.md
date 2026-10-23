@@ -36,6 +36,7 @@ instead of relying on chat memory or repeated human prompts.
 | M4 | Evidence-driven harness improvement | in_progress | Held-in/held-out evals gate changes before structured memory curation or bounded harness proposals are allowed |
 
 ## Task Board
+- [ ] T18444DD96FC4773D-002 - Fence worktree allocation against exclusive maintenance before Git side effects (owner: codex)
 - [ ] T18444DD96FC4773D-001 - Integrate checkout-local scope templates with the tested runtime candidate (owner: codex)
 - [ ] TB64C7FAF94ECE480-001 - Allow checkout-local scope overlap across isolated worktrees without weakening shared ownership (owner: codex)
 - [x] T2CCB56E65D69B108-001 - Independent frozen IdeaScientist documentation review b85cba8 (owner: codex-native-ideascientist-review-z9zb1r)
